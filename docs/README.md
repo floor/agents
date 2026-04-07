@@ -30,3 +30,7 @@ Each package has its own documentation:
 - [Adding an LLM Provider](./guides/adding-llm-provider.md)
 - [Adding a Task Manager](./guides/adding-task-manager.md)
 - [Testing](./guides/testing.md)
+
+## Experiments
+
+- [2026-04-07: First Sprint](./experiments/2026-04-07-first-sprint.md) — 5 issues, 5 PRs, Gemma + Opus, $0.32 total

@@ -7,8 +7,7 @@ export function slugify(text: string): string {
   // Replace non-alphanumeric characters with hyphens
   slug = slug.replace(/[^a-z0-9]+/g, '-')
 
-  // Collapse consecutive hyphens (already handled somewhat by the previous step if we consider sequences of non-alphanumeric chars)
-  // Let's refine the replacement to handle multiple separators collapsing into a single hyphen.
+  // Collapse consecutive hyphens
   slug = slug.replace(/--+/g, '-')
 
   // Trim leading/trailing hyphens

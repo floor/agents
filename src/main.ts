@@ -4,6 +4,7 @@ import { createAnthropicAdapter } from '@floor-agents/anthropic'
 import { createOpenAIAdapter } from '@floor-agents/openai'
 import { createLMStudioAdapter } from '@floor-agents/lmstudio'
 import { createClaudeCodeAdapter } from '@floor-agents/claude-code'
+import { createGeminiAdapter } from '@floor-agents/gemini'
 import { createGitHubAdapter } from '@floor-agents/github'
 import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
@@ -59,6 +60,13 @@ if (requiredProviders.has('lmstudio')) {
     apiKey: process.env.LMSTUDIO_API_KEY,
   })
   llmAdapters.set('lmstudio', adapter)
+}
+
+if (requiredProviders.has('gemini')) {
+  const adapter = createGeminiAdapter({
+    apiKey: requireEnv('GEMINI_API_KEY'),
+  })
+  llmAdapters.set('gemini', adapter)
 }
 
 const openaiCompatible = ['openai', 'ollama', 'local']

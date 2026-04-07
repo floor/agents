@@ -150,9 +150,10 @@ guardrails:
     - ".github/workflows/*"
     - "Dockerfile"
     - "docker-compose*"
-    - "**/package.json"
-    - "**/package-lock.json"
-    - "**/bun.lockb"
+    - "package.json"
+    - "package-lock.json"
+    - "bun.lockb"
+    - "bun.lock"
     - ".gitignore"
   allowedPaths: []
   blockedExtensions: [".env", ".pem", ".key", ".lock", ".exe", ".bin"]

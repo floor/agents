@@ -1,4 +1,3 @@
-// Types
 export type {
   IssueStatus,
   IssueEvent,
@@ -38,9 +37,7 @@ export type { ChainOfCommand, ChainNode, WorkSource } from './types/chain.ts'
 export type { AutonomyConfig, AutonomyOverride, AutonomyMatch } from './types/autonomy.ts'
 export type { ExecutionStep, FileOutput, AgentOutput, ExecutionState, StateStore } from './types/execution.ts'
 
-// Config
 export { loadCompanyConfig } from './config/loader.ts'
 export { validateCompanyConfig } from './config/validator.ts'
-
-// Utils
 export { estimateTokens } from './utils/tokens.ts'
+export { retry } from './utils/retry.ts'

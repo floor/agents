@@ -22,10 +22,10 @@ test('parses agent definitions correctly', async () => {
   const backend = config.agents.find(a => a.id === 'backend')!
 
   expect(backend.name).toBe('Backend Developer')
-  expect(backend.llm.provider).toBe('lmstudio')
-  expect(backend.llm.model).toBe('google/gemma-4-e2b')
+  expect(backend.llm.provider).toBe('claude-code')
+  expect(backend.llm.model).toBe('sonnet')
   expect(backend.llm.temperature).toBe(0.2)
-  expect(backend.llm.maxTokens).toBe(8000)
+  expect(backend.llm.maxTokens).toBe(16000)
   expect(backend.capabilities).toContain('write_code')
   expect(backend.autonomy).toBe('T1')
 })

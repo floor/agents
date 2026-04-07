@@ -21,10 +21,10 @@ agents:
     name: "Backend Developer"
     promptTemplate: "agents/backend-dev.md"
     llm:
-      provider: lmstudio
-      model: google/gemma-4-e2b
+      provider: claude-code
+      model: sonnet
       temperature: 0.2
-      maxTokens: 8000
+      maxTokens: 16000
     capabilities: [read_code, write_code, create_pr, write_tests]
     autonomy: T1
     customInstructions: ""
@@ -33,10 +33,10 @@ agents:
     name: "Frontend Developer"
     promptTemplate: "agents/frontend-dev.md"
     llm:
-      provider: lmstudio
-      model: google/gemma-4-e2b
+      provider: claude-code
+      model: sonnet
       temperature: 0.2
-      maxTokens: 8000
+      maxTokens: 16000
     capabilities: [read_code, write_code, create_pr, write_tests]
     autonomy: T1
     customInstructions: ""
@@ -45,10 +45,10 @@ agents:
     name: "Project Manager"
     promptTemplate: "agents/pm.md"
     llm:
-      provider: anthropic
-      model: claude-sonnet-4-20250514
+      provider: claude-code
+      model: sonnet
       temperature: 0.3
-      maxTokens: 4000
+      maxTokens: 8000
     capabilities: [decompose_task, manage_issues]
     autonomy: T1
     customInstructions: ""
@@ -69,10 +69,10 @@ agents:
     name: "QA Engineer"
     promptTemplate: "agents/qa.md"
     llm:
-      provider: anthropic
-      model: claude-sonnet-4-20250514
+      provider: claude-code
+      model: sonnet
       temperature: 0.2
-      maxTokens: 6000
+      maxTokens: 16000
     capabilities: [read_code, write_tests, approve, reject]
     autonomy: T1
     customInstructions: ""

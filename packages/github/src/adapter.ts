@@ -31,34 +31,62 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
   const { token, owner } = config
 
   async function api(path: string, opts?: RequestInit & { raw?: boolean }): Promise<any> {
-    const res = await fetch(`${baseUrl}${path}`, {
-      ...opts,
-      headers: {
-        'authorization': `Bearer ${token}`,
-        'accept': 'application/vnd.github+json',
-        'x-github-api-version': '2022-11-28',
-        ...opts?.headers,
-      },
-    })
+    const startTime = Date.now()
+    const fullUrl = `${baseUrl}${path}`
+    const method = opts?.method || 'GET'
 
-    if (res.status === 429) {
-      const retryAfter = res.headers.get('retry-after')
-      const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 5000
-      await new Promise(r => setTimeout(r, delay))
-      return api(path, opts)
-    }
+    try {
+      const res = await fetch(fullUrl, {
+        ...opts,
+        headers: {
+          'authorization': `Bearer ${token}`,
+          'accept': 'application/vnd.github+json',
+          'x-github-api-version': '2022-11-28',
+          ...opts?.headers,
+        },
+      })
 
-    if (opts?.raw) return res
-    if (!res.ok) {
-      const text = await res.text()
+      const duration = Date.now() - startTime
+
+      // Log request details (success or retry)
+      console.log(`[github] ${method} ${path} -> ${res.status} (${duration}ms)`)
+
+      if (res.status === 429) {
+        const retryAfter = res.headers.get('retry-after')
+        const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 5000
+        console.log(`[github] ${method} ${path} -> 429 (${duration}ms): Rate limited, retrying in ${delay}ms`)
+        await new Promise(r => setTimeout(r, delay))
+        return api(path, opts)
+      }
+
+      if (opts?.raw) return res
+      if (!res.ok) {
+        const text = await res.text()
+        const errorMessage = `GitHub API ${res.status}: ${text}`
+        console.error(`[github] ${method} ${path} -> ${res.status} (${duration}ms): ${errorMessage}`)
+        throw new GitHubError(
+          errorMessage,
+          res.status,
+          path,
+        )
+      }
+
+      return res.json()
+    } catch (error: any) {
+      // This block catches network errors or errors thrown from above if they weren't caught internally (e.g., during fetch setup)
+      const duration = Date.now() - startTime
+      if (error instanceof GitHubError) {
+        // Error already logged when thrown, just rethrow
+        throw error
+      }
+      // Handle generic fetch errors or unexpected issues
+      console.error(`[github] ${method} ${path} -> ERROR (${duration}ms): ${error.message}`)
       throw new GitHubError(
-        `GitHub API ${res.status}: ${text}`,
-        res.status,
+        `Failed to communicate with GitHub API for ${path}`,
+        500,
         path,
       )
     }
-
-    return res.json()
   }
 
   async function getDefaultBranch(repo: string): Promise<string> {
@@ -87,7 +115,7 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
       const data = await api(`/repos/${owner}/${repo}/git/trees/${resolvedRef}?recursive=true`)
       const prefix = path ? `${path}/` : ''
 
-      return (data.tree as any[])
+      return (data as any[])
         .filter((e: any) => {
           if (!prefix) return !e.path.includes('/')
           return e.path.startsWith(prefix)

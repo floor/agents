@@ -7,6 +7,8 @@ export type ExecutionStep =
   | 'creating_branch'
   | 'committing_files'
   | 'creating_pr'
+  | 'reviewing'
+  | 'revision'
   | 'updating_issue'
   | 'done'
   | 'failed'
@@ -23,6 +25,11 @@ export type AgentOutput = {
   readonly parseErrors: readonly string[]
 }
 
+export type ReviewVerdict = {
+  readonly decision: 'approve' | 'request_changes'
+  readonly comments: string
+}
+
 export type ExecutionState = {
   readonly issueId: string
   readonly agentId: string
@@ -31,8 +38,11 @@ export type ExecutionState = {
   readonly branchName: string | null
   readonly commitSha: string | null
   readonly prUrl: string | null
+  readonly prId: string | null
   readonly llmResponse: string | null
   readonly parsedOutput: AgentOutput | null
+  readonly reviewVerdict: ReviewVerdict | null
+  readonly reviewCycle: number
   readonly costUsd: number
   readonly error: string | null
   readonly updatedAt: string

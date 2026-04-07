@@ -80,6 +80,7 @@ const task = (() => {
         linear: {
           apiKey: requireEnv('LINEAR_API_KEY'),
           teamId: requireEnv('LINEAR_TEAM_ID'),
+          projectId: process.env.LINEAR_PROJECT_ID,
         },
       })
     case 'things':

@@ -63,11 +63,17 @@ export async function getIssuesByLabel(config: LinearAdapterConfig, label: strin
     variables.projectId = config.projectId
   }
 
+  // Use key filter if teamId looks like a key (short string), id filter if UUID
+  const isUuid = config.teamId.includes('-')
+  const teamFilter = isUuid
+    ? 'team: { id: { eq: $teamId } }'
+    : 'team: { key: { eq: $teamId } }'
+
   const data = await gql(config, `
-    query($teamId: ID!, $label: String!${config.projectId ? ', $projectId: ID!' : ''}) {
+    query($teamId: ${isUuid ? 'ID' : 'String'}!, $label: String!${config.projectId ? ', $projectId: ID!' : ''}) {
       issues(
         filter: {
-          team: { id: { eq: $teamId } }
+          ${teamFilter}
           labels: { name: { eq: $label } }
           ${projectFilter}
         }
@@ -85,7 +91,7 @@ export async function getIssuesByLabel(config: LinearAdapterConfig, label: strin
 export async function getIssueById(config: LinearAdapterConfig, issueId: string): Promise<LinearIssue | null> {
   try {
     const data = await gql(config, `
-      query($id: ID!) {
+      query($id: String!) {
         issue(id: $id) { ${ISSUE_FIELDS} }
       }
     `, { id: issueId })
@@ -127,7 +133,7 @@ export async function updateLinearIssue(config: LinearAdapterConfig, issueId: st
   labelIds?: string[]
 }): Promise<void> {
   await gql(config, `
-    mutation($id: ID!, $input: IssueUpdateInput!) {
+    mutation($id: String!, $input: IssueUpdateInput!) {
       issueUpdate(id: $id, input: $input) {
         success
       }
@@ -146,9 +152,10 @@ export async function createLinearComment(config: LinearAdapterConfig, issueId: 
 }
 
 export async function getWorkflowStates(config: LinearAdapterConfig): Promise<{ id: string; name: string; type: string }[]> {
+  const isUuid = config.teamId.includes('-')
   const data = await gql(config, `
-    query($teamId: ID!) {
-      workflowStates(filter: { team: { id: { eq: $teamId } } }) {
+    query($teamId: ${isUuid ? 'ID' : 'String'}!) {
+      workflowStates(filter: { team: { ${isUuid ? 'id' : 'key'}: { eq: $teamId } } }) {
         nodes { id name type }
       }
     }
@@ -158,9 +165,10 @@ export async function getWorkflowStates(config: LinearAdapterConfig): Promise<{ 
 }
 
 export async function getLabels(config: LinearAdapterConfig): Promise<{ id: string; name: string }[]> {
+  const isUuid = config.teamId.includes('-')
   const data = await gql(config, `
-    query($teamId: ID!) {
-      issueLabels(filter: { team: { id: { eq: $teamId } } }) {
+    query($teamId: ${isUuid ? 'ID' : 'String'}!) {
+      issueLabels(filter: { team: { ${isUuid ? 'id' : 'key'}: { eq: $teamId } } }) {
         nodes { id name }
       }
     }
@@ -171,7 +179,7 @@ export async function getLabels(config: LinearAdapterConfig): Promise<{ id: stri
 
 export async function getIssueLabels(config: LinearAdapterConfig, issueId: string): Promise<{ id: string; name: string }[]> {
   const data = await gql(config, `
-    query($id: ID!) {
+    query($id: String!) {
       issue(id: $id) {
         labels { nodes { id name } }
       }

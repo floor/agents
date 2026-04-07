@@ -1,4 +1,3 @@
-// Types
 export type {
   IssueStatus,
   IssueEvent,
@@ -44,3 +43,4 @@ export { validateCompanyConfig } from './config/validator.ts'
 
 // Utils
 export { estimateTokens } from './utils/tokens.ts'
+export { slugify } from './utils/slugify.ts'

@@ -3,6 +3,7 @@ import type { LLMAdapter } from '@floor-agents/core'
 import { createAnthropicAdapter } from '@floor-agents/anthropic'
 import { createOpenAIAdapter } from '@floor-agents/openai'
 import { createLMStudioAdapter } from '@floor-agents/lmstudio'
+import { createClaudeCodeAdapter } from '@floor-agents/claude-code'
 import { createGitHubAdapter } from '@floor-agents/github'
 import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
@@ -41,6 +42,15 @@ if (requiredProviders.has('anthropic')) {
     apiKey: requireEnv('ANTHROPIC_API_KEY'),
   })
   llmAdapters.set('anthropic', adapter)
+}
+
+if (requiredProviders.has('claude-code')) {
+  const adapter = createClaudeCodeAdapter({
+    cwd: process.cwd(),
+    model: process.env.CLAUDE_CODE_MODEL,
+    allowedTools: ['Read', 'Glob', 'Grep', 'Bash', 'LSP'],
+  })
+  llmAdapters.set('claude-code', adapter)
 }
 
 if (requiredProviders.has('lmstudio')) {

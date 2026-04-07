@@ -2,7 +2,7 @@ name: "Default Team"
 
 project:
   name: "floor-agents"
-  repo: "floor/agents"
+  repo: "agents"
   language: "typescript"
   runtime: "bun"
   conventions:

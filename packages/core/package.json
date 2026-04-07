@@ -1,0 +1,11 @@
+{
+  "name": "@floor-agents/core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "yaml": "^2.7.1"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@floor-agents/orchestrator",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@floor-agents/core": "workspace:*",
+    "@floor-agents/anthropic": "workspace:*",
+    "@floor-agents/openai": "workspace:*",
+    "@floor-agents/github": "workspace:*",
+    "@floor-agents/task": "workspace:*",
+    "@floor-agents/context-builder": "workspace:*"
+  }
+}

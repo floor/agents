@@ -17,6 +17,7 @@ Each package has its own documentation:
 | `@floor-agents/core` | Types, config loader, utilities | [core](./packages/core.md) |
 | `@floor-agents/anthropic` | Anthropic LLM adapter | [anthropic](./packages/anthropic.md) |
 | `@floor-agents/lmstudio` | LM Studio adapter for local models | [lmstudio](./packages/lmstudio.md) |
+| `@floor-agents/claude-code` | Claude Code adapter (CTO agent) | [claude-code](./packages/claude-code.md) |
 | `@floor-agents/openai` | OpenAI-compatible adapter | [openai](./packages/openai.md) |
 | `@floor-agents/github` | GitHub git adapter | [github](./packages/github.md) |
 | `@floor-agents/task` | Task manager adapters | [task](./packages/task.md) |
@@ -25,6 +26,7 @@ Each package has its own documentation:
 
 ## Guides
 
+- [First Run](./guides/first-run.md) — end-to-end setup with Gemma + Claude Code Opus
 - [Adding an LLM Provider](./guides/adding-llm-provider.md)
 - [Adding a Task Manager](./guides/adding-task-manager.md)
 - [Testing](./guides/testing.md)

@@ -13,6 +13,7 @@ AI engineering team as a service. See `docs/architecture.md` for full context.
 
 - `@floor-agents/core` — types, config loader, utilities
 - `@floor-agents/anthropic` — Anthropic LLM adapter (tool use)
+- `@floor-agents/claude-code` — Claude Code adapter (spawns CLI, full codebase access)
 - `@floor-agents/lmstudio` — LM Studio adapter for local models (Gemma, Llama, Qwen, etc.)
 - `@floor-agents/openai` — OpenAI-compatible adapter (OpenAI, Ollama, Together, Groq, etc.)
 - `@floor-agents/github` — GitHub git adapter

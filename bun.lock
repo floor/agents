@@ -18,6 +18,13 @@
         "@floor-agents/core": "workspace:*",
       },
     },
+    "packages/claude-code": {
+      "name": "@floor-agents/claude-code",
+      "version": "0.0.1",
+      "dependencies": {
+        "@floor-agents/core": "workspace:*",
+      },
+    },
     "packages/context-builder": {
       "name": "@floor-agents/context-builder",
       "version": "0.0.1",
@@ -75,6 +82,8 @@
   },
   "packages": {
     "@floor-agents/anthropic": ["@floor-agents/anthropic@workspace:packages/anthropic"],
+
+    "@floor-agents/claude-code": ["@floor-agents/claude-code@workspace:packages/claude-code"],
 
     "@floor-agents/context-builder": ["@floor-agents/context-builder@workspace:packages/context-builder"],
 

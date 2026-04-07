@@ -409,14 +409,16 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     const taskStart = performance.now()
 
     try {
-      // Step: pending / building_context
-      if (state.step === 'pending' || state.step === 'building_context') {
-        console.log(`[orchestrator] building context for "${issue.title}"`)
-        state = await advanceState(state, 'building_context', {}, stateStore)
+      // Step: pending → create branch immediately
+      if (state.step === 'pending') {
+        // Extract issue key from labels or use short ID
+        const issueKey = issue.labels.find(l => /^[A-Z]+-\d+$/.test(l))
+          ?? issue.id.slice(0, 8)
+        const branchName = `agent/${issueKey}-${slugify(issue.title)}`
 
-        const teamInfo = reviewer
-          ? `**${reviewer.name}** (\`${reviewer.llm.model}\`) will review.`
-          : 'No reviewer configured.'
+        console.log(`[orchestrator] creating branch: ${branchName}`)
+        await gitAdapter.createBranch(company.project.repo, branchName)
+        state = await advanceState(state, 'building_context', { branchName }, stateStore)
 
         await comment(issue.id, [
           `🤖 **${devAgent.name}** is picking up this task`,
@@ -425,7 +427,8 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           `- Developer: **${devAgent.name}** (\`${devAgent.llm.model}\` via ${devAgent.llm.provider})`,
           reviewer ? `- Reviewer: **${reviewer.name}** (\`${reviewer.llm.model}\` via ${reviewer.llm.provider})` : '',
           '',
-          `**Pipeline:** code → guardrails → branch → PR${reviewer ? ' → review' : ''}`,
+          `**Branch:** \`${branchName}\``,
+          `**Pipeline:** branch → code → guardrails → commit → PR${reviewer ? ' → review' : ''}`,
         ].filter(Boolean).join('\n'))
       }
 
@@ -440,22 +443,14 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
         if (violations.length > 0) {
           const details = violations.map(v => `- ${v.detail}`).join('\n')
-          await comment(issue.id, `❌ **Guardrail violations** — PR will not be created:\n${details}`)
+          await comment(issue.id, `❌ **Guardrail violations** — changes will not be committed:\n${details}`)
           await taskAdapter.setLabel(issue.id, 'needs-human')
           state = await advanceState(state, 'failed', { error: `Guardrail violations: ${violations.length}` }, stateStore)
           return
         }
 
         await comment(issue.id, `🔍 **Guardrails passed** — ${state.parsedOutput.files.length} files validated`)
-        state = await advanceState(state, 'creating_branch', {}, stateStore)
-      }
-
-      // Step: create branch
-      if (state.step === 'creating_branch') {
-        const branchName = `agent/${slugify(issue.title)}`
-        console.log(`[orchestrator] creating branch: ${branchName}`)
-        await gitAdapter.createBranch(company.project.repo, branchName)
-        state = await advanceState(state, 'committing_files', { branchName }, stateStore)
+        state = await advanceState(state, 'committing_files', {}, stateStore)
       }
 
       // Step: commit files

@@ -89,9 +89,25 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
     }
   }
 
+  let defaultBranchCache: Record<string, string> = {}
+
   async function getDefaultBranch(repo: string): Promise<string> {
-    const data = await api(`/repos/${owner}/${repo}`)
-    return data.default_branch
+    if (!defaultBranchCache[repo]) {
+      const data = await api(`/repos/${owner}/${repo}`)
+      defaultBranchCache[repo] = data.default_branch
+    }
+    return defaultBranchCache[repo]!
+  }
+
+  function assertNotProtected(repo: string, branch: string) {
+    const protectedBranches = ['main', 'master', 'develop', 'production']
+    if (protectedBranches.includes(branch)) {
+      throw new GitHubError(
+        `Refusing to write to protected branch "${branch}". Agents must work on feature branches.`,
+        403,
+        `/repos/${owner}/${repo}/git/refs/heads/${branch}`,
+      )
+    }
   }
 
   return {
@@ -128,6 +144,7 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
     },
 
     async createBranch(repo, name, fromRef) {
+      assertNotProtected(repo, name)
       const resolvedRef = fromRef ?? await getDefaultBranch(repo)
       const refData = await api(`/repos/${owner}/${repo}/git/ref/heads/${resolvedRef}`)
       const sha = refData.object.sha
@@ -148,6 +165,7 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
     },
 
     async commitFiles(repo, branch, files, message) {
+      assertNotProtected(repo, branch)
       // Get current branch tip
       const branchData = await api(`/repos/${owner}/${repo}/git/ref/heads/${branch}`)
       const baseSha = branchData.object.sha

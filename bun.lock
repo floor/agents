@@ -39,6 +39,13 @@
         "yaml": "^2.7.1",
       },
     },
+    "packages/gemini": {
+      "name": "@floor-agents/gemini",
+      "version": "0.0.1",
+      "dependencies": {
+        "@floor-agents/core": "workspace:*",
+      },
+    },
     "packages/github": {
       "name": "@floor-agents/github",
       "version": "0.0.1",
@@ -88,6 +95,8 @@
     "@floor-agents/context-builder": ["@floor-agents/context-builder@workspace:packages/context-builder"],
 
     "@floor-agents/core": ["@floor-agents/core@workspace:packages/core"],
+
+    "@floor-agents/gemini": ["@floor-agents/gemini@workspace:packages/gemini"],
 
     "@floor-agents/github": ["@floor-agents/github@workspace:packages/github"],
 

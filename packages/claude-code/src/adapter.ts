@@ -109,15 +109,17 @@ export function createClaudeCodeAdapter(config: ClaudeCodeAdapterConfig = {}): L
       }
 
       if (data.is_error) {
-        throw new Error(`Claude Code error: ${data.result}`)
+        throw new Error(`Claude Code error: ${data.result ?? 'Unknown error'}`)
       }
+
+      const resultText = data.result ?? ''
 
       // Extract tool calls from the response if tools were defined
       const toolCalls: ToolCall[] = []
 
       if (llmConfig.tools?.length) {
         // Try to extract JSON tool calls from the response
-        const jsonMatch = data.result.match(/```json\s*([\s\S]*?)```/)
+        const jsonMatch = resultText.match(/```json\s*([\s\S]*?)```/)
         if (jsonMatch) {
           try {
             const parsed = JSON.parse(jsonMatch[1]!)
@@ -137,7 +139,7 @@ export function createClaudeCodeAdapter(config: ClaudeCodeAdapterConfig = {}): L
         // Also try to parse the whole response as JSON
         if (toolCalls.length === 0) {
           try {
-            const parsed = JSON.parse(data.result)
+            const parsed = JSON.parse(resultText)
             const calls = parsed.tool_calls ?? parsed.toolCalls ?? [parsed]
             for (const call of Array.isArray(calls) ? calls : [calls]) {
               if (call.name) {
@@ -153,7 +155,7 @@ export function createClaudeCodeAdapter(config: ClaudeCodeAdapterConfig = {}): L
       }
 
       return {
-        content: data.result,
+        content: resultText,
         toolCalls,
         stopReason: 'end_turn',
         usage: {

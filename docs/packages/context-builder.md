@@ -34,7 +34,9 @@ const context = await builder.build({
 // context.estimatedTokens — estimated token count
 ```
 
-## File Selection (v1 — Keyword Matching)
+## File Selection (v2 — Keyword Matching + Import Tracing)
+
+### Phase 1: Keyword Matching
 
 The file selector extracts references from the issue text:
 
@@ -48,6 +50,15 @@ Each match gets a relevance score:
 - Identifier match: **3**
 
 Files are sorted by relevance and fetched from the repo via the git adapter.
+
+### Phase 2: Import Tracing
+
+After fetching keyword-matched files, the selector reads each file's content and extracts its `import`/`export from` and dynamic `import()` specifiers. Relative specifiers are resolved to repo-root-relative paths and fetched if they exist.
+
+Import-traced files receive a lower relevance score:
+- Import-traced file: **1**
+
+This means import-traced files are always lower priority than keyword-matched files and will be dropped first if the token budget is exceeded. Files already found in phase 1 are not duplicated.
 
 ## Prompt Rendering
 
@@ -84,6 +95,5 @@ The builder provides two tools for every agent:
 
 ## Future Versions
 
-- **v2 — Dependency tracing**: follow imports from selected files
 - **v3 — Embeddings**: semantic file retrieval via vector search
 - **v4 — AST-aware**: function signatures, export maps, structural understanding

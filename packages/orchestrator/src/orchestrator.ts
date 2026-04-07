@@ -39,8 +39,22 @@ const MAX_REVIEW_CYCLES = 3
 
 const REVIEW_TOOLS: ToolDefinition[] = [
   {
+    name: 'run_command',
+    description: 'Run a shell command in the project directory and return its output. Use this to check out the branch, run typecheck, and run tests.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: {
+          type: 'string',
+          description: 'The shell command to execute',
+        },
+      },
+      required: ['command'],
+    },
+  },
+  {
     name: 'review_verdict',
-    description: 'Submit your review verdict. Call exactly once.',
+    description: 'Submit your review verdict. Call exactly once after running verification commands.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -58,6 +72,21 @@ const REVIEW_TOOLS: ToolDefinition[] = [
     },
   },
 ]
+
+async function runShellCommand(command: string): Promise<string> {
+  try {
+    const proc = await Bun.$`bash -c ${command}`.quiet()
+    const stdout = proc.stdout.toString().trim()
+    const stderr = proc.stderr.toString().trim()
+    const output = [stdout, stderr].filter(Boolean).join('\n')
+    return output || '(no output, exit code 0)'
+  } catch (err: any) {
+    const stdout = err.stdout?.toString().trim() ?? ''
+    const stderr = err.stderr?.toString().trim() ?? ''
+    const output = [stdout, stderr].filter(Boolean).join('\n')
+    return `Command failed (exit code ${err.exitCode ?? 1}):\n${output}`
+  }
+}
 
 function slugify(text: string): string {
   return text
@@ -143,6 +172,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     systemPrompt: string,
     messages: LLMMessage[],
     tools: readonly ToolDefinition[],
+    toolHandler?: (tc: ToolCall) => Promise<string>,
   ): Promise<{ toolCalls: ToolCall[]; content: string; totalCost: number; totalInputTokens: number; totalOutputTokens: number; durationMs: number }> {
     const llm = getLLMAdapter(agent.llm.provider)
     const allToolCalls: ToolCall[] = []
@@ -185,11 +215,13 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       }
       conversation.push({ role: 'assistant', content: assistantBlocks })
 
-      const resultBlocks: ContentBlock[] = response.toolCalls.map(tc => ({
-        type: 'tool_result' as const,
-        tool_use_id: tc.id,
-        content: 'ok',
-      }))
+      const resultBlocks: ContentBlock[] = await Promise.all(
+        response.toolCalls.map(async tc => ({
+          type: 'tool_result' as const,
+          tool_use_id: tc.id,
+          content: toolHandler ? await toolHandler(tc) : 'ok',
+        }))
+      )
       conversation.push({ role: 'user', content: resultBlocks })
     }
 

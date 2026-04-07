@@ -1,0 +1,11 @@
+{
+  "name": "@floor-agents/anthropic",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@floor-agents/core": "workspace:*"
+  }
+}

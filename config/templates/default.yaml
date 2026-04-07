@@ -1,0 +1,173 @@
+name: "Default Team"
+
+project:
+  name: "floor-agents"
+  repo: "floor/agents"
+  language: "typescript"
+  runtime: "bun"
+  conventions:
+    semicolons: false
+    quotes: "single"
+    indent: 2
+    modules: "esm"
+  structure:
+    backend: "packages/"
+    tests: "test/"
+  packages: []
+  customInstructions: ""
+
+agents:
+  - id: backend
+    name: "Backend Developer"
+    promptTemplate: "agents/backend-dev.md"
+    llm:
+      provider: anthropic
+      model: claude-sonnet-4-20250514
+      temperature: 0.2
+      maxTokens: 8000
+    capabilities: [read_code, write_code, create_pr, write_tests]
+    autonomy: T1
+    customInstructions: ""
+
+  - id: frontend
+    name: "Frontend Developer"
+    promptTemplate: "agents/frontend-dev.md"
+    llm:
+      provider: anthropic
+      model: claude-sonnet-4-20250514
+      temperature: 0.2
+      maxTokens: 8000
+    capabilities: [read_code, write_code, create_pr, write_tests]
+    autonomy: T1
+    customInstructions: ""
+
+  - id: pm
+    name: "Project Manager"
+    promptTemplate: "agents/pm.md"
+    llm:
+      provider: anthropic
+      model: claude-sonnet-4-20250514
+      temperature: 0.3
+      maxTokens: 4000
+    capabilities: [decompose_task, manage_issues]
+    autonomy: T1
+    customInstructions: ""
+
+  - id: cto
+    name: "CTO / Tech Lead"
+    promptTemplate: "agents/cto.md"
+    llm:
+      provider: anthropic
+      model: claude-sonnet-4-20250514
+      temperature: 0.3
+      maxTokens: 4000
+    capabilities: [read_code, review_pr, approve, reject]
+    autonomy: T1
+    customInstructions: ""
+
+  - id: qa
+    name: "QA Engineer"
+    promptTemplate: "agents/qa.md"
+    llm:
+      provider: anthropic
+      model: claude-sonnet-4-20250514
+      temperature: 0.2
+      maxTokens: 6000
+    capabilities: [read_code, write_tests, approve, reject]
+    autonomy: T1
+    customInstructions: ""
+
+workflow:
+  states:
+    - { id: backlog,           label: "Backlog",            taskManagerStatus: "Backlog",      terminal: false }
+    - { id: triage,            label: "Triage",             taskManagerStatus: "Triage",       terminal: false }
+    - { id: in_progress,       label: "In Progress",        taskManagerStatus: "In Progress",  terminal: false }
+    - { id: in_review,         label: "In Review",          taskManagerStatus: "In Review",    terminal: false }
+    - { id: changes_requested, label: "Changes Requested",  taskManagerStatus: "In Progress",  terminal: false }
+    - { id: qa,                label: "QA",                 taskManagerStatus: "In Review",    terminal: false }
+    - { id: done,              label: "Done",               taskManagerStatus: "Done",         terminal: true  }
+    - { id: needs_human,       label: "Needs Human",        taskManagerStatus: "Blocked",      terminal: false }
+
+  transitions:
+    - { from: backlog,           to: triage,            trigger: { type: label_added, label: "floor" }, agentId: pm }
+    - { from: triage,            to: in_progress,       trigger: { type: subtasks_created },            agentId: null }
+    - { from: in_progress,       to: in_review,         trigger: { type: agent_completed },             agentId: cto }
+    - { from: in_review,         to: qa,                trigger: { type: review_approved },             agentId: qa }
+    - { from: in_review,         to: changes_requested, trigger: { type: review_rejected },             agentId: null, maxCycles: 3, fallbackState: needs_human }
+    - { from: changes_requested, to: in_progress,       trigger: { type: manual },                     agentId: null }
+    - { from: qa,                to: done,              trigger: { type: qa_passed },                   agentId: null }
+    - { from: qa,                to: changes_requested, trigger: { type: qa_failed },                   agentId: null }
+
+chain:
+  nodes:
+    - agentId: pm
+      receivesFrom: [{ type: trigger }]
+      dispatchesTo: [backend, frontend]
+      reportsTo: null
+      canApprove: false
+      canReject: false
+
+    - agentId: backend
+      receivesFrom: [{ type: agent, id: pm }, { type: agent, id: cto }]
+      dispatchesTo: []
+      reportsTo: cto
+      canApprove: false
+      canReject: false
+
+    - agentId: frontend
+      receivesFrom: [{ type: agent, id: pm }, { type: agent, id: cto }]
+      dispatchesTo: []
+      reportsTo: cto
+      canApprove: false
+      canReject: false
+
+    - agentId: cto
+      receivesFrom: [{ type: workflow }]
+      dispatchesTo: [backend, frontend]
+      reportsTo: null
+      canApprove: true
+      canReject: true
+
+    - agentId: qa
+      receivesFrom: [{ type: workflow }]
+      dispatchesTo: []
+      reportsTo: null
+      canApprove: true
+      canReject: true
+
+autonomy:
+  default: T1
+  overrides: []
+
+guardrails:
+  maxFilesPerTask: 20
+  maxFileSizeBytes: 102400
+  maxTotalOutputBytes: 512000
+  blockedPaths:
+    - ".env*"
+    - "*.pem"
+    - "*.key"
+    - ".github/workflows/*"
+    - "Dockerfile"
+    - "docker-compose*"
+    - "**/package.json"
+    - "**/package-lock.json"
+    - "**/bun.lockb"
+    - ".gitignore"
+  allowedPaths: []
+  blockedExtensions: [".env", ".pem", ".key", ".lock", ".exe", ".bin"]
+
+costs:
+  maxCostPerTask: 5.00
+  maxCostPerDay: 50.00
+  warnCostThreshold: 2.00
+
+statusMapping:
+  backlog: "Backlog"
+  triage: "Triage"
+  in_progress: "In Progress"
+  in_review: "In Review"
+  changes_requested: "In Progress"
+  qa: "In Review"
+  done: "Done"
+  needs_human: "Blocked"

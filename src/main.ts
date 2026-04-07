@@ -95,6 +95,15 @@ const task = (() => {
       })
     case 'things':
       return createTaskAdapter({ type: 'things' })
+    case 'github-issues':
+      return createTaskAdapter({
+        type: 'github-issues',
+        githubIssues: {
+          token: requireEnv('GITHUB_TOKEN'),
+          owner: requireEnv('GITHUB_OWNER'),
+          repo: requireEnv('GITHUB_ISSUES_REPO'),
+        },
+      })
     default:
       throw new Error(`Unknown TASK_ADAPTER: ${TASK_ADAPTER}`)
   }

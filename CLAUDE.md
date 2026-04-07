@@ -15,9 +15,10 @@ AI engineering team as a service. See `docs/architecture.md` for full context.
 - `@floor-agents/anthropic` — Anthropic LLM adapter (tool use)
 - `@floor-agents/claude-code` — Claude Code adapter (spawns CLI, full codebase access)
 - `@floor-agents/lmstudio` — LM Studio adapter for local models (Gemma, Llama, Qwen, etc.)
+- `@floor-agents/gemini` — Google Gemini adapter (tool use, function calling)
 - `@floor-agents/openai` — OpenAI-compatible adapter (OpenAI, Ollama, Together, Groq, etc.)
 - `@floor-agents/github` — GitHub git adapter
-- `@floor-agents/task` — task manager adapters (Linear, Things 3, future: GitHub Issues, Jira)
+- `@floor-agents/task` — task manager adapters (Linear, Things 3, GitHub Issues)
 - `@floor-agents/context-builder` — context assembly + prompt rendering
 - `@floor-agents/orchestrator` — main loop, state machine, guardrails, cost tracking
 

@@ -18,6 +18,7 @@ Each package has its own documentation:
 | `@floor-agents/anthropic` | Anthropic LLM adapter | [anthropic](./packages/anthropic.md) |
 | `@floor-agents/lmstudio` | LM Studio adapter for local models | [lmstudio](./packages/lmstudio.md) |
 | `@floor-agents/claude-code` | Claude Code adapter (CTO agent) | [claude-code](./packages/claude-code.md) |
+| `@floor-agents/gemini` | Google Gemini adapter | [gemini](./packages/gemini.md) |
 | `@floor-agents/openai` | OpenAI-compatible adapter | [openai](./packages/openai.md) |
 | `@floor-agents/github` | GitHub git adapter | [github](./packages/github.md) |
 | `@floor-agents/task` | Task manager adapters | [task](./packages/task.md) |
@@ -34,3 +35,4 @@ Each package has its own documentation:
 ## Experiments
 
 - [2026-04-07: First Sprint](./experiments/2026-04-07-first-sprint.md) — 5 issues, 5 PRs, Gemma + Opus, $0.32 total
+- [2026-04-07: Second Sprint](./experiments/2026-04-07-second-sprint.md) — 5 issues, 5 PRs, Claude Code Sonnet + Opus, $1.23 total

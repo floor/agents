@@ -112,9 +112,10 @@ See [Configuration Reference](./docs/configuration.md) for the full spec.
 
 | Provider | Package | Use Case |
 |----------|---------|----------|
+| Claude Code | `@floor-agents/claude-code` | Full codebase access. Best for dev + reviews. Max plan. |
 | LM Studio | `@floor-agents/lmstudio` | Local models (Gemma, Llama, Qwen). Free. |
-| Claude Code | `@floor-agents/claude-code` | Full codebase access. Best for reviews. |
-| Anthropic | `@floor-agents/anthropic` | Claude API. High quality. |
+| Gemini | `@floor-agents/gemini` | Google Gemini 2.5 Pro/Flash. |
+| Anthropic | `@floor-agents/anthropic` | Claude API (direct). Pay-per-token. |
 | OpenAI | `@floor-agents/openai` | GPT-4o, o3. Also works with Ollama, Together, Groq. |
 
 ### Task Managers
@@ -123,7 +124,7 @@ See [Configuration Reference](./docs/configuration.md) for the full spec.
 |----------|--------|
 | Linear | Supported |
 | Things 3 (macOS) | Supported |
-| GitHub Issues | Planned |
+| GitHub Issues | Supported |
 | Jira | Planned |
 
 ### Git Platforms
@@ -144,7 +145,7 @@ See [Configuration Reference](./docs/configuration.md) for the full spec.
 ## Development
 
 ```bash
-bun test              # 61 tests across 15 files
+bun test              # 94 tests across 20 files
 bun run typecheck     # type check all packages
 bun run src/main.ts   # start the orchestrator
 ```

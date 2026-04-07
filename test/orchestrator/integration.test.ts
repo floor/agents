@@ -428,7 +428,7 @@ test('crash recovery: resumes from saved state', async () => {
   expect(taskAdapter.statuses.get('issue-1')).toBe('in_review')
 })
 
-test('team mode: dev writes code, CTO approves', { timeout: 15000 }, async () => {
+test('team mode: dev writes code, CTO approves', async () => {
   const issue = mockIssue()
   const taskAdapter = mockTaskAdapter([issue])
   const gitAdapter = mockGitAdapter()
@@ -500,7 +500,7 @@ test('team mode: dev writes code, CTO approves', { timeout: 15000 }, async () =>
   expect(taskAdapter.statuses.get('issue-1')).toBe('in_review')
 })
 
-test('team mode: CTO requests changes, dev revises, CTO approves', { timeout: 15000 }, async () => {
+test('team mode: CTO requests changes, dev revises, CTO approves', async () => {
   const issue = mockIssue()
   const taskAdapter = mockTaskAdapter([issue])
   const gitAdapter = mockGitAdapter()

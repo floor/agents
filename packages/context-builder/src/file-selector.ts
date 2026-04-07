@@ -76,7 +76,7 @@ export async function selectFiles(
   // Get directory tree for orientation
   const rootEntries = await git.getTree(project.repo, '')
   const tree = rootEntries
-    .map(e => `${e.type === 'dir' ? '\uD83D\uDCC1' : '  '} ${e.path}`)
+    .map(e => `${e.type === 'dir' ? 'ð' : '  '} ${e.path}`)
     .join('\n')
 
   const text = `${issue.title} ${issue.body}`

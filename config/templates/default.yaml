@@ -21,8 +21,8 @@ agents:
     name: "Backend Developer"
     promptTemplate: "agents/backend-dev.md"
     llm:
-      provider: anthropic
-      model: claude-sonnet-4-20250514
+      provider: lmstudio
+      model: google/gemma-4-e2b
       temperature: 0.2
       maxTokens: 8000
     capabilities: [read_code, write_code, create_pr, write_tests]
@@ -33,8 +33,8 @@ agents:
     name: "Frontend Developer"
     promptTemplate: "agents/frontend-dev.md"
     llm:
-      provider: anthropic
-      model: claude-sonnet-4-20250514
+      provider: lmstudio
+      model: google/gemma-4-e2b
       temperature: 0.2
       maxTokens: 8000
     capabilities: [read_code, write_code, create_pr, write_tests]
@@ -57,10 +57,10 @@ agents:
     name: "CTO / Tech Lead"
     promptTemplate: "agents/cto.md"
     llm:
-      provider: anthropic
-      model: claude-sonnet-4-20250514
+      provider: claude-code
+      model: opus
       temperature: 0.3
-      maxTokens: 4000
+      maxTokens: 16000
     capabilities: [read_code, review_pr, approve, reject]
     autonomy: T1
     customInstructions: ""

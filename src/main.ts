@@ -8,6 +8,7 @@ import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
 import { createOrchestrator, createCostTracker, createStateStore } from '@floor-agents/orchestrator'
 import { mkdir } from 'node:fs/promises'
+import { createGeminiAdapter } from '@floor-agents/gemini'
 
 // Environment
 const CONFIG_PATH = process.env.CONFIG_PATH
@@ -64,10 +65,19 @@ if (openaiCompatible.some(p => requiredProviders.has(p))) {
   }
 }
 
+// Register Gemini adapter
+if (requiredProviders.has('gemini')) {
+  const adapter = createGeminiAdapter({
+    apiKey: requireEnv('GEMINI_API_KEY'),
+  })
+  llmAdapters.set('gemini', adapter)
+}
+
+
 // Verify all required providers have adapters
 for (const provider of requiredProviders) {
   if (!llmAdapters.has(provider)) {
-    throw new Error(`No LLM adapter available for provider "${provider}" (used by agent "${company.agents.find(a => a.llm.provider === provider)?.id}")`)
+    throw new Error(`No LLM adapter available for provider "${provider}" (used by agent "${company.agents.find(a => a.llm.provider === provider)?.id || 'unknown'}")`)
   }
 }
 

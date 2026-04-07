@@ -131,7 +131,7 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
       const data = await api(`/repos/${owner}/${repo}/git/trees/${resolvedRef}?recursive=true`)
       const prefix = path ? `${path}/` : ''
 
-      return (data as any[])
+      return (data.tree as any[])
         .filter((e: any) => {
           if (!prefix) return !e.path.includes('/')
           return e.path.startsWith(prefix)

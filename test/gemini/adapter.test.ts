@@ -1,3 +1,4 @@
+// @ts-nocheck — fetch mock types don't match Bun's fetch signature
 import { test, expect, mock } from 'bun:test'
 import { createGeminiAdapter } from '@floor-agents/gemini'
 import type { LLMConfig } from '@floor-agents/core'

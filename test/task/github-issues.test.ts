@@ -1,3 +1,4 @@
+// @ts-nocheck — fetch mock types don't match Bun's fetch signature
 import { test, expect } from 'bun:test'
 import { createGitHubIssuesAdapter } from '@floor-agents/task'
 import { createTaskAdapter } from '@floor-agents/task'

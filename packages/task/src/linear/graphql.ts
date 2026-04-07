@@ -1,6 +1,7 @@
 export type LinearAdapterConfig = {
   readonly apiKey: string
   readonly teamId: string
+  readonly projectId?: string
   readonly baseUrl?: string
 }
 
@@ -54,12 +55,21 @@ const ISSUE_FIELDS = `
 `
 
 export async function getIssuesByLabel(config: LinearAdapterConfig, label: string): Promise<LinearIssue[]> {
+  const variables: Record<string, unknown> = { teamId: config.teamId, label }
+
+  let projectFilter = ''
+  if (config.projectId) {
+    projectFilter = 'project: { id: { eq: $projectId } }'
+    variables.projectId = config.projectId
+  }
+
   const data = await gql(config, `
-    query($teamId: String!, $label: String!) {
+    query($teamId: String!, $label: String!${config.projectId ? ', $projectId: String!' : ''}) {
       issues(
         filter: {
           team: { id: { eq: $teamId } }
           labels: { name: { eq: $label } }
+          ${projectFilter}
         }
         orderBy: updatedAt
         first: 100
@@ -67,7 +77,7 @@ export async function getIssuesByLabel(config: LinearAdapterConfig, label: strin
         nodes { ${ISSUE_FIELDS} }
       }
     }
-  `, { teamId: config.teamId, label })
+  `, variables)
 
   return data.issues.nodes
 }

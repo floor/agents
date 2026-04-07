@@ -382,6 +382,7 @@ test('crash recovery: resumes from saved state', async () => {
     branchName: 'agent/add-a-slugify-utility-function',
     commitSha: null,
     prUrl: null,
+    prId: null,
     llmResponse: 'Here is my implementation.',
     parsedOutput: {
       rawResponse: 'Here is my implementation.',
@@ -389,6 +390,8 @@ test('crash recovery: resumes from saved state', async () => {
       prDescription: 'Adds slugify',
       parseErrors: [],
     },
+    reviewVerdict: null,
+    reviewCycle: 0,
     costUsd: 0.01,
     error: null,
     updatedAt: new Date().toISOString(),
@@ -423,4 +426,167 @@ test('crash recovery: resumes from saved state', async () => {
   expect(gitAdapter.commits.length).toBe(1)
   expect(gitAdapter.prs.length).toBe(1)
   expect(taskAdapter.statuses.get('issue-1')).toBe('in_review')
+})
+
+test('team mode: dev writes code, CTO approves', { timeout: 15000 }, async () => {
+  const issue = mockIssue()
+  const taskAdapter = mockTaskAdapter([issue])
+  const gitAdapter = mockGitAdapter()
+
+  // Add getPRDiff to mock
+  gitAdapter.getPRDiff = async () => '+export function slugify() { return "ok" }'
+
+  const company = await loadTestConfig()
+
+  // Dev agent returns code, CTO returns approve verdict
+  let callCount = 0
+  const teamLLM: LLMAdapter = {
+    async run(config): Promise<LLMResponse> {
+      callCount++
+      // First call: dev agent writes code
+      if (callCount === 1) {
+        return {
+          content: 'Here is the implementation.',
+          toolCalls: [
+            { id: 'tc-1', name: 'write_file', input: { path: 'src/utils/slugify.ts', content: 'export function slugify() {}' } },
+            { id: 'tc-2', name: 'pr_description', input: { title: 'Add slugify', description: 'Adds slugify' } },
+          ],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1000, outputTokens: 500, cost: 0.01 },
+          provider: 'anthropic',
+          model: 'test',
+          durationMs: 100,
+        }
+      }
+      // Second call: CTO reviews and approves
+      return {
+        content: 'The code looks good.',
+        toolCalls: [
+          { id: 'tc-3', name: 'review_verdict', input: { decision: 'approve', comments: 'Clean implementation. Approved.' } },
+        ],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 500, outputTokens: 200, cost: 0.005 },
+        provider: 'anthropic',
+        model: 'test',
+        durationMs: 50,
+      }
+    },
+  }
+
+  const contextBuilder = createContextBuilder({ taskAdapter, gitAdapter })
+  const orchestrator = createOrchestrator({
+    company,
+    taskAdapter,
+    gitAdapter,
+    llmAdapters: new Map([['anthropic', teamLLM]]),
+    contextBuilder,
+    stateStore: createStateStore(STATE_DIR),
+    costTracker: createCostTracker(),
+  })
+
+  const timeout = setTimeout(() => orchestrator.stop(), 3000)
+  await orchestrator.start()
+  clearTimeout(timeout)
+
+  // Dev + CTO = 2 LLM calls
+  expect(callCount).toBe(2)
+
+  // PR was created
+  expect(gitAdapter.prs.length).toBe(1)
+
+  // CTO review was posted as PR comment
+  const comments = taskAdapter.comments.get('issue-1') ?? []
+  expect(comments.some(c => c.includes('Approved'))).toBe(true)
+  expect(taskAdapter.statuses.get('issue-1')).toBe('in_review')
+})
+
+test('team mode: CTO requests changes, dev revises, CTO approves', { timeout: 15000 }, async () => {
+  const issue = mockIssue()
+  const taskAdapter = mockTaskAdapter([issue])
+  const gitAdapter = mockGitAdapter()
+
+  gitAdapter.getPRDiff = async () => '+export function slugify() { return "ok" }'
+
+  const company = await loadTestConfig()
+
+  let callCount = 0
+  const teamLLM: LLMAdapter = {
+    async run(): Promise<LLMResponse> {
+      callCount++
+      // Call 1: dev writes initial code
+      if (callCount === 1) {
+        return {
+          content: 'Initial implementation.',
+          toolCalls: [
+            { id: 'tc-1', name: 'write_file', input: { path: 'src/slugify.ts', content: 'export const slugify = (t) => t' } },
+            { id: 'tc-2', name: 'pr_description', input: { title: 'Add slugify', description: 'First pass' } },
+          ],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1000, outputTokens: 500, cost: 0 },
+          provider: 'anthropic', model: 'test', durationMs: 100,
+        }
+      }
+      // Call 2: CTO requests changes
+      if (callCount === 2) {
+        return {
+          content: 'Needs improvement.',
+          toolCalls: [
+            { id: 'tc-3', name: 'review_verdict', input: { decision: 'request_changes', comments: 'Missing type annotation and tests.' } },
+          ],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 500, outputTokens: 200, cost: 0 },
+          provider: 'anthropic', model: 'test', durationMs: 50,
+        }
+      }
+      // Call 3: dev revises
+      if (callCount === 3) {
+        return {
+          content: 'Fixed.',
+          toolCalls: [
+            { id: 'tc-4', name: 'write_file', input: { path: 'src/slugify.ts', content: 'export function slugify(text: string): string { return text }' } },
+          ],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1000, outputTokens: 500, cost: 0 },
+          provider: 'anthropic', model: 'test', durationMs: 100,
+        }
+      }
+      // Call 4: CTO approves
+      return {
+        content: 'Looks good now.',
+        toolCalls: [
+          { id: 'tc-5', name: 'review_verdict', input: { decision: 'approve', comments: 'Types added. Approved.' } },
+        ],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 500, outputTokens: 200, cost: 0 },
+        provider: 'anthropic', model: 'test', durationMs: 50,
+      }
+    },
+  }
+
+  const contextBuilder = createContextBuilder({ taskAdapter, gitAdapter })
+  const orchestrator = createOrchestrator({
+    company,
+    taskAdapter,
+    gitAdapter,
+    llmAdapters: new Map([['anthropic', teamLLM]]),
+    contextBuilder,
+    stateStore: createStateStore(STATE_DIR),
+    costTracker: createCostTracker(),
+  })
+
+  const timeout = setTimeout(() => orchestrator.stop(), 3000)
+  await orchestrator.start()
+  clearTimeout(timeout)
+
+  // 4 LLM calls: dev → CTO reject → dev revision → CTO approve
+  expect(callCount).toBe(4)
+
+  // 2 commits: initial + revision
+  expect(gitAdapter.commits.length).toBe(2)
+
+  // Final status
+  expect(taskAdapter.statuses.get('issue-1')).toBe('in_review')
+  const comments = taskAdapter.comments.get('issue-1') ?? []
+  expect(comments.some(c => c.includes('Approved'))).toBe(true)
+  expect(comments.some(c => c.includes('Review cycle'))).toBe(true)
 })

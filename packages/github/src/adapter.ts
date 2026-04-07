@@ -48,9 +48,6 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
 
       const duration = Date.now() - startTime
 
-      // Log request details (success or retry)
-      console.log(`[github] ${method} ${path} -> ${res.status} (${duration}ms)`)
-
       if (res.status === 429) {
         const retryAfter = res.headers.get('retry-after')
         const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 5000
@@ -59,27 +56,23 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
         return api(path, opts)
       }
 
-      if (opts?.raw) return res
+      if (opts?.raw) {
+        console.log(`[github] ${method} ${path} -> ${res.status} (${duration}ms)`)
+        return res
+      }
+
       if (!res.ok) {
         const text = await res.text()
         const errorMessage = `GitHub API ${res.status}: ${text}`
-        console.error(`[github] ${method} ${path} -> ${res.status} (${duration}ms): ${errorMessage}`)
-        throw new GitHubError(
-          errorMessage,
-          res.status,
-          path,
-        )
+        console.error(`[github] ${method} ${path} -> ${res.status} (${duration}ms): ${text}`)
+        throw new GitHubError(errorMessage, res.status, path)
       }
 
+      console.log(`[github] ${method} ${path} -> ${res.status} (${duration}ms)`)
       return res.json()
     } catch (error: any) {
-      // This block catches network errors or errors thrown from above if they weren't caught internally (e.g., during fetch setup)
       const duration = Date.now() - startTime
-      if (error instanceof GitHubError) {
-        // Error already logged when thrown, just rethrow
-        throw error
-      }
-      // Handle generic fetch errors or unexpected issues
+      if (error instanceof GitHubError) throw error
       console.error(`[github] ${method} ${path} -> ERROR (${duration}ms): ${error.message}`)
       throw new GitHubError(
         `Failed to communicate with GitHub API for ${path}`,
@@ -166,15 +159,12 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
 
     async commitFiles(repo, branch, files, message) {
       assertNotProtected(repo, branch)
-      // Get current branch tip
       const branchData = await api(`/repos/${owner}/${repo}/git/ref/heads/${branch}`)
       const baseSha = branchData.object.sha
 
-      // Get base tree
       const commitData = await api(`/repos/${owner}/${repo}/git/commits/${baseSha}`)
       const baseTreeSha = commitData.tree.sha
 
-      // Create blobs for each file
       const tree = await Promise.all(
         files.map(async (file: FileWrite) => {
           const blob = await api(`/repos/${owner}/${repo}/git/blobs`, {
@@ -193,7 +183,6 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
         }),
       )
 
-      // Create new tree
       const newTree = await api(`/repos/${owner}/${repo}/git/trees`, {
         method: 'POST',
         body: JSON.stringify({
@@ -202,7 +191,6 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
         }),
       })
 
-      // Create commit
       const newCommit = await api(`/repos/${owner}/${repo}/git/commits`, {
         method: 'POST',
         body: JSON.stringify({
@@ -212,7 +200,6 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
         }),
       })
 
-      // Update branch ref (force to handle idempotent re-runs)
       await api(`/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
         method: 'PATCH',
         body: JSON.stringify({
@@ -225,7 +212,6 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
     },
 
     async createPR(repo, branch, title, body) {
-      // Idempotent: check for existing PR on this branch
       const existing = await api(
         `/repos/${owner}/${repo}/pulls?head=${owner}:${branch}&state=open`,
       )

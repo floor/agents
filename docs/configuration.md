@@ -8,14 +8,17 @@ Floor Agents is configured through two layers: a YAML config file and environmen
 |----------|:--------:|---------|-------------|
 | `GITHUB_TOKEN` | Yes | — | GitHub personal access token |
 | `GITHUB_OWNER` | Yes | — | GitHub org or user that owns the repos |
-| `TASK_ADAPTER` | No | `linear` | Task adapter type: `linear` or `things` |
+| `TASK_ADAPTER` | No | `linear` | Task adapter type: `linear`, `things`, or `github-issues` |
 | `LINEAR_API_KEY` | If linear | — | Linear API key |
-| `LINEAR_TEAM_ID` | If linear | — | Linear team ID |
+| `LINEAR_TEAM_ID` | If linear | — | Linear team ID or key (e.g. `FLO`) |
+| `LINEAR_PROJECT_ID` | No | — | Filter issues to a specific Linear project |
 | `ANTHROPIC_API_KEY` | If used | — | Anthropic API key (only if agents use `provider: anthropic`) |
+| `GEMINI_API_KEY` | If used | — | Google Gemini API key (only if agents use `provider: gemini`) |
 | `LMSTUDIO_BASE_URL` | No | `http://localhost:1234/v1` | LM Studio server URL |
 | `LMSTUDIO_API_KEY` | No | — | LM Studio API key (usually not needed) |
 | `OPENAI_API_KEY` | If used | — | OpenAI API key |
 | `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
+| `CLAUDE_CODE_MODEL` | No | — | Model override for Claude Code adapter (`opus`, `sonnet`) |
 | `CONFIG_PATH` | No | `config/templates/default.yaml` | Path to company config |
 | `STATE_DIR` | No | `./data/executions` | Directory for execution state files |
 
@@ -88,7 +91,7 @@ agents:
 
 **Available capabilities:** `read_code`, `write_code`, `create_pr`, `review_pr`, `write_tests`, `decompose_task`, `manage_issues`, `approve`, `reject`
 
-**Available providers:** `anthropic`, `lmstudio`, `openai`, `ollama`, `local`
+**Available providers:** `anthropic`, `claude-code`, `gemini`, `lmstudio`, `openai`, `ollama`, `local`
 
 ### `guardrails`
 

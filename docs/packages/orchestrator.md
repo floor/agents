@@ -1,24 +1,32 @@
 # @floor-agents/orchestrator
 
-The main execution engine. Watches for tasks, dispatches to agents, manages the execution state machine, enforces guardrails and cost controls.
+The main execution engine. Watches for tasks, dispatches to agents, manages the execution state machine, enforces guardrails and cost controls, and records dogfooding metrics.
 
 ## Structure
 
 ```
 packages/orchestrator/src/
-├── index.ts           ← re-exports
-├── orchestrator.ts    ← main loop + state machine
-├── dispatcher.ts      ← resolves which agent handles an issue
-├── output-parser.ts   ← extracts files from LLM tool calls
-├── guardrails.ts      ← validates agent output before commit
-├── cost-tracker.ts    ← per-task and daily cost limits
-└── state-store.ts     ← file-based execution state persistence
+├── index.ts              ← re-exports
+├── orchestrator.ts       ← main loop + state machine
+├── dispatcher.ts         ← resolves which agent handles an issue
+├── output-parser.ts      ← extracts files from LLM tool calls
+├── guardrails.ts         ← validates agent output before commit
+├── cost-tracker.ts       ← per-task and daily cost limits
+├── state-store.ts        ← file-based execution state persistence
+└── metrics-collector.ts  ← dogfooding metrics (Phase 1 spec §9.3)
 ```
 
 ## Usage
 
 ```typescript
-import { createOrchestrator, createCostTracker, createStateStore } from '@floor-agents/orchestrator'
+import {
+  createOrchestrator,
+  createCostTracker,
+  createStateStore,
+  createMetricsCollector,
+} from '@floor-agents/orchestrator'
+
+const metricsCollector = await createMetricsCollector('./data/metrics.json')
 
 const orchestrator = createOrchestrator({
   company,          // CompanyConfig
@@ -28,6 +36,7 @@ const orchestrator = createOrchestrator({
   contextBuilder,   // ContextBuilder
   stateStore: createStateStore('./data/executions'),
   costTracker: createCostTracker(),
+  metricsCollector, // optional — omit to disable metrics
 })
 
 await orchestrator.start()  // blocks until stopped
@@ -109,6 +118,100 @@ File-based JSON persistence for crash recovery:
 - Atomic writes: write to `.tmp`, then `rename` (prevents corruption on crash)
 - On startup: loads all states, resumes incomplete tasks
 
+## Metrics Collector
+
+Tracks dogfooding quality metrics defined in Phase 1 spec §9.3. Persists to `data/metrics.json` and logs a summary table after each task.
+
+### Metrics tracked
+
+| Metric | Description |
+|--------|-------------|
+| **Parse success rate** | Successful LLM parses (≥1 file produced) / total LLM calls |
+| **Compilable output rate** | Tasks where a PR was created / total tasks (PR creation = typecheck passed) |
+| **Merge-ready rate** | PRs merged without manual edits / PRs with known merge status |
+| **Avg cost per task** | Mean USD cost across all completed tasks |
+| **Avg time to PR** | Mean ms from task start to PR creation |
+| **Guardrail trigger rate** | Tasks blocked by guardrails / total tasks |
+| **Crash recovery success rate** | Recovered tasks that completed / all recovered tasks |
+
+### API
+
+```typescript
+const collector = await createMetricsCollector('./data/metrics.json')
+
+collector.recordTaskStart(taskId, agentId, wasRecovered)
+collector.recordLlmCall(taskId, parseSuccess)
+collector.recordGuardrailResult(taskId, triggered, violationCount)
+collector.recordPrCreated(taskId)
+await collector.recordTaskComplete(taskId, 'done' | 'failed', costUsd, reviewCycles)
+
+const summary: MetricsSummary = collector.getSummary()
+collector.printSummary() // prints the box table to stdout
+```
+
+All `record*` methods are synchronous; `recordTaskComplete` is async (persists to disk).
+
+### Storage format
+
+```json
+{
+  "version": "1",
+  "updatedAt": "2026-04-08T12:00:00.000Z",
+  "tasks": [
+    {
+      "taskId": "ABC-123",
+      "agentId": "backend",
+      "startedAt": "2026-04-08T11:00:00.000Z",
+      "completedAt": "2026-04-08T11:04:30.000Z",
+      "status": "done",
+      "llmCallCount": 3,
+      "parseSuccessCount": 3,
+      "prCreated": true,
+      "prCreatedAt": "2026-04-08T11:04:00.000Z",
+      "mergedWithoutEdits": null,
+      "costUsd": 0.4821,
+      "timeToPrMs": 240000,
+      "guardrailTriggered": false,
+      "guardrailViolationCount": 0,
+      "wasRecovered": false,
+      "reviewCycles": 1
+    }
+  ]
+}
+```
+
+`mergedWithoutEdits` is `null` until set externally (e.g. a webhook handler). The merge-ready rate metric is omitted from the summary when no tasks have this data.
+
+### Summary script
+
+Print the current metrics without running the orchestrator:
+
+```sh
+bun run src/metrics.ts
+
+# Custom path
+METRICS_PATH=./data/metrics.json bun run src/metrics.ts
+```
+
+Example output:
+```
+┌───────────────────────────────────────────────┐
+│  Dogfooding Metrics                           │
+├───────────────────────────────────────────────┤
+│  Total tasks                              12  │
+│    Completed                              10  │
+│    Failed                                  2  │
+├───────────────────────────────────────────────┤
+│  Parse success rate                    96.7%  │
+│  Compilable output rate                83.3%  │
+│  Merge-ready rate                       n/a   │
+│  Avg cost per task                   $0.4821  │
+│  Avg time to PR                        4m 0s  │
+│  Guardrail trigger rate                16.7%  │
+│  Crash recovery success                 n/a   │
+└───────────────────────────────────────────────┘
+```
+
 ## Crash Recovery
 
 On startup, the orchestrator:
@@ -122,6 +225,8 @@ Steps are idempotent:
 - `createPR` — checks for existing open PR → reuse
 - `commitFiles` — force-updates branch ref → overwrites partial state
 - `addComment` — may duplicate a comment (acceptable)
+
+Recovered tasks are flagged in metrics (`wasRecovered: true`) so crash recovery success rate can be calculated separately.
 
 ## Graceful Shutdown
 

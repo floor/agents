@@ -44,3 +44,5 @@ export { validateCompanyConfig } from './config/validator.ts'
 // Utils
 export { estimateTokens } from './utils/tokens.ts'
 export { slugify } from './utils/slugify.ts'
+export { retry } from './utils/retry.ts'
+export type { RetryOptions } from './utils/retry.ts'

@@ -60,11 +60,15 @@ async function spawnClaudeCode(
 
   const start = performance.now()
 
+  // TODO: Use setup-token for Max plan auth instead of ANTHROPIC_API_KEY.
+  // Currently passing the full env including API key — this bills per-token.
+  // Run `claude setup-token` to configure long-lived Max plan auth, then
+  // we can strip ANTHROPIC_API_KEY here.
   const proc = Bun.spawn(args, {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
-    env: cleanEnv,
+    env: { ...process.env, CLAUDE_CODE_SKIP_HOOKS: '1' },
   })
 
   const timeout = setTimeout(() => proc.kill(), timeoutMs)

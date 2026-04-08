@@ -76,13 +76,17 @@ export function createClaudeCodeAdapter(config: ClaudeCodeAdapterConfig = {}): L
         args.push('--allowedTools', config.allowedTools.join(','))
       }
 
+      // Strip API keys from env so Claude Code uses the Max plan subscription,
+      // not the Anthropic API. If ANTHROPIC_API_KEY is present, Claude Code
+      // routes through the API and charges per token instead of using the plan.
+      const { ANTHROPIC_API_KEY, ...cleanEnv } = process.env
+
       const proc = Bun.spawn(args, {
         cwd: config.cwd ?? process.cwd(),
         stdout: 'pipe',
         stderr: 'pipe',
         env: {
-          ...process.env,
-          // Ensure non-interactive mode
+          ...cleanEnv,
           CI: 'true',
         },
       })

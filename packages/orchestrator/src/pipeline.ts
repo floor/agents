@@ -150,8 +150,7 @@ async function dispatchReview(
       addComment: (id, text) => deps.taskAdapter.addComment(id, text),
       addPRComment: (prId, body) => deps.gitAdapter.addPRComment(deps.company.project.repo, prId, body),
       getPRDiff: (prId) => deps.gitAdapter.getPRDiff(deps.company.project.repo, prId),
-      projectName: deps.company.project.name,
-      projectRepo: deps.company.project.repo,
+      project: deps.company.project,
       maxReviewCycles: MAX_REVIEW_CYCLES,
     })
   }
@@ -209,8 +208,7 @@ export async function executeTask(
           stateStore, costTracker: deps.costTracker,
           addComment: (id, text) => taskAdapter.addComment(id, text),
           setLabel: (id, label) => taskAdapter.setLabel(id, label),
-          projectName: company.project.name,
-          projectRepo: company.project.repo,
+          project: company.project,
         })
       } else {
         state = await runApiDevAgent(issue, devAgent, state, deps)
@@ -284,8 +282,7 @@ export async function executeTask(
             stateStore, costTracker: deps.costTracker,
             addComment: (id, text) => taskAdapter.addComment(id, text),
             setLabel: (id, label) => taskAdapter.setLabel(id, label),
-            projectName: company.project.name,
-            projectRepo: company.project.repo,
+            project: company.project,
           }, feedback)
 
           // Native already committed — skip to review

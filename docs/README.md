@@ -7,6 +7,7 @@
 - [Getting Started](./getting-started.md) — setup, configuration, first run
 - [Configuration](./configuration.md) — YAML config reference, environment variables
 - [Known Issues](./known-issues.md) — tracked issues and their resolution status
+- [Next Steps](./next-steps.md) — prioritized roadmap after three sprints of dogfooding
 
 ## Packages
 

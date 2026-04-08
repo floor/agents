@@ -13,7 +13,10 @@ import { runToolUseLoop, type LLMAdapterResolver } from './llm-runner.ts'
 import { parseToolCallOutput } from './output-parser.ts'
 import { validateAgentOutput } from './guardrails.ts'
 import { runReviewAgent, MAX_REVIEW_CYCLES } from './review.ts'
+import { createWorktree, commitAndPushWorktree, removeWorktree } from './worktree.ts'
 import type { CostTracker } from './cost-tracker.ts'
+
+const NATIVE_PROVIDERS = new Set(['claude-code'])
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -190,6 +193,155 @@ async function runDevAgent(
   return advanceState(state, 'validating_output', { parsedOutput: output }, stateStore)
 }
 
+// ── Native agent (Claude Code on worktree) ──────────────────────
+
+async function runNativeAgent(
+  issue: Issue,
+  agent: AgentDefinition,
+  state: ExecutionState,
+  deps: PipelineDeps,
+  reviewComments?: string,
+): Promise<ExecutionState> {
+  const { company, taskAdapter, contextBuilder, stateStore, costTracker, getAdapter } = deps
+
+  state = await advanceState(state, 'calling_llm', {}, stateStore)
+
+  if (!costTracker.canStartNewTask(company.costs)) {
+    throw new Error('Daily cost limit reached.')
+  }
+
+  // Create a worktree for the agent to work in
+  const worktree = await createWorktree(state.branchName!)
+
+  const isRevision = !!reviewComments
+  console.log(`[${agent.id}] native agent on worktree: ${worktree.path}`)
+
+  await taskAdapter.addComment(issue.id, [
+    isRevision
+      ? `⏳ **${agent.name}** is addressing review feedback...`
+      : `⏳ **${agent.name}** is working on the code...`,
+    `> Model: \`${agent.llm.model}\` via ${agent.llm.provider} (native mode)`,
+    `> Worktree: \`${worktree.branch}\``,
+  ].join('\n'))
+
+  try {
+    // Build context hints for the agent
+    const ctx = await contextBuilder.build({
+      agent,
+      issue,
+      project: company.project,
+      reviewComments,
+    })
+
+    // Build the prompt — include context as hints, not constraints
+    const promptParts = [
+      ctx.systemPrompt,
+      '',
+      '## Task',
+      `**${issue.title}**`,
+      issue.body || '',
+    ]
+
+    if (reviewComments) {
+      promptParts.push('', '## Review Feedback (address these)', reviewComments)
+    }
+
+    promptParts.push(
+      '',
+      '## Instructions',
+      'You are working directly on a git branch. Edit files, run tests, iterate until the code is correct.',
+      'Run `bun run typecheck` and `bun test` before finishing to make sure everything passes.',
+      'Do NOT use write_file or pr_description tools — edit files directly.',
+    )
+
+    const prompt = promptParts.join('\n')
+
+    // Spawn Claude Code on the worktree
+    const start = performance.now()
+
+    const { ANTHROPIC_API_KEY, ...cleanEnv } = process.env
+    const args = [
+      'claude',
+      '-p', prompt,
+      '--output-format', 'json',
+      '--max-turns', '25',
+    ]
+
+    if (agent.llm.model) {
+      args.push('--model', agent.llm.model)
+    }
+
+    const proc = Bun.spawn(args, {
+      cwd: worktree.path,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...cleanEnv, CI: 'true' },
+    })
+
+    const timeout = setTimeout(() => proc.kill(), 600_000) // 10 min
+    const stdout = await new Response(proc.stdout).text()
+    const stderr = await new Response(proc.stderr).text()
+    const exitCode = await proc.exited
+    clearTimeout(timeout)
+
+    const durationMs = Math.round(performance.now() - start)
+
+    // Parse result
+    let cost = 0
+    let resultText = ''
+    try {
+      const data = JSON.parse(stdout)
+      resultText = data.result ?? ''
+      cost = data.total_cost_usd ?? 0
+    } catch {
+      resultText = stdout || stderr
+    }
+
+    costTracker.recordCost(issue.id, cost)
+    console.log(`[${agent.id}] native agent: ${formatDuration(durationMs)}, $${cost.toFixed(4)}, exit ${exitCode}`)
+
+    if (exitCode !== 0 && exitCode !== 143) {
+      throw new Error(`Claude Code failed (exit ${exitCode}): ${stderr.slice(0, 500)}`)
+    }
+
+    // Commit and push whatever changes were made
+    const sha = await commitAndPushWorktree(
+      worktree,
+      `${issue.title}\n\nAutomated by Floor Agents (${agent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`,
+    )
+
+    if (!sha) {
+      await taskAdapter.addComment(issue.id, `❌ **${agent.name}** made no changes to the code.`)
+      await taskAdapter.setLabel(issue.id, 'needs-human')
+      return advanceState(state, 'failed', {
+        error: 'Native agent made no changes',
+        llmResponse: resultText,
+        costUsd: costTracker.getTaskCost(issue.id),
+      }, stateStore)
+    }
+
+    // Report success
+    const diffStat = await Bun.$`git -C ${worktree.path} diff HEAD~1 --stat`.quiet()
+    const diffText = diffStat.stdout.toString().trim()
+
+    await taskAdapter.addComment(issue.id, [
+      `✅ **${agent.name}** completed work (native mode):`,
+      '```',
+      diffText,
+      '```',
+      `> ${formatDuration(durationMs)} | $${cost.toFixed(4)}`,
+    ].join('\n'))
+
+    return advanceState(state, 'creating_pr', {
+      commitSha: sha,
+      costUsd: costTracker.getTaskCost(issue.id),
+      llmResponse: resultText,
+    }, stateStore)
+  } finally {
+    await removeWorktree(worktree)
+  }
+}
+
 // ── Main task pipeline ───────────────────────────────────────────
 
 export async function executeTask(
@@ -211,6 +363,8 @@ export async function executeTask(
         ?? issue.id.slice(0, 8)
       const branchName = `agent/${issueKey}-${slugify(issue.title)}`
 
+      const isNative = NATIVE_PROVIDERS.has(devAgent.llm.provider)
+
       console.log(`[orchestrator] creating branch: ${branchName}`)
       await gitAdapter.createBranch(company.project.repo, branchName)
       state = await advanceState(state, 'building_context', { branchName }, stateStore)
@@ -223,62 +377,75 @@ export async function executeTask(
         reviewer ? `- Reviewer: **${reviewer.name}** (\`${reviewer.llm.model}\` via ${reviewer.llm.provider})` : '',
         '',
         `**Branch:** \`${branchName}\``,
-        `**Pipeline:** branch → code → guardrails → commit → PR${reviewer ? ' → review' : ''}`,
+        `**Mode:** ${isNative ? 'native (worktree)' : 'API (tool use)'}`,
+        `**Pipeline:** branch → code${isNative ? '' : ' → guardrails'} → commit → PR${reviewer ? ' → review' : ''}`,
       ].filter(Boolean).join('\n'))
     }
 
-    // Step: dev agent writes code
-    if (state.step === 'building_context' || state.step === 'calling_llm' || state.step === 'parsing_output') {
-      state = await runDevAgent(issue, devAgent, state, deps)
-    }
+    const isNativeAgent = NATIVE_PROVIDERS.has(devAgent.llm.provider)
 
-    // Step: guardrails
-    if (state.step === 'validating_output' && state.parsedOutput) {
-      const violations = validateAgentOutput(state.parsedOutput, guardrails)
+    if (isNativeAgent) {
+      // ── Native path: Claude Code works directly on a worktree ──
+      if (state.step === 'building_context' || state.step === 'calling_llm') {
+        state = await runNativeAgent(issue, devAgent, state, deps)
+      }
+    } else {
+      // ── API path: tool use → parse → guardrails → commit via API ──
 
-      if (violations.length > 0) {
-        const details = violations.map(v => `- ${v.detail}`).join('\n')
-        await taskAdapter.addComment(issue.id, `❌ **Guardrail violations** — changes will not be committed:\n${details}`)
-        await taskAdapter.setLabel(issue.id, 'needs-human')
-        state = await advanceState(state, 'failed', { error: `Guardrail violations: ${violations.length}` }, stateStore)
-        return
+      // Step: dev agent writes code
+      if (state.step === 'building_context' || state.step === 'calling_llm' || state.step === 'parsing_output') {
+        state = await runDevAgent(issue, devAgent, state, deps)
       }
 
-      await taskAdapter.addComment(issue.id, `🔍 **Guardrails passed** — ${state.parsedOutput.files.length} files validated`)
-      state = await advanceState(state, 'committing_files', {}, stateStore)
-    }
+      // Step: guardrails
+      if (state.step === 'validating_output' && state.parsedOutput) {
+        const violations = validateAgentOutput(state.parsedOutput, guardrails)
 
-    // Step: commit files
-    if (state.step === 'committing_files' && state.branchName && state.parsedOutput) {
-      console.log(`[orchestrator] committing ${state.parsedOutput.files.length} files`)
-      const sha = await gitAdapter.commitFiles(
-        company.project.repo,
-        state.branchName,
-        state.parsedOutput.files.map(f => ({ path: f.path, content: f.content })),
-        `${issue.title}\n\nAutomated by Floor Agents (${devAgent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`,
-      )
-      console.log(`[orchestrator] committed: ${sha.slice(0, 8)}`)
-      state = await advanceState(state, 'creating_pr', { commitSha: sha }, stateStore)
+        if (violations.length > 0) {
+          const details = violations.map(v => `- ${v.detail}`).join('\n')
+          await taskAdapter.addComment(issue.id, `❌ **Guardrail violations** — changes will not be committed:\n${details}`)
+          await taskAdapter.setLabel(issue.id, 'needs-human')
+          state = await advanceState(state, 'failed', { error: `Guardrail violations: ${violations.length}` }, stateStore)
+          return
+        }
+
+        await taskAdapter.addComment(issue.id, `🔍 **Guardrails passed** — ${state.parsedOutput.files.length} files validated`)
+        state = await advanceState(state, 'committing_files', {}, stateStore)
+      }
+
+      // Step: commit files via GitHub API
+      if (state.step === 'committing_files' && state.branchName && state.parsedOutput) {
+        console.log(`[orchestrator] committing ${state.parsedOutput.files.length} files`)
+        const sha = await gitAdapter.commitFiles(
+          company.project.repo,
+          state.branchName,
+          state.parsedOutput.files.map(f => ({ path: f.path, content: f.content })),
+          `${issue.title}\n\nAutomated by Floor Agents (${devAgent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`,
+        )
+        console.log(`[orchestrator] committed: ${sha.slice(0, 8)}`)
+        state = await advanceState(state, 'creating_pr', { commitSha: sha }, stateStore)
+      }
     }
 
     // Step: create PR
-    if (state.step === 'creating_pr' && state.branchName && state.parsedOutput) {
+    if (state.step === 'creating_pr' && state.branchName) {
+      const prBody = state.parsedOutput?.prDescription || [
+        'Automated PR by Floor Agents',
+        '',
+        `**Task:** ${issue.title}`,
+        issue.body ? `\n${issue.body}` : '',
+        '',
+        ...(state.parsedOutput?.files ?? []).map(f => `- \`${f.path}\``),
+        '',
+        `**Agent:** ${devAgent.name} (\`${devAgent.llm.model}\`)`,
+        `**Cost:** $${state.costUsd.toFixed(4)}`,
+      ].join('\n')
+
       const pr = await gitAdapter.createPR(
         company.project.repo,
         state.branchName,
         issue.title,
-        state.parsedOutput.prDescription || [
-          'Automated PR by Floor Agents',
-          '',
-          `**Task:** ${issue.title}`,
-          issue.body ? `\n${issue.body}` : '',
-          '',
-          '**Files changed:**',
-          ...state.parsedOutput.files.map(f => `- \`${f.path}\``),
-          '',
-          `**Agent:** ${devAgent.name} (\`${devAgent.llm.model}\`)`,
-          `**Cost:** $${state.costUsd.toFixed(4)}`,
-        ].join('\n'),
+        prBody,
       )
 
       console.log(`[orchestrator] PR created: ${pr.url}`)
@@ -313,44 +480,59 @@ export async function executeTask(
         console.log(`[orchestrator] revision ${state.reviewCycle}: ${devAgent.name} addressing feedback...`)
 
         state = await advanceState(state, 'building_context', { parsedOutput: null, reviewVerdict: null }, stateStore)
-        state = await runDevAgent(issue, devAgent, state, deps, feedback)
 
-        if (state.step === 'validating_output' && state.parsedOutput) {
-          const violations = validateAgentOutput(state.parsedOutput, guardrails)
-          if (violations.length > 0) {
-            const details = violations.map(v => `- ${v.detail}`).join('\n')
-            await taskAdapter.addComment(issue.id, `❌ **Guardrail violations on revision:**\n${details}`)
-            await taskAdapter.setLabel(issue.id, 'needs-human')
-            state = await advanceState(state, 'failed', { error: `Guardrail violations: ${violations.length}` }, stateStore)
-            return
+        const isNativeRevision = NATIVE_PROVIDERS.has(devAgent.llm.provider)
+
+        if (isNativeRevision) {
+          // Native revision: re-run Claude Code on the worktree with feedback
+          state = await runNativeAgent(issue, devAgent, state, deps, feedback)
+
+          if (state.step === 'creating_pr') {
+            // Already committed in worktree — go straight to review
+            state = await advanceState(state, 'reviewing', {}, stateStore)
           }
+        } else {
+          // API revision: tool use → guardrails → commit via API
+          state = await runDevAgent(issue, devAgent, state, deps, feedback)
 
-          if (state.branchName) {
-            console.log(`[orchestrator] committing revision (${state.parsedOutput.files.length} files)`)
-            const sha = await gitAdapter.commitFiles(
-              company.project.repo,
-              state.branchName,
-              state.parsedOutput.files.map(f => ({ path: f.path, content: f.content })),
-              `Address review feedback (cycle ${state.reviewCycle})\n\nAutomated by Floor Agents (${devAgent.name})\nTask: ${issue.id}`,
-            )
-            console.log(`[orchestrator] committed revision: ${sha.slice(0, 8)}`)
-            state = await advanceState(state, 'reviewing', { commitSha: sha }, stateStore)
-
-            if (reviewer && state.prId) {
-              const reviewDeps = {
-                company,
-                gitAdapter,
-                taskAdapter,
-                stateStore,
-                costTracker: deps.costTracker,
-                getAdapter: deps.getAdapter,
-              }
-              state = await runReviewAgent(issue, reviewer, state, reviewDeps)
-
-              if (state.step === 'revision') {
-                return executeTask(issue, devAgent, deps, state)
-              }
+          if (state.step === 'validating_output' && state.parsedOutput) {
+            const violations = validateAgentOutput(state.parsedOutput, guardrails)
+            if (violations.length > 0) {
+              const details = violations.map(v => `- ${v.detail}`).join('\n')
+              await taskAdapter.addComment(issue.id, `❌ **Guardrail violations on revision:**\n${details}`)
+              await taskAdapter.setLabel(issue.id, 'needs-human')
+              state = await advanceState(state, 'failed', { error: `Guardrail violations: ${violations.length}` }, stateStore)
+              return
             }
+
+            if (state.branchName) {
+              console.log(`[orchestrator] committing revision (${state.parsedOutput.files.length} files)`)
+              const sha = await gitAdapter.commitFiles(
+                company.project.repo,
+                state.branchName,
+                state.parsedOutput.files.map(f => ({ path: f.path, content: f.content })),
+                `Address review feedback (cycle ${state.reviewCycle})\n\nAutomated by Floor Agents (${devAgent.name})\nTask: ${issue.id}`,
+              )
+              console.log(`[orchestrator] committed revision: ${sha.slice(0, 8)}`)
+              state = await advanceState(state, 'reviewing', { commitSha: sha }, stateStore)
+            }
+          }
+        }
+
+        // Re-review after revision (both paths converge here)
+        if (state.step === 'reviewing' && reviewer && state.prId) {
+          const reviewDeps = {
+            company,
+            gitAdapter,
+            taskAdapter,
+            stateStore,
+            costTracker: deps.costTracker,
+            getAdapter: deps.getAdapter,
+          }
+          state = await runReviewAgent(issue, reviewer, state, reviewDeps)
+
+          if (state.step === 'revision') {
+            return executeTask(issue, devAgent, deps, state)
           }
         }
       }

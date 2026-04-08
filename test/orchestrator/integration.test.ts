@@ -179,7 +179,15 @@ afterEach(async () => {
 })
 
 async function loadTestConfig(): Promise<CompanyConfig> {
-  return loadCompanyConfig('config/templates/default.yaml')
+  const config = await loadCompanyConfig('config/templates/default.yaml')
+  // Override agents to use API providers (not claude-code) for testing
+  return {
+    ...config,
+    agents: config.agents.map(a => ({
+      ...a,
+      llm: { ...a.llm, provider: 'anthropic' },
+    })),
+  }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────

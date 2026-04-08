@@ -35,3 +35,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Runtime state
 data/executions/
+
+# Agent worktrees
+.worktrees/

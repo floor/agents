@@ -38,3 +38,4 @@ Each package has its own documentation:
 - [2026-04-07: First Sprint](./experiments/2026-04-07-first-sprint.md) — 5 issues, 5 PRs, Gemma + Opus, $0.32 total
 - [2026-04-07: Second Sprint](./experiments/2026-04-07-second-sprint.md) — 5 issues, 5 PRs, Claude Code Sonnet + Opus, $1.23 total
 - [2026-04-08: Third Sprint](./experiments/2026-04-08-third-sprint.md) — 5 complex issues, 2 timeouts, architectural lessons learned
+- [2026-04-08: Fourth Sprint](./experiments/2026-04-08-fourth-sprint.md) — native worktree execution, editing works, push pending

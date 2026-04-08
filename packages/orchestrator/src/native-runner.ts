@@ -51,6 +51,7 @@ async function spawnClaudeCode(
     '-p', prompt,
     '--output-format', 'json',
     '--max-turns', String(maxTurns),
+    '--allowedTools', 'Read,Edit,Write,Bash,Glob,Grep',
   ]
 
   if (model) {
@@ -63,7 +64,7 @@ async function spawnClaudeCode(
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...cleanEnv, CI: 'true' },
+    env: cleanEnv,
   })
 
   const timeout = setTimeout(() => proc.kill(), timeoutMs)

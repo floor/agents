@@ -5,6 +5,7 @@ import type {
   StateStore,
   AgentDefinition,
   ReviewVerdict,
+  ProjectConfig,
 } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
 import { createWorktree, commitAndPushWorktree, removeWorktree, type Worktree } from './worktree.ts'
@@ -94,8 +95,7 @@ export type NativeAgentDeps = {
   readonly costTracker: CostTracker
   readonly addComment: (issueId: string, text: string) => Promise<void>
   readonly setLabel: (issueId: string, label: string) => Promise<void>
-  readonly projectName: string
-  readonly projectRepo: string
+  readonly project: ProjectConfig
 }
 
 export async function runNativeDevAgent(
@@ -127,7 +127,7 @@ export async function runNativeDevAgent(
     const ctx = await contextBuilder.build({
       agent,
       issue,
-      project: { name: deps.projectName, repo: deps.projectRepo } as any,
+      project: deps.project,
       reviewComments,
     })
 
@@ -208,8 +208,7 @@ export type NativeReviewDeps = {
   readonly addComment: (issueId: string, text: string) => Promise<void>
   readonly addPRComment: (prId: string, body: string) => Promise<void>
   readonly getPRDiff: (prId: string) => Promise<string>
-  readonly projectName: string
-  readonly projectRepo: string
+  readonly project: ProjectConfig
   readonly maxReviewCycles: number
 }
 
@@ -248,7 +247,7 @@ export async function runNativeReviewAgent(
       rolePrompt,
       '',
       '## Project',
-      `Project: ${deps.projectName}`,
+      `Project: ${deps.project.name}`,
       '',
       '## Task Being Reviewed',
       `**${issue.title}**`,

@@ -36,30 +36,43 @@ export async function commitAndPushWorktree(
   worktree: Worktree,
   message: string,
 ): Promise<string | null> {
-  // Check if there are changes
-  const status = await Bun.$`git -C ${worktree.path} status --porcelain`.quiet()
-  const statusText = status.stdout.toString().trim()
+  try {
+    // Check for uncommitted changes
+    const status = await Bun.$`git -C ${worktree.path} status --porcelain`.quiet()
+    const statusText = status.stdout.toString().trim()
 
-  if (!statusText) {
-    console.log('[worktree] no changes to commit')
-    return null
+    if (statusText) {
+      // Stage and commit uncommitted changes
+      await Bun.$`git -C ${worktree.path} add -A`.quiet()
+      await Bun.$`git -C ${worktree.path} commit -m ${message}`.quiet()
+      console.log('[worktree] committed uncommitted changes')
+    }
+
+    // Check if there are unpushed commits (Claude Code may have already committed)
+    const logResult = await Bun.$`git -C ${worktree.path} log origin/${worktree.branch}..HEAD --oneline`.quiet()
+    const unpushed = logResult.stdout.toString().trim()
+
+    if (!unpushed && !statusText) {
+      console.log('[worktree] no changes to commit or push')
+      return null
+    }
+
+    // Get commit SHA
+    const shaResult = await Bun.$`git -C ${worktree.path} rev-parse HEAD`.quiet()
+    const sha = shaResult.stdout.toString().trim()
+
+    // Push
+    await Bun.$`git -C ${worktree.path} push origin ${worktree.branch}`.quiet()
+
+    const commitCount = unpushed ? unpushed.split('\n').length : 1
+    console.log(`[worktree] pushed ${commitCount} commit(s): ${sha.slice(0, 8)}`)
+    return sha
+  } catch (err: any) {
+    const stderr = err.stderr?.toString?.() ?? ''
+    const stdout = err.stdout?.toString?.() ?? ''
+    console.error(`[worktree] commit/push failed: ${stderr || stdout || err.message}`)
+    throw err
   }
-
-  // Stage all changes
-  await Bun.$`git -C ${worktree.path} add -A`.quiet()
-
-  // Commit
-  await Bun.$`git -C ${worktree.path} commit -m ${message}`.quiet()
-
-  // Get commit SHA
-  const shaResult = await Bun.$`git -C ${worktree.path} rev-parse HEAD`.quiet()
-  const sha = shaResult.stdout.toString().trim()
-
-  // Push
-  await Bun.$`git -C ${worktree.path} push origin ${worktree.branch}`.quiet()
-
-  console.log(`[worktree] committed and pushed: ${sha.slice(0, 8)}`)
-  return sha
 }
 
 export async function removeWorktree(worktree: Worktree): Promise<void> {

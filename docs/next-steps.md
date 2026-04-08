@@ -1,90 +1,95 @@
 # Next Steps
 
-Priorities from the April 8 review session, after three sprints of dogfooding.
+Updated April 9, 2026 — after four sprints of dogfooding.
 
 ---
 
-## 1. Fix provider routing — respect the configuration
+## Completed
 
-**Priority:** High (actively causing unintended API billing)
-**Linear:** FLO-15 (part of)
+- ~~Fix provider routing~~ — traced and fixed. The orchestrator correctly routes through `getLLMAdapter(agent.llm.provider)`. The billing issue was `ANTHROPIC_API_KEY` in the Claude Code subprocess env.
+- ~~Split the orchestrator~~ (FLO-16) — done. `orchestrator.ts` (131 lines), `pipeline.ts` (356 lines), `review.ts` (162 lines), `llm-runner.ts` (81 lines), `native-runner.ts` (344 lines).
+- ~~Native agent execution with git worktree~~ (FLO-15) — implemented. Claude Code edits files in worktrees. Last mile: git push from worktree fails.
 
-The orchestrator's review path calls the Anthropic API directly instead of routing through the configured provider. If an agent is configured with `provider: claude-code`, all calls for that agent — including CTO reviews — must go through Claude Code CLI, not the Anthropic API.
+## In Progress
 
-**Root cause:** The CTO review step likely bypasses the `llmAdapters` map somewhere, or the Claude Code adapter falls back to the API on certain code paths.
+### 1. Fix git push from worktree
 
-**Fix:** Trace the review execution path and ensure it uses `getLLMAdapter(agent.llm.provider)` consistently. No fallbacks, no shortcuts.
+**Priority:** High — this is the last blocker for the native execution loop.
 
-## 2. Native agent execution with git worktree
+Claude Code successfully edits files and commits in the worktree (exit 0). But `git push origin <branch>` fails with "failed to push some refs." Needs investigation:
+- Check if the worktree has the right remote configured
+- Check if git credentials propagate to worktrees
+- May need to push from the main repo: `git push origin agent/branch` after the worktree commit
 
-**Priority:** High (FLO-15)
-**Linear:** FLO-15
+### 2. Auth: Claude Code Max plan via setup-token
 
-Replace the clone-based approach with `git worktree`:
+**Priority:** High — currently using `ANTHROPIC_API_KEY` (per-token billing).
 
-```
-git worktree add /tmp/agent-FLO-42 agent/FLO-42-branch-name
-```
+Run `claude setup-token` to set up long-lived Max plan auth. Then strip `ANTHROPIC_API_KEY` from the native runner env to use subscription billing instead of per-token.
 
-This creates a lightweight checkout that shares the `.git` directory — no cloning, no disk waste, works with large repos.
+The native runner has a TODO comment marking this.
 
-**Sequential approach (Phase 1):**
-1. Agent picks up task, creates branch
-2. `git worktree add` to a temp directory for the branch
-3. Spawn `claude -p "task..." --cwd /tmp/agent-FLO-42`
-4. Claude Code reads/edits files in the worktree natively
-5. Commit, push, create PR
-6. `git worktree remove` to clean up
+### 3. Linear rate limiting and polling interval
 
-**Parallel approach (future):**
-Multiple worktrees can coexist — each agent gets its own. But sequential is correct for Phase 1.
+**Priority:** Medium — hit 5000 req/hr limit during sprint 4.
 
-**Key insight:** Don't clone the repo. Don't even checkout on the main working directory. Worktrees are the right primitive.
+Current: 5-second polling, no backoff on errors. Fix:
+- Increase polling interval to 30 seconds (spec originally said 30s)
+- Add exponential backoff on errors (double interval on each failure, cap at 5 min)
+- Stop polling entirely when rate limited (parse `Retry-After` or wait 1 hour)
+- Log rate limit events instead of spamming error messages
 
-## 3. Split the orchestrator into smaller modules
+### 4. Context builder as hints for native agents
 
-**Priority:** Medium
-**Linear:** Create issue
+**Priority:** Low — native mode works without this, it's a quality improvement.
 
-`orchestrator.ts` is 500+ lines handling: watch loop, dispatch, dev agent execution, CTO review, revision loop, state management, cost tracking, Linear comments. Break into:
+The context builder output is included in the Claude Code prompt as starting hints. This works but could be improved:
+- Only include file paths as hints (not full content — Claude Code reads them itself)
+- Include import graph from the v2 file selector
+- Reduce token waste from duplicate content
 
-- `pipeline.ts` — step-by-step task execution
-- `review.ts` — CTO review logic (fetch diff, call reviewer, post verdict)
-- `revision.ts` — feedback loop (re-run dev, commit, re-review)
-- `orchestrator.ts` — watch loop, dispatch, resume. Thin coordinator.
+### 5. Task decomposition for complex issues
 
-Each module is independently testable. The orchestrator becomes a thin shell that delegates to the pipeline.
+**Priority:** Low — depends on workflow engine (FLO-13).
 
-## 4. Context builder as hints, not sole source
-
-**Priority:** Medium
-
-The context builder should NOT be skipped for Claude Code agents. Code is context. But its role changes:
-
-- **For API agents (LM Studio, Gemini):** The context builder IS the only source of context. It selects files and builds the system prompt.
-- **For Claude Code agents:** The context builder provides **hints** — "these files are relevant to the task." Claude Code can then explore further on its own.
-
-In practice: include the context builder output in the Claude Code prompt as a "suggested starting point" section, but don't restrict Claude Code to only those files.
-
-## 5. Task decomposition for complex issues
-
-**Priority:** Low (depends on workflow engine)
-
-Complex tasks (workflow engine, branch checkout redesign) fail because they're too large for a single agent session. The PM agent should:
-
-1. Read the issue
-2. Assess complexity (file count, scope across packages)
-3. If complex → decompose into sub-issues in Linear
-4. Each sub-issue is small enough for a single agent session
-
-This requires the workflow engine (FLO-13) to be working first. Park this until then.
+Complex tasks (workflow engine, branch checkout) timeout or produce incomplete results. The PM agent should assess complexity and decompose large tasks into sub-issues before assigning to dev agents.
 
 ---
 
-## Execution order
+## Sprint Summary
 
-1. **Fix provider routing** — small, high impact, stops billing leak
-2. **Git worktree execution** — enables CTO to run typecheck/tests, fixes the core architecture
-3. **Split orchestrator** — makes #2 easier to implement and test
-4. **Context builder hints** — integrates naturally once worktree execution works
-5. **Task decomposition** — future, after workflow engine
+| Sprint | Model | Tasks | PRs | Merged | Key Outcome |
+|:------:|-------|:-----:|:---:|:------:|-------------|
+| 1 | Gemma (LM Studio) | 5 | 5 | 2 | Pipeline works, code needs cleanup |
+| 2 | Claude Code Sonnet (API) | 5 | 5 | 5 | Production quality, all merged |
+| 3 | Claude Code Sonnet (CLI) | 5 | 1 | 1 | Adapter mismatch exposed |
+| 4 | Claude Code (native worktree) | 5 | 0 | 0 | Editing works, push fails |
+
+## Architecture Status
+
+```
+packages/
+├── core/              ✅ Stable
+├── anthropic/         ✅ Stable
+├── claude-code/       ⚠️ Works but auth needs setup-token
+├── lmstudio/          ✅ Stable
+├── openai/            ✅ Stable
+├── gemini/            ✅ Created by AI agents (sprint 2)
+├── github/            ✅ Stable (branch protection, request logging)
+├── task/              ✅ Linear + Things + GitHub Issues
+├── context-builder/   ✅ v2 import tracing (created by AI agents)
+└── orchestrator/      ⚠️ Native mode needs push fix
+    ├── orchestrator.ts     131 lines — watch loop, dispatch
+    ├── pipeline.ts         356 lines — task execution flow
+    ├── native-runner.ts    344 lines — worktree dev + review
+    ├── review.ts           162 lines — API-based CTO review
+    ├── llm-runner.ts        81 lines — tool use loop
+    ├── worktree.ts          82 lines — git worktree utilities
+    ├── guardrails.ts        91 lines — output validation
+    ├── cost-tracker.ts      70 lines — spending limits
+    ├── state-store.ts       55 lines — crash recovery
+    ├── output-parser.ts     40 lines — parse tool calls
+    └── dispatcher.ts        18 lines — agent resolution
+
+Tests: 116 across 22 files
+```

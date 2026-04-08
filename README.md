@@ -60,18 +60,19 @@ A monorepo with 9 packages, each with a single responsibility:
 packages/
 ├── core/              Types, config loader, validation
 ├── anthropic/         Claude API adapter
-├── claude-code/       Claude Code CLI adapter (spawns agent subprocess)
+├── claude-code/       Claude Code CLI adapter (native worktree execution)
 ├── lmstudio/          LM Studio adapter (local models)
 ├── openai/            OpenAI-compatible adapter (OpenAI, Ollama, etc.)
+├── gemini/            Google Gemini adapter
 ├── github/            GitHub REST API (branches, commits, PRs)
-├── task/              Task managers (Linear, Things 3)
-├── context-builder/   File selection, prompt rendering, token budgets
-└── orchestrator/      State machine, guardrails, cost tracking, team pipeline
+├── task/              Task managers (Linear, Things 3, GitHub Issues)
+├── context-builder/   File selection (v2 import tracing), prompt rendering, token budgets
+└── orchestrator/      Pipeline, native runner, review, guardrails, cost tracking
 ```
 
 ### Key Design Decisions
 
-- **Tool use over text parsing** — agents call `write_file` and `pr_description` as structured tool calls, not markdown or XML
+- **Two execution modes** — API agents (LM Studio, Gemini) use tool-use calls; Claude Code agents work directly on git worktrees with full file access
 - **Vendor-agnostic AI** — customers choose their LLM providers per agent. Mix local and cloud models in the same team
 - **Config-driven** — a single YAML file defines the entire team: agents, models, guardrails, cost limits
 - **Crash-recoverable** — 10-step execution state machine with file-based persistence. Restart safely at any point
@@ -145,7 +146,7 @@ See [Configuration Reference](./docs/configuration.md) for the full spec.
 ## Development
 
 ```bash
-bun test              # 94 tests across 20 files
+bun test              # 116 tests across 22 files
 bun run typecheck     # type check all packages
 bun run src/main.ts   # start the orchestrator
 ```

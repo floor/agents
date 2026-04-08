@@ -1,52 +1,62 @@
-# Known Issues & Improvements
+# Known Issues
 
-Tracked issues from the Phase 1 implementation review.
+Updated April 9, 2026.
+
+---
+
+## Open
+
+### Git push from worktree fails
+**Severity:** High — blocks native execution loop
+**Found:** Sprint 4
+
+Claude Code edits files and commits in the worktree (exit 0), but `git push origin <branch>` fails with "failed to push some refs." The worktree may not inherit git credentials or remote config properly.
+
+**Workaround:** None yet. API-based execution (sprint 2 config) still works.
+
+### Claude Code auth uses API key (per-token billing)
+**Severity:** Medium — costs money unnecessarily
+**Found:** Sprint 3
+
+The native runner passes `ANTHROPIC_API_KEY` to the Claude Code subprocess because stripping it causes "Not logged in" errors. This means Claude Code bills per-token via the API instead of using the Max plan subscription.
+
+**Fix:** Run `claude setup-token` to configure long-lived Max plan auth, then strip `ANTHROPIC_API_KEY` from the subprocess env.
+
+### Linear rate limit (5000 req/hr)
+**Severity:** Medium — blocks operation after heavy use
+**Found:** Sprint 4
+
+The 5-second polling interval burns through Linear's rate limit during multiple sprint retries. No backoff on errors — the poll loop retries immediately and floods the log.
+
+**Fix:** Increase polling to 30s, add exponential backoff, respect rate limit headers.
 
 ---
 
 ## Resolved
 
-### 1. ~~Entry point is hardcoded — should be config-driven~~ ✅
+### Provider routing fixed
+The orchestrator correctly routes all LLM calls through `getLLMAdapter(agent.llm.provider)`. The billing issue was `ANTHROPIC_API_KEY` in the Claude Code subprocess env, not a routing bug.
 
-**Fixed in:** `src/main.ts`
+### Orchestrator split (FLO-16)
+Split into 11 modules. `orchestrator.ts` is now 131 lines (was 700+).
 
-The entry point now:
-- Scans `company.agents` for unique `llm.provider` values
-- Only creates adapters for providers actually referenced by agents
-- Only requires env vars for the providers in use (e.g. no `ANTHROPIC_API_KEY` needed if all agents use `lmstudio`)
-- Reads `TASK_ADAPTER` env var to choose task adapter (`linear` or `things`)
+### Context builder v2
+Import tracing implemented by the AI agents in sprint 3 (FLO-11). Merged.
 
-### 2. ~~Prompt template variables are not replaced~~ ✅
+### Guardrail: package.json blocking
+Changed from `**/package.json` (blocks all) to `package.json` (root only). Agents can create packages.
 
-**Fixed in:** `agents/backend-dev.md`, `packages/context-builder/src/prompt-renderer.ts`
+### Branch protection
+GitHub adapter refuses to write to main/master/develop/production.
 
-Removed dead `{{variables}}` from templates. Templates are now pure role instructions — project context is injected as structured sections by the renderer. No template variable system needed.
+### Branch-first workflow
+Branch created before LLM call, includes issue ID in name.
 
-### 3. ~~No integration test for the full pipeline~~ ✅
+### CI=true blocks Claude Code editing
+Removed `CI=true` from native runner env. Added explicit `--allowedTools`.
 
-**Fixed in:** `test/orchestrator/integration.test.ts`
+### Stale branches from filter-branch
+Old branches had no common history with main after `git filter-branch`. Deleted all agent branches.
 
-Five integration tests with fully mocked adapters:
-- Happy path: issue → LLM → branch → PR → status update
-- Guardrail violation: blocked path prevents PR creation
-- No tool calls: retries once then fails gracefully
-- Daily cost limit: skips new tasks when budget exhausted
-- Crash recovery: resumes from saved execution state
-
-### 4. ~~Default template has empty project config~~ ✅
-
-**Fixed in:** `config/templates/default.yaml`, `packages/core/src/config/validator.ts`
-
-- Default template now has `project.name: "floor-agents"` and `project.repo: "floor/agents"`
-- Validator rejects empty `project.name` and `project.repo`
-
-### 5. ~~Prompt templates missing for non-backend agents~~ ✅
-
-**Fixed in:** `agents/`
-
-All five agent prompt templates now exist:
-- `agents/backend-dev.md`
-- `agents/frontend-dev.md`
-- `agents/pm.md`
-- `agents/cto.md`
-- `agents/qa.md`
+### Object.entries on null ProjectConfig
+Native runner was passing partial ProjectConfig. Fixed to pass full `company.project`.

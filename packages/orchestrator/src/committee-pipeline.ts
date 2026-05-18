@@ -39,7 +39,6 @@ export type CommitteePipelineDeps = {
   readonly costTracker: CostTracker
   readonly getAdapter: LLMAdapterResolver
   readonly discussions?: DiscussionsAdapter
-  readonly repoContext?: string
 }
 
 // ── Vote extraction ──────────────────────────────────────────────
@@ -85,9 +84,6 @@ async function runCommitteeAgent(
     ? `\n\n## Agent-Specific Instructions\n${agent.customInstructions}`
     : ''
 
-  const repoContext = deps.repoContext
-    ? `\n\n## Repository Instructions\n${deps.repoContext}`
-    : ''
 
   const messages: LLMMessage[] = [{
     role: 'user',
@@ -103,7 +99,7 @@ async function runCommitteeAgent(
   try {
     const result = await runToolUseLoop(
       agent,
-      systemPrompt + projectContext + agentContext + repoContext,
+      systemPrompt + projectContext + agentContext,
       messages,
       [],
       getAdapter,

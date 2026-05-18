@@ -21,7 +21,6 @@ export type CommitteeOrchestratorConfig = {
   readonly costTracker: CostTracker
   readonly discussions?: DiscussionsAdapter
   readonly label?: string
-  readonly repoConfigPath?: string
 }
 
 export type CommitteeOrchestrator = {
@@ -29,16 +28,13 @@ export type CommitteeOrchestrator = {
   stop(): Promise<void>
 }
 
-const DEFAULT_REPO_CONFIG_PATH = '.agents/committee.yaml'
-
 export function createCommitteeOrchestrator(config: CommitteeOrchestratorConfig): CommitteeOrchestrator {
   const {
-    company, taskAdapter, gitAdapter, llmAdapters, contextBuilder,
+    company, taskAdapter, llmAdapters, contextBuilder,
     stateStore, costTracker, discussions,
   } = config
 
   const watchLabel = config.label ?? 'committee'
-  const repoConfigPath = config.repoConfigPath ?? DEFAULT_REPO_CONFIG_PATH
   let running = true
   const abortController = new AbortController()
   const processedIds = new Set<string>()
@@ -53,17 +49,14 @@ export function createCommitteeOrchestrator(config: CommitteeOrchestratorConfig)
     return company.agents.filter(a => a.capabilities.includes('vote'))
   }
 
-  async function loadRepoContext(): Promise<string | undefined> {
-    try {
-      const file = await gitAdapter.getFile(company.project.repo, repoConfigPath)
-      if (file) {
-        console.log(`[committee] loaded repo config from ${repoConfigPath}`)
-        return file.content
-      }
-    } catch {
-      // Repo config is optional
-    }
-    return undefined
+  const pipelineDeps: CommitteePipelineDeps = {
+    company,
+    taskAdapter,
+    contextBuilder,
+    stateStore,
+    costTracker,
+    getAdapter: getLLMAdapter,
+    discussions,
   }
 
   return {
@@ -71,7 +64,6 @@ export function createCommitteeOrchestrator(config: CommitteeOrchestratorConfig)
       const agents = getCommitteeAgents()
       console.log(`[committee] starting with ${agents.length} agents: ${agents.map(a => a.id).join(', ')}`)
       console.log(`[committee] watching for label: "${watchLabel}"`)
-      console.log(`[committee] repo config: ${repoConfigPath}`)
       if (discussions) {
         console.log('[committee] GitHub Discussions sync: enabled')
       }
@@ -103,19 +95,6 @@ export function createCommitteeOrchestrator(config: CommitteeOrchestratorConfig)
             console.log(`\n[committee] new proposal: "${event.issue.title}"`)
 
             try {
-              const repoContext = await loadRepoContext()
-
-              const pipelineDeps: CommitteePipelineDeps = {
-                company,
-                taskAdapter,
-                contextBuilder,
-                stateStore,
-                costTracker,
-                getAdapter: getLLMAdapter,
-                discussions,
-                repoContext,
-              }
-
               await executeCommitteeReview(event.issue, agents, pipelineDeps)
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err)

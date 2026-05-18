@@ -1,0 +1,138 @@
+name: "vlist v2 Technical Committee"
+
+project:
+  name: "vlist"
+  repo: "vlist"
+  language: "typescript"
+  runtime: "bun"
+  conventions:
+    semicolons: false
+    quotes: "single"
+    indent: 2
+    modules: "esm"
+  structure:
+    backend: "src/"
+    tests: "test/"
+  packages: []
+  customInstructions: |
+    vlist is a high-performance virtual scrolling library. Zero dependencies, plugin architecture, TypeScript strict mode.
+    v1 (current) is the absolute source of truth for behavior, math, and test assertions.
+    v2 is strictly an architectural rewrite — no behavioral changes.
+    Zero allocations on the hot path is non-negotiable.
+
+agents:
+  - id: claude
+    name: "Claude (Opus 4.6)"
+    promptTemplate: "agents/committee-claude.md"
+    llm:
+      provider: anthropic
+      model: claude-opus-4-20250514
+      temperature: 0.3
+      maxTokens: 4096
+    capabilities: [read_code, review_rfc, vote]
+    autonomy: T1
+    customInstructions: ""
+
+  - id: gemini
+    name: "Gemini (3.1 Pro)"
+    promptTemplate: "agents/committee-gemini.md"
+    llm:
+      provider: gemini
+      model: gemini-2.5-pro
+      temperature: 0.3
+      maxTokens: 4096
+    capabilities: [read_code, review_rfc, vote]
+    autonomy: T1
+    customInstructions: ""
+
+  - id: gpt
+    name: "GPT (Codex)"
+    promptTemplate: "agents/committee-gpt.md"
+    llm:
+      provider: openai
+      model: gpt-4.1
+      temperature: 0.3
+      maxTokens: 4096
+    capabilities: [read_code, review_rfc, vote]
+    autonomy: T1
+    customInstructions: ""
+
+workflow:
+  states:
+    - { id: draft,    label: "Draft",    taskManagerStatus: "Backlog",     terminal: false }
+    - { id: review,   label: "Review",   taskManagerStatus: "In Progress", terminal: false }
+    - { id: voting,   label: "Voting",   taskManagerStatus: "In Review",   terminal: false }
+    - { id: approved, label: "Approved", taskManagerStatus: "Done",        terminal: true  }
+    - { id: rejected, label: "Rejected", taskManagerStatus: "Canceled",    terminal: true  }
+
+  transitions:
+    - { from: draft,    to: review,   trigger: { type: label_added, label: "committee" }, agentId: null }
+    - { from: review,   to: voting,   trigger: { type: label_added, label: "vote" },      agentId: null }
+    - { from: voting,   to: approved, trigger: { type: vote_passed },                      agentId: null }
+    - { from: voting,   to: rejected, trigger: { type: vote_failed },                      agentId: null }
+
+chain:
+  nodes:
+    - agentId: claude
+      receivesFrom: [{ type: trigger }]
+      dispatchesTo: []
+      reportsTo: null
+      canApprove: true
+      canReject: true
+
+    - agentId: gemini
+      receivesFrom: [{ type: trigger }]
+      dispatchesTo: []
+      reportsTo: null
+      canApprove: true
+      canReject: true
+
+    - agentId: gpt
+      receivesFrom: [{ type: trigger }]
+      dispatchesTo: []
+      reportsTo: null
+      canApprove: true
+      canReject: true
+
+autonomy:
+  default: T1
+  overrides: []
+
+guardrails:
+  maxFilesPerTask: 0
+  maxFileSizeBytes: 0
+  maxTotalOutputBytes: 0
+  blockedPaths: ["*"]
+  allowedPaths: []
+  blockedExtensions: ["*"]
+
+costs:
+  maxCostPerTask: 2.00
+  maxCostPerDay: 20.00
+  warnCostThreshold: 1.00
+
+statusMapping:
+  draft: "Backlog"
+  review: "In Progress"
+  voting: "In Review"
+  approved: "Done"
+  rejected: "Canceled"
+
+sync:
+  github:
+    enabled: true
+    owner: "floor"
+    repo: "vlist"
+    target: "discussions"
+    syncOn: ["approved", "rejected"]
+    format: |
+      **RFC Vote Resolution — {{issue.title}}**
+
+      **Result:** {{status | upper}}
+
+      {{#each votes}}
+      | {{agent}} | {{vote}} | {{summary}} |
+      {{/each}}
+
+      ---
+      _Synced from Linear by Floor Agents_

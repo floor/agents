@@ -29,6 +29,7 @@ Each package has its own documentation:
 ## Guides
 
 - [First Run](./guides/first-run.md) — end-to-end setup with Gemma + Claude Code Opus
+- [Committee Mode](./guides/committee.md) — multi-agent proposal review with parallel voting
 - [Adding an LLM Provider](./guides/adding-llm-provider.md)
 - [Adding a Task Manager](./guides/adding-task-manager.md)
 - [Testing](./guides/testing.md)

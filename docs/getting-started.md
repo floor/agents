@@ -80,9 +80,18 @@ The orchestrator will:
 3. An agent builds context, calls the LLM, creates a PR
 4. The issue is updated with the PR link
 
+## Modes
+
+Floor Agents auto-detects the mode from your config:
+
+- **Dev mode** (default) — agents write code, open PRs, review. Triggered by issues with the `agent` label.
+- **Committee mode** — agents review proposals in parallel, vote, sync to GitHub Discussions. Triggered by issues with the `committee` label. Activated when any agent has the `vote` capability.
+
+See [Committee Mode](./guides/committee.md) for setup instructions.
+
 ## Verify
 
 ```bash
-bun test         # run all tests (57 tests)
+bun test           # run all tests
 bun run typecheck  # type check all packages
 ```

@@ -8,7 +8,8 @@ import { createGeminiAdapter } from '@floor-agents/gemini'
 import { createGitHubAdapter } from '@floor-agents/github'
 import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
-import { createOrchestrator, createCostTracker, createStateStore } from '@floor-agents/orchestrator'
+import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore } from '@floor-agents/orchestrator'
+import { createDiscussionsAdapter } from '@floor-agents/github'
 import { mkdir } from 'node:fs/promises'
 
 // Environment
@@ -132,18 +133,41 @@ const contextBuilder = createContextBuilder({
 // Ensure state directory exists
 await mkdir(STATE_DIR, { recursive: true })
 
-// Create orchestrator
-const orchestrator = createOrchestrator({
-  company,
-  taskAdapter: task,
-  gitAdapter: github,
-  llmAdapters,
-  contextBuilder,
-  stateStore: createStateStore(STATE_DIR),
-  costTracker: createCostTracker(),
-})
+// Detect mode: committee if any agent has 'vote' capability, dev otherwise
+const isCommitteeMode = company.agents.some(a => a.capabilities.includes('vote'))
 
-console.log(`[floor-agents] starting`)
+const stateStore = createStateStore(STATE_DIR)
+const costTracker = createCostTracker()
+
+const orchestrator = isCommitteeMode
+  ? createCommitteeOrchestrator({
+      company,
+      taskAdapter: task,
+      gitAdapter: github,
+      llmAdapters,
+      contextBuilder,
+      stateStore,
+      costTracker,
+      discussions: company.project.repo
+        ? createDiscussionsAdapter({
+            token: requireEnv('GITHUB_TOKEN'),
+            owner: requireEnv('GITHUB_OWNER'),
+            repo: company.project.repo,
+          })
+        : undefined,
+    })
+  : createOrchestrator({
+      company,
+      taskAdapter: task,
+      gitAdapter: github,
+      llmAdapters,
+      contextBuilder,
+      stateStore,
+      costTracker,
+    })
+
+const mode = isCommitteeMode ? 'committee' : 'dev'
+console.log(`[floor-agents] starting (${mode} mode)`)
 console.log(`  company:   ${company.name}`)
 console.log(`  project:   ${company.project.name} (${company.project.repo})`)
 console.log(`  agents:    ${company.agents.map(a => `${a.id} (${a.llm.provider})`).join(', ')}`)

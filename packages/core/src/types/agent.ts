@@ -8,6 +8,8 @@ export type AgentCapability =
   | 'manage_issues'
   | 'approve'
   | 'reject'
+  | 'review_rfc'
+  | 'vote'
 
 export type AutonomyTier = 'T1' | 'T2' | 'T3'
 

@@ -6,14 +6,17 @@ The main execution engine. Watches for tasks, dispatches to agents, manages the 
 
 ```
 packages/orchestrator/src/
-├── index.ts              ← re-exports
-├── orchestrator.ts       ← main loop + state machine
-├── dispatcher.ts         ← resolves which agent handles an issue
-├── output-parser.ts      ← extracts files from LLM tool calls
-├── guardrails.ts         ← validates agent output before commit
-├── cost-tracker.ts       ← per-task and daily cost limits
-├── state-store.ts        ← file-based execution state persistence
-└── metrics-collector.ts  ← dogfooding metrics (Phase 1 spec §9.3)
+├── index.ts                    ← re-exports
+├── orchestrator.ts             ← dev mode: main loop + state machine
+├── committee-orchestrator.ts   ← committee mode: watches for proposals, dispatches reviews
+├── committee-pipeline.ts       ← parallel agent review, vote tally, Discussions sync
+├── dispatcher.ts               ← resolves which agent handles an issue
+├── llm-runner.ts               ← tool use conversation loop
+├── output-parser.ts            ← extracts files from LLM tool calls
+├── guardrails.ts               ← validates agent output before commit
+├── cost-tracker.ts             ← per-task and daily cost limits
+├── state-store.ts              ← file-based execution state persistence
+└── metrics-collector.ts        ← dogfooding metrics (Phase 1 spec §9.3)
 ```
 
 ## Usage
@@ -42,6 +45,32 @@ const orchestrator = createOrchestrator({
 await orchestrator.start()  // blocks until stopped
 await orchestrator.stop()   // graceful shutdown
 ```
+
+### Committee mode
+
+```typescript
+import { createCommitteeOrchestrator } from '@floor-agents/orchestrator'
+import { createGateway } from '@floor-agents/gateway'
+
+const gateway = createGateway({ port: 3100, token: process.env.GATEWAY_TOKEN })
+gateway.start()
+
+const orchestrator = createCommitteeOrchestrator({
+  company,
+  taskAdapter,
+  gitAdapter,
+  llmAdapters,
+  contextBuilder,
+  stateStore,
+  costTracker,
+  gateway,        // optional — enables external agent dispatch
+  discussions,    // optional — enables GitHub Discussions sync
+})
+
+await orchestrator.start()
+```
+
+The entry point (`src/main.ts`) auto-detects committee mode when agents have the `vote` capability. See [Committee Mode](../guides/committee.md) for the full guide.
 
 ## Execution State Machine
 

@@ -6,8 +6,9 @@ Git adapter for [GitHub](https://github.com). Reads code, creates branches, comm
 
 ```
 packages/github/src/
-├── index.ts       ← re-exports
-└── adapter.ts     ← createGitHubAdapter, GitHubError
+├── index.ts         ← re-exports
+├── adapter.ts       ← createGitHubAdapter (REST API: branches, commits, PRs)
+└── discussions.ts   ← createDiscussionsAdapter (GraphQL: read/post discussions)
 ```
 
 ## Usage
@@ -62,6 +63,37 @@ Throws `GitHubError` with `status` and `endpoint` properties:
 - 404 → not found (for `getFile`, returns `null` instead)
 - 422 → validation error (context-dependent)
 - 429 → rate limited (retries with `Retry-After`)
+
+## Discussions Adapter
+
+Reads and posts to GitHub Discussions via the GraphQL API. Used by committee mode to sync vote results.
+
+```typescript
+import { createDiscussionsAdapter } from '@floor-agents/github'
+
+const discussions = createDiscussionsAdapter({
+  token: 'ghp_...',
+  owner: 'my-org',
+  repo: 'my-repo',
+})
+
+// Read a discussion
+const disc = await discussions.getDiscussion(42)
+
+// Post a comment
+await discussions.postComment(disc.id, 'Vote result: APPROVED')
+
+// List recent discussions
+const all = await discussions.listDiscussions()
+```
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `getDiscussion(number)` | Get a discussion by number (with comments) |
+| `postComment(discussionId, body)` | Add a comment to a discussion |
+| `listDiscussions(categoryId?)` | List recent discussions (last 20) |
 
 ## Config
 

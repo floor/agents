@@ -25,11 +25,14 @@ Each package has its own documentation:
 | `@floor-agents/task` | Task manager adapters | [task](./packages/task.md) |
 | `@floor-agents/context-builder` | Context assembly + prompts | [context-builder](./packages/context-builder.md) |
 | `@floor-agents/orchestrator` | Main loop + state machine | [orchestrator](./packages/orchestrator.md) |
+| `@floor-agents/gateway` | WebSocket server for external agents | [gateway](./gateway.md) |
 
 ## Guides
 
 - [First Run](./guides/first-run.md) — end-to-end setup with Gemma + Claude Code Opus
+- [Zero-Cost Committee](./guides/zero-cost-committee.md) — Claude Code + Gemma + Codex for $0/review
 - [Committee Mode](./guides/committee.md) — multi-agent proposal review with parallel voting
+- [Agent Gateway](./gateway.md) — WebSocket protocol, REST fallback, building custom agents
 - [Adding an LLM Provider](./guides/adding-llm-provider.md)
 - [Adding a Task Manager](./guides/adding-task-manager.md)
 - [Testing](./guides/testing.md)

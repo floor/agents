@@ -10,6 +10,11 @@ Linear issue (labeled "agent")
   → CTO (Claude Code Opus) reviews the PR
   → If approved → done
   → If changes requested → dev revises, CTO reviews again
+
+Linear issue (labeled "committee")
+  → Claude, Gemma, Codex review in parallel
+  → Each votes APPROVE or REJECT
+  → Majority wins → outcome posted to Linear + GitHub Discussions
 ```
 
 ## How It Works
@@ -54,7 +59,7 @@ See [Getting Started](./docs/getting-started.md) for the full setup guide.
 
 ## Architecture
 
-A monorepo with 9 packages, each with a single responsibility:
+A monorepo with 10 packages, each with a single responsibility:
 
 ```
 packages/
@@ -64,15 +69,18 @@ packages/
 ├── lmstudio/          LM Studio adapter (local models)
 ├── openai/            OpenAI-compatible adapter (OpenAI, Ollama, etc.)
 ├── gemini/            Google Gemini adapter
-├── github/            GitHub REST API (branches, commits, PRs)
+├── github/            GitHub REST API (branches, commits, PRs, Discussions)
 ├── task/              Task managers (Linear, Things 3, GitHub Issues)
 ├── context-builder/   File selection (v2 import tracing), prompt rendering, token budgets
-└── orchestrator/      Pipeline, native runner, review, guardrails, cost tracking
+├── orchestrator/      Pipeline, committee, native runner, review, guardrails, cost tracking
+└── gateway/           WebSocket server for external agents (Codex, custom agents)
 ```
 
 ### Key Design Decisions
 
 - **Two execution modes** — API agents (LM Studio, Gemini) use tool-use calls; Claude Code agents work directly on git worktrees with full file access
+- **Internal + external agents** — internal agents are dispatched directly via LLM adapters; external agents (Codex, custom) connect via WebSocket gateway and receive assignments in real time
+- **Committee mode** — multiple agents review proposals in parallel, each casting a vote. Majority wins. Results sync to GitHub Discussions for public record
 - **Vendor-agnostic AI** — customers choose their LLM providers per agent. Mix local and cloud models in the same team
 - **Config-driven** — a single YAML file defines the entire team: agents, models, guardrails, cost limits
 - **Crash-recoverable** — 10-step execution state machine with file-based persistence. Restart safely at any point
@@ -157,6 +165,8 @@ bun run src/main.ts   # start the orchestrator
 - [Configuration](./docs/configuration.md)
 - [First Run Guide](./docs/guides/first-run.md)
 - [Architecture](./docs/architecture.md)
+- [Zero-Cost Committee](./docs/guides/zero-cost-committee.md) — Claude Code + Gemma + Codex for $0/review
+- [Agent Gateway](./docs/gateway.md) — WebSocket protocol, REST fallback, building custom agents
 - [Package Docs](./docs/README.md)
 - [Adding an LLM Provider](./docs/guides/adding-llm-provider.md)
 - [Adding a Task Manager](./docs/guides/adding-task-manager.md)

@@ -5,8 +5,8 @@ Run a multi-agent technical committee that reviews proposals in parallel, votes,
 ## How it works
 
 1. A Linear issue with the `committee` label triggers the pipeline
-2. All agents with the `vote` capability review the proposal in parallel
-3. Each agent returns `VOTE: APPROVE` or `VOTE: REJECT`
+2. Internal agents are dispatched via their LLM adapters; external agents receive assignments via the [gateway](../gateway.md) WebSocket
+3. All agents review in parallel — each returns `VOTE: APPROVE` or `VOTE: REJECT`
 4. Votes are tallied (simple majority), results posted to Linear
 5. If a GitHub Discussion is linked, the outcome is synced there
 
@@ -65,6 +65,19 @@ agents:
     autonomy: T1
 ```
 
+Agents can be internal (dispatched by the orchestrator) or external (connect via the gateway):
+
+```yaml
+agents:
+  - id: codex
+    name: "Codex (OpenAI)"
+    llm:
+      provider: openai
+      model: codex-mini-latest
+    capabilities: [vote]
+    external: true          # connects via WebSocket gateway
+```
+
 See `config/templates/committee.yaml` for a complete example with workflow states, chain of command, guardrails, and cost limits.
 
 ### 2. Set environment variables
@@ -84,6 +97,10 @@ OPENAI_API_KEY=sk-...
 
 # Point to the project config
 CONFIG_PATH=/path/to/my-project/.agents/committee.yaml
+
+# Gateway (only if using external agents)
+GATEWAY_PORT=3100
+GATEWAY_TOKEN=your-secret-token
 ```
 
 ### 3. Start the server
@@ -156,6 +173,23 @@ Link a discussion by including `discussions/<number>` or `Discussion #<number>` 
 The generic prompt lives at `agents/committee.md` in the agents repo. It handles voting mechanics and response format. Project-specific rules come from `customInstructions` in the config — not from the prompt file.
 
 If you need a custom prompt, set `promptTemplate` to a different path in the agent definition.
+
+## External agents
+
+External agents (marked `external: true`) connect to the gateway WebSocket to receive assignments. The gateway starts automatically when external agents are present.
+
+To run the included Codex agent:
+
+```bash
+GATEWAY_URL=ws://localhost:3100 \
+GATEWAY_TOKEN=your-secret-token \
+OPENAI_API_KEY=sk-... \
+bun scripts/codex-agent.ts
+```
+
+See the [Gateway documentation](../gateway.md) for the full protocol, REST fallback, and building custom agents.
+
+If an external agent disconnects mid-review, the gateway re-queues its task and re-dispatches on reconnect. If it times out entirely, the agent's vote counts as ABSTAIN.
 
 ## Cost controls
 

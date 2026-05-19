@@ -1,33 +1,36 @@
-# Floor Agents — Architecture Plan
+# Floor Agents — Architecture
 
 **Company:** Floor IO SA
-**Product:** Floor Agents
-**Author:** CTO
-**Date:** March 2026
-**Updated:** April 2026 (Phase 1 implementation)
-**Status:** Draft v0.2
-**Classification:** Internal
+**Updated:** May 2026
 
 ---
 
 ## 1. What Is Floor Agents
 
-Floor Agents gives any software team an autonomous AI engineering team. Customers connect their existing tools — GitHub, Linear, their preferred LLM — and get a team of specialized AI agents that decompose tasks, write code, review PRs, write tests, and manage deployments.
+Floor Agents is an autonomous AI engineering framework. You define a team of AI agents in a YAML config, connect your existing tools (GitHub, Linear, any LLM provider), and the orchestrator runs them against your codebase — writing code, reviewing PRs, voting on proposals, and managing issues.
 
-It's a SaaS. Hosted by Floor IO. Customers don't install anything — they connect, configure, and go.
+It runs locally on your machine or server. No hosted service, no proprietary UI. All work happens in your Linear and GitHub.
 
-### 1.1 One-Liner
+### 1.1 What It Solves
 
-**Your AI dev team. Plugs into your tools. Ships code while you sleep.**
+**The multi-model coordination problem.** AI coding tools lock you into one model from one vendor. Floor Agents lets you compose a team from any combination of providers — use a free local model for routine coding, a frontier model for code review, an external agent for a second opinion — all coordinated automatically.
 
-### 1.2 How It Works (Customer Perspective)
+**The integration problem.** AI agents that can write code still need someone to create branches, open PRs, update issue trackers, post results. Floor Agents handles the full loop: issue → context → LLM → code → PR → review → done.
 
-1. Sign up at flooragents.io
-2. Connect your GitHub repo
-3. Connect your Linear workspace (or other task manager)
-4. Add your LLM API keys (Anthropic, OpenAI, Google, or bring your own)
-5. Configure your team: which agents, which models, which conventions
-6. Create a Linear issue labeled `floor` → agents take it from there
+**The cost problem.** API-based agents burn tokens. Floor Agents supports zero-cost configurations: Claude Code on a Max plan, local models via LM Studio, Codex on an existing OpenAI plan. A full committee review can cost $0.
+
+### 1.2 When To Use It
+
+- **Dev mode:** You have repetitive coding tasks in Linear. Agents pick them up, write code, open PRs, get reviewed — while you sleep.
+- **Committee mode:** You have RFCs or proposals that need technical review from multiple perspectives. Agents review in parallel, vote, and post results.
+- **Mixed teams:** Some agents run locally (free), some use cloud APIs (quality-critical), some are external services (Codex). One config, one orchestrator.
+
+### 1.3 How It Works
+
+1. Define your team in a YAML config (agents, models, capabilities)
+2. Set environment variables (GitHub token, Linear key, LLM keys)
+3. Run `bun run src/main.ts`
+4. Create a Linear issue with the right label → agents handle the rest
 
 ---
 
@@ -47,57 +50,47 @@ It's a SaaS. Hosted by Floor IO. Customers don't install anything — they conne
 ### 3.1 High-Level Overview
 
 ```
-┌──────────────────────────────────────────────────┐
-│                 FLOOR AGENTS CLOUD                │
-│                                                   │
-│  ┌─────────┐  ┌──────────┐  ┌─────────────────┐  │
-│  │ Web App  │  │   API    │  │  Orchestrator    │  │
-│  │(config,  │  │(webhooks,│  │  (dispatches     │  │
-│  │ dash)    │  │ REST)    │  │   agent work)    │  │
-│  └─────────┘  └──────────┘  └────────┬──────────┘  │
-│                                      │             │
-│                               ┌──────▼───────┐    │
-│                               │  LLM Adapter  │    │
-│                               └──────┬───────┘    │
-│                                      │             │
-│  ┌──────────┐  ┌──────────┐  ┌──────▼───────┐    │
-│  │  Queue    │  │   DB     │  │  Agent Pool   │    │
-│  │(tasks)   │  │(config,  │  │  (stateless    │    │
-│  │          │  │ logs)    │  │   workers)     │    │
-│  └──────────┘  └──────────┘  └───────────────┘    │
-│                                                    │
-└──────────┬────────────────────┬───────────────────┘
-           │                    │
-    ┌──────▼──────┐     ┌──────▼──────┐
-    │  Task Mgmt   │     │ Git Platform │
-    │  Adapter     │     │  Adapter     │
-    │              │     │              │
-    │ • Linear ✓   │     │ • GitHub ✓   │
-    │ • GitHub     │     │ • GitLab     │
-    │   Issues     │     │ • Bitbucket  │
-    │ • Jira       │     │ • ...        │
-    │ • ...        │     │              │
-    └──────────────┘     └──────────────┘
-           │                    │
-    ┌──────▼──────┐     ┌──────▼──────┐
-    │  Customer's  │     │  Customer's  │
-    │  Linear      │     │  GitHub      │
-    └──────────────┘     └──────────────┘
+                    ┌─────────────┐
+                    │  YAML Config │
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │ Orchestrator │──── watches for issues
+                    └──────┬──────┘
+                           │
+            ┌──────────────┼──────────────┐
+            │              │              │
+     ┌──────▼──────┐ ┌────▼─────┐ ┌──────▼──────┐
+     │ LLM Adapters │ │ Context  │ │   Gateway   │
+     │              │ │ Builder  │ │  (WebSocket) │
+     │ • Claude Code│ └──────────┘ └──────┬──────┘
+     │ • LM Studio │                      │
+     │ • Gemini    │               ┌──────▼──────┐
+     │ • OpenAI    │               │  External   │
+     │ • Anthropic │               │  Agents     │
+     └──────┬──────┘               │  (Codex...) │
+            │                      └─────────────┘
+     ┌──────▼──────┐     ┌──────────────┐
+     │ Task Adapter │     │  Git Adapter  │
+     │              │     │              │
+     │ • Linear     │     │ • GitHub     │
+     │ • Things 3   │     │   (REST +    │
+     │ • GH Issues  │     │  Discussions)│
+     └──────────────┘     └──────────────┘
 ```
 
 ### 3.2 Core Components
 
-| Component | Purpose | Multi-tenant |
-|-----------|---------|:---:|
-| **Web App** | Customer dashboard. Onboarding, team config, agent prompts, usage/cost tracking, logs | Yes |
-| **API** | Receives webhooks from task managers and git platforms. REST API for the web app. | Yes |
-| **Orchestrator** | The brain. Watches for new tasks, dispatches to agents, manages workflow state machine. | Yes — isolated per customer |
-| **Agent Pool** | Stateless workers. Each picks up a job: "run agent X with context Y on task Z". Calls the LLM, parses output, returns structured result. | Shared pool |
-| **LLM Adapter** | Vendor-agnostic interface to LLM providers. Supports tool use for structured output. | Shared |
-| **Task Manager Adapter** | Pluggable interface to Linear, GitHub Issues, Jira, etc. Reads/writes issues, comments, labels, statuses. Factory pattern: `createTaskAdapter({ type, config })`. | Per integration |
-| **Git Adapter** | Pluggable interface to GitHub, GitLab, etc. Creates branches, commits, PRs. Reads file contents. | Per integration |
-| **Queue** | Job queue for agent work. Ensures ordering, retries, priority. | Shared |
-| **DB** | Customer config, project definitions, agent definitions, execution logs, usage metrics. | Shared, isolated by tenant |
+| Component | Purpose |
+|-----------|---------|
+| **Orchestrator** | Watches for new issues, dispatches to agents, manages state machine. Two modes: dev (code + review loop) and committee (parallel voting). |
+| **LLM Adapters** | Vendor-agnostic interface to LLM providers. Tool use for structured output. Each agent can use a different provider. |
+| **Context Builder** | Selects relevant source files for the task, assembles the prompt, manages token budget. v2 includes import tracing. |
+| **Gateway** | WebSocket server for external agents. Auth, message validation, task re-queue on disconnect, REST fallback. |
+| **Task Adapter** | Reads/writes issues, comments, labels, statuses. Factory pattern: `createTaskAdapter({ type, config })`. |
+| **Git Adapter** | Creates branches, commits, PRs, reads files. Idempotent operations for crash recovery. |
+| **State Store** | File-based JSON persistence. Execution state saved between every step for crash recovery. |
+| **Cost Tracker** | Per-task and daily spending limits. Local models report $0. |
 
 ### 3.3 Adapter Interface — Task Manager
 
@@ -120,8 +113,8 @@ All task adapters live in the `@floor-agents/task` package with a factory:
 createTaskAdapter({ type: 'linear', linear: { apiKey, teamId } })
 ```
 
-**Ships with:** Linear
-**Next:** GitHub Issues, Jira
+**Ships with:** Linear, Things 3, GitHub Issues
+**Next:** Jira
 
 ### 3.4 Adapter Interface — Git Platform
 
@@ -177,8 +170,8 @@ Agents produce output via **tool use**, not text parsing. Two tools are defined:
 
 The orchestrator runs a conversation loop: call LLM → collect tool calls → acknowledge → repeat until `stopReason !== 'tool_use'`.
 
-**Ships with:** Anthropic
-**Next:** OpenAI, Google, Mistral, Ollama/local models
+**Ships with:** Anthropic, Claude Code, OpenAI, Gemini, LM Studio
+**Next:** Mistral, Ollama
 
 ---
 
@@ -381,127 +374,66 @@ On startup, the orchestrator loads all execution states from disk. Incomplete ta
 
 ---
 
-## 8. Multi-Tenancy
+## 8. Internal vs External Agents
 
-Floor Agents is multi-tenant from day one. Critical isolation requirements:
+Agents are either **internal** (dispatched by the orchestrator via LLM adapters) or **external** (connect themselves via the WebSocket gateway).
 
-| Resource | Isolation |
-|----------|-----------|
-| LLM API keys | Encrypted per customer. Never shared. Never logged in plaintext. |
-| Git access tokens | Encrypted per customer. Scoped to minimum permissions. |
-| Task manager tokens | Encrypted per customer. |
-| Agent execution | Customer jobs run in isolated contexts. No cross-tenant data leakage. |
-| Execution logs | Filtered by tenant. Customers see only their own. |
-| Code context | Files read from customer's own repo only. Never cached across tenants. |
-| Queue | Shared queue, but jobs tagged by tenant for fair scheduling. |
+| Aspect | Internal | External |
+|--------|----------|----------|
+| Dispatch | Orchestrator calls LLM adapter directly | Gateway pushes assignment via WebSocket |
+| Connection | None — orchestrator owns the call | Agent connects to `ws://host:port/ws` |
+| Examples | Claude Code, Gemma (LM Studio), Gemini | Codex (OpenAI), custom agents |
+| Config | `external: false` (default) | `external: true` |
+| Cost tracking | Automatic (from LLM response) | Reports $0 (external billing) |
 
-### 8.1 Security Non-Negotiables
+External agents receive the full task context (title, body, system prompt) over the gateway. They process it however they want and send back a result. The orchestrator doesn't need to know how they work internally.
 
-- Customer code is **never stored** on our servers beyond the duration of an agent call. Read from git, used in context, discarded.
-- LLM calls go directly from our servers to the LLM provider with the customer's API key. We don't proxy through our own keys (unless the customer opts into a Floor IO managed plan).
-- All secrets encrypted at rest (AES-256) and in transit (TLS).
-- SOC 2 compliance as a target for year one.
+See [Gateway documentation](./gateway.md) for the protocol spec.
 
 ---
 
-## 9. Pricing Model (Draft)
-
-| Tier | Agents | Projects | Support | Price |
-|------|--------|----------|---------|-------|
-| **Starter** | 3 (PM, 1 Dev, CTO) | 1 repo | Community | Free or low entry |
-| **Team** | 6 (full team) | 5 repos | Email | $X/month |
-| **Business** | Unlimited | Unlimited | Priority | $Y/month |
-| **Enterprise** | Unlimited + custom agents | Unlimited | Dedicated | Custom |
-
-**LLM costs are the customer's.** They bring their own API keys. Floor Agents charges for orchestration, not for tokens.
-
-Alternative to explore: Floor IO offers a managed LLM plan where customers pay a markup and don't need to manage API keys themselves.
-
----
-
-## 10. Tech Stack
-
-### 10.1 Current Implementation (Phase 1)
+## 9. Tech Stack
 
 | Layer | Technology | Rationale |
 |-------|-----------|-----------|
-| Runtime | Bun | Fast, TypeScript-native, built-in test runner |
+| Runtime | Bun | Fast, TypeScript-native, built-in test runner, WebSocket server |
 | Language | TypeScript (strict) | Type safety, LLM ecosystem is TS-first |
 | Structure | Monorepo, Bun workspaces | Clean package boundaries, single repo |
 | Config | YAML | Human-readable, supports complex nesting |
 | State | File-based JSON | Simple, no dependencies, atomic writes |
 | LLM output | Tool use (function calling) | Structured, typed, no parsing ambiguity |
-
-### 10.2 Future (Phase 3+)
-
-| Layer | Technology | Rationale |
-|-------|-----------|-----------|
-| Web App | To be decided | Dashboard, config, onboarding |
-| API | Bun / Hono or similar | Webhook handlers, REST API |
-| Queue | Redis / BullMQ (or similar) | Reliable job processing with retries |
-| Database | PostgreSQL | Structured config, logs, multi-tenant |
-| Secrets | Vault or AWS KMS | Encrypted key storage |
-| Hosting | To be decided | Cloud provider for SaaS |
-| Monitoring | To be decided | Logs, metrics, alerts |
+| Gateway | Bun.serve WebSocket | Real-time external agent communication |
 
 ---
 
-## 11. Codebase Structure
+## 10. Codebase Structure
 
 ```
 floor-agents/
-├── package.json              (root workspace config)
-├── tsconfig.json             (root TS config)
-├── tsconfig.base.json        (shared compiler options)
-│
 ├── packages/
-│   ├── core/                 (@floor-agents/core)
-│   │   └── src/
-│   │       ├── types/        (10 type files: adapters, agent, company, ...)
-│   │       ├── config/       (YAML loader + validator)
-│   │       └── utils/        (token estimation)
-│   │
-│   ├── anthropic/            (@floor-agents/anthropic)
-│   │   └── src/              (LLM adapter with tool use, pricing)
-│   │
-│   ├── github/               (@floor-agents/github)
-│   │   └── src/              (Git adapter, idempotent ops)
-│   │
-│   ├── task/                 (@floor-agents/task)
-│   │   └── src/              (factory + Linear adapter, future: GitHub Issues, Jira)
-│   │
-│   ├── context-builder/      (@floor-agents/context-builder)
-│   │   └── src/              (file selection, prompt rendering, token budget)
-│   │
-│   └── orchestrator/         (@floor-agents/orchestrator)
-│       └── src/              (state machine, guardrails, cost tracking, dispatcher)
+│   ├── core/                 Types, config loader, YAML validation
+│   ├── anthropic/            Anthropic LLM adapter (tool use)
+│   ├── claude-code/          Claude Code CLI adapter (worktree execution)
+│   ├── lmstudio/             LM Studio adapter (local models)
+│   ├── openai/               OpenAI-compatible adapter
+│   ├── gemini/               Google Gemini adapter
+│   ├── github/               Git adapter + Discussions sync
+│   ├── task/                 Task adapters (Linear, Things 3, GitHub Issues)
+│   ├── context-builder/      File selection, prompt rendering, token budget
+│   ├── orchestrator/         Dev pipeline, committee pipeline, guardrails, cost tracking
+│   └── gateway/              WebSocket server + client for external agents
 │
-├── src/
-│   └── main.ts               (thin entry point)
-│
-├── config/
-│   └── templates/
-│       └── default.yaml      (default company template)
-│
-├── agents/                   (prompt templates)
-│   └── backend-dev.md
-│
-├── data/
-│   └── executions/           (runtime state, gitignored)
-│
-├── test/                     (bun:test, mirrors package structure)
-│   ├── core/
-│   ├── anthropic/
-│   └── orchestrator/
-│
-└── docs/
-    ├── architecture.md       (this file)
-    └── Phase1-Specs_1.md     (Phase 1 detailed spec)
+├── src/main.ts               Entry point (auto-detects dev vs committee mode)
+├── scripts/codex-agent.ts    Standalone Codex external agent
+├── config/templates/         YAML config templates
+├── agents/                   Prompt templates
+├── test/                     bun:test, mirrors package structure
+└── docs/                     This documentation
 ```
 
 ---
 
-## 12. Competitive Landscape
+## 11. Competitive Landscape
 
 Floor Agents operates in the "AI coding agent" space. Key differentiation:
 
@@ -521,7 +453,7 @@ Floor Agents operates in the "AI coding agent" space. Key differentiation:
 
 ---
 
-## 13. Risks
+## 12. Risks
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
@@ -536,7 +468,7 @@ Floor Agents operates in the "AI coding agent" space. Key differentiation:
 
 ---
 
-## 14. Rollout Plan
+## 13. Rollout Plan
 
 ### Phase 1 — MVP (current)
 - ✅ Monorepo with Bun workspaces (6 packages)
@@ -552,13 +484,19 @@ Floor Agents operates in the "AI coding agent" space. Key differentiation:
 - Single tenant (internal dogfooding)
 - Goal: Linear issue → code → GitHub PR → Linear update
 
-### Phase 2 — The Team
+### Phase 2 — The Team + Committee
+- ✅ CTO agent (PR review via Claude Code)
+- ✅ Multi-agent review loop (dev writes, CTO reviews, max 3 cycles)
+- ✅ Committee mode (parallel voting, majority tally)
+- ✅ External agents via WebSocket gateway (auth, reconnection, REST fallback)
+- ✅ GitHub Discussions sync
+- ✅ Context builder v2 (import tracing)
+- ✅ Additional LLM providers: OpenAI, Gemini, LM Studio, Claude Code
+- ✅ Additional task adapters: Things 3, GitHub Issues
 - PM agent (task decomposition)
-- CTO agent (PR review)
 - QA agent (test writing)
 - Frontend Dev agent
 - Workflow engine (state machine execution, dependencies, revision loops)
-- Context builder v2 (dependency tracing)
 - Web dashboard for config
 
 ### Phase 3 — Multi-Tenant SaaS
@@ -570,8 +508,8 @@ Floor Agents operates in the "AI coding agent" space. Key differentiation:
 
 ### Phase 4 — Platform
 - GitLab adapter
-- GitHub Issues adapter, Jira adapter
-- Additional LLM providers (OpenAI, Google, Mistral, Ollama)
+- Jira adapter
+- Additional LLM providers (Mistral, Ollama)
 - Custom agent roles (customer-defined)
 - Context builder v3 (embeddings)
 - DevOps agent
@@ -580,13 +518,11 @@ Floor Agents operates in the "AI coding agent" space. Key differentiation:
 
 ---
 
-## 15. Next Steps
+## 14. What's Next
 
-1. **Dogfood Phase 1** — Run against the `floor/agents` repo itself
-2. **Write remaining agent prompts** — CTO, PM, QA, Frontend Dev
-3. **Iterate on context builder** — Track file selection accuracy during dogfooding
-4. **Build Phase 2** — Workflow engine + multi-agent collaboration
+- PM agent (task decomposition for complex issues)
+- QA agent (automated test writing)
+- Workflow engine (state machine with dependency resolution)
+- Web dashboard for config and monitoring
 
----
-
-*Floor Agents is not an AI experiment. It's a product. Ship it.*
+See [Next Steps](./next-steps.md) for the full prioritized list.

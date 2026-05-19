@@ -41,6 +41,10 @@ LINEAR_TEAM_ID=...           # only if TASK_ADAPTER=linear
 # LLM providers (only what your agents use)
 ANTHROPIC_API_KEY=sk-ant-... # only if agents use provider: anthropic
 LMSTUDIO_BASE_URL=http://localhost:1234/v1  # only if agents use provider: lmstudio
+
+# Gateway (only if using external agents)
+GATEWAY_PORT=3100
+GATEWAY_TOKEN=your-secret-token
 ```
 
 ### 2. Company config (YAML)

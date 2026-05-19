@@ -1,6 +1,6 @@
 # Known Issues
 
-Updated April 9, 2026.
+Updated May 19, 2026.
 
 ---
 
@@ -14,13 +14,6 @@ Claude Code edits files and commits in the worktree (exit 0), but `git push orig
 
 **Workaround:** None yet. API-based execution (sprint 2 config) still works.
 
-### Claude Code auth uses API key (per-token billing)
-**Severity:** Medium — costs money unnecessarily
-**Found:** Sprint 3
-
-The native runner passes `ANTHROPIC_API_KEY` to the Claude Code subprocess because stripping it causes "Not logged in" errors. This means Claude Code bills per-token via the API instead of using the Max plan subscription.
-
-**Fix:** Run `claude setup-token` to configure long-lived Max plan auth, then strip `ANTHROPIC_API_KEY` from the subprocess env.
 
 ### Linear rate limit (5000 req/hr)
 **Severity:** Medium — blocks operation after heavy use
@@ -58,5 +51,15 @@ Removed `CI=true` from native runner env. Added explicit `--allowedTools`.
 ### Stale branches from filter-branch
 Old branches had no common history with main after `git filter-branch`. Deleted all agent branches.
 
+### Claude Code auth uses API key (per-token billing)
+The adapter now strips `ANTHROPIC_API_KEY` from the subprocess env so Claude Code routes through the Max plan subscription instead of per-token API billing.
+
 ### Object.entries on null ProjectConfig
 Native runner was passing partial ProjectConfig. Fixed to pass full `company.project`.
+
+---
+
+## Known Limitations
+
+### Gateway module-level state
+The gateway uses module-level `_state` and `_config` variables to work around Bun.serve's closure scoping. This limits the process to one gateway instance. Acceptable for now — revisit if multi-gateway becomes needed.

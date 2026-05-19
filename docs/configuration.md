@@ -21,6 +21,8 @@ Floor Agents is configured through two layers: a YAML config file and environmen
 | `CLAUDE_CODE_MODEL` | No | — | Model override for Claude Code adapter (`opus`, `sonnet`) |
 | `CONFIG_PATH` | No | `config/templates/default.yaml` | Path to company config |
 | `STATE_DIR` | No | `./data/executions` | Directory for execution state files |
+| `GATEWAY_PORT` | No | `3100` | WebSocket gateway port (external agents) |
+| `GATEWAY_TOKEN` | No | — | Shared secret for gateway auth (WS + REST) |
 
 **Key principle:** only providers referenced by your agent definitions require their env vars. If all agents use `provider: lmstudio`, you don't need `ANTHROPIC_API_KEY`.
 
@@ -87,9 +89,10 @@ agents:
       - write_tests
     autonomy: T1                     # T1: fully autonomous, T2: recommends, T3: presents options
     customInstructions: ""           # Per-agent instructions appended to prompt
+    external: false                  # If true, agent connects via gateway WebSocket
 ```
 
-**Available capabilities:** `read_code`, `write_code`, `create_pr`, `review_pr`, `write_tests`, `decompose_task`, `manage_issues`, `approve`, `reject`
+**Available capabilities:** `read_code`, `write_code`, `create_pr`, `review_pr`, `write_tests`, `decompose_task`, `manage_issues`, `approve`, `reject`, `vote`, `review_rfc`
 
 **Available providers:** `anthropic`, `claude-code`, `gemini`, `lmstudio`, `openai`, `ollama`, `local`
 

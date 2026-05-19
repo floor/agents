@@ -177,6 +177,27 @@ export async function getLabels(config: LinearAdapterConfig): Promise<{ id: stri
   return data.issueLabels.nodes
 }
 
+export type LinearComment = {
+  readonly id: string
+  readonly body: string
+  readonly user: { readonly name: string } | null
+  readonly createdAt: string
+}
+
+export async function getIssueComments(config: LinearAdapterConfig, issueId: string): Promise<LinearComment[]> {
+  const data = await gql(config, `
+    query($id: String!) {
+      issue(id: $id) {
+        comments(orderBy: createdAt) {
+          nodes { id body user { name } createdAt }
+        }
+      }
+    }
+  `, { id: issueId })
+
+  return data.issue.comments.nodes
+}
+
 export async function getIssueLabels(config: LinearAdapterConfig, issueId: string): Promise<{ id: string; name: string }[]> {
   const data = await gql(config, `
     query($id: String!) {

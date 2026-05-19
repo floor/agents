@@ -5,6 +5,7 @@ import type {
   AgentDefinition,
   StateStore,
   LLMMessage,
+  IssueComment,
 } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
 import { runToolUseLoop, type LLMAdapterResolver } from './llm-runner.ts'
@@ -31,6 +32,11 @@ export type CommitteeResult = {
   readonly totalCost: number
 }
 
+export type ExternalAgentConfig = {
+  readonly pollIntervalMs?: number
+  readonly timeoutMs?: number
+}
+
 export type CommitteePipelineDeps = {
   readonly company: CompanyConfig
   readonly taskAdapter: TaskAdapter
@@ -39,6 +45,7 @@ export type CommitteePipelineDeps = {
   readonly costTracker: CostTracker
   readonly getAdapter: LLMAdapterResolver
   readonly discussions?: DiscussionsAdapter
+  readonly externalAgents?: ExternalAgentConfig
 }
 
 // ── Vote extraction ──────────────────────────────────────────────
@@ -133,6 +140,64 @@ async function runCommitteeAgent(
   }
 }
 
+// ── External agent vote polling ─────────────────────────────────
+
+const DEFAULT_POLL_INTERVAL_MS = 15_000
+const DEFAULT_EXTERNAL_TIMEOUT_MS = 5 * 60_000
+
+async function pollForExternalVote(
+  issue: Issue,
+  agent: AgentDefinition,
+  deps: CommitteePipelineDeps,
+  afterTimestamp: Date,
+): Promise<CommitteeVote> {
+  const { taskAdapter } = deps
+  const config = deps.externalAgents ?? {}
+  const pollInterval = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
+  const timeout = config.timeoutMs ?? DEFAULT_EXTERNAL_TIMEOUT_MS
+
+  if (!taskAdapter.getComments) {
+    console.error(`[committee] ${agent.id}: taskAdapter does not support getComments — cannot poll`)
+    return { agentId: agent.id, agentName: agent.name, vote: 'abstain', summary: 'TaskAdapter does not support getComments', response: '', costUsd: 0 }
+  }
+
+  console.log(`[committee] ${agent.id}: waiting for external vote (timeout ${timeout / 1000}s)`)
+
+  const deadline = Date.now() + timeout
+
+  while (Date.now() < deadline) {
+    const comments = await taskAdapter.getComments(issue.id)
+
+    for (const comment of comments) {
+      if (comment.createdAt <= afterTimestamp) continue
+
+      const vote = extractVote(comment.body)
+      if (vote === 'abstain') continue
+
+      const matchesAgent = comment.body.toUpperCase().includes(agent.id.toUpperCase())
+        || comment.author.toUpperCase().includes(agent.id.toUpperCase())
+        || comment.author.toUpperCase().includes(agent.name.toUpperCase())
+
+      if (matchesAgent) {
+        console.log(`[committee] ${agent.id}: external vote received — ${vote}`)
+        return {
+          agentId: agent.id,
+          agentName: agent.name,
+          vote,
+          summary: comment.body.slice(0, 500),
+          response: comment.body,
+          costUsd: 0,
+        }
+      }
+    }
+
+    await new Promise(r => setTimeout(r, pollInterval))
+  }
+
+  console.log(`[committee] ${agent.id}: external vote timed out`)
+  return { agentId: agent.id, agentName: agent.name, vote: 'abstain', summary: 'External agent timed out', response: '', costUsd: 0 }
+}
+
 // ── Main committee pipeline ──────────────────────────────────────
 
 export async function executeCommitteeReview(
@@ -143,22 +208,30 @@ export async function executeCommitteeReview(
   const { taskAdapter, costTracker, company } = deps
   const startTime = performance.now()
 
-  console.log(`[committee] starting review: "${issue.title}" with ${agents.length} agents`)
+  const internalAgents = agents.filter(a => !a.external)
+  const externalAgents = agents.filter(a => a.external)
+
+  console.log(`[committee] starting review: "${issue.title}" with ${internalAgents.length} internal + ${externalAgents.length} external agents`)
+
+  const pollStart = new Date()
 
   await taskAdapter.addComment(issue.id, [
     '🏛️ **Committee Review Started**',
     '',
-    '| Agent | Provider | Model |',
-    '|-------|----------|-------|',
-    ...agents.map(a => `| ${a.name} | ${a.llm.provider} | \`${a.llm.model}\` |`),
+    '| Agent | Provider | Type |',
+    '|-------|----------|------|',
+    ...agents.map(a => `| ${a.name} | ${a.llm.provider} | ${a.external ? 'external' : 'internal'} |`),
     '',
-    'Agents are reviewing in parallel. Votes will be posted when all reviews complete.',
+    externalAgents.length > 0
+      ? 'Internal agents are reviewing now. Waiting for external agents to post their votes.'
+      : 'Agents are reviewing in parallel. Votes will be posted when all reviews complete.',
   ].join('\n'))
 
-  // Run all agents in parallel
-  const votes = await Promise.all(
-    agents.map(agent => runCommitteeAgent(issue, agent, deps)),
-  )
+  // Run internal and external agents in parallel
+  const votes = await Promise.all([
+    ...internalAgents.map(agent => runCommitteeAgent(issue, agent, deps)),
+    ...externalAgents.map(agent => pollForExternalVote(issue, agent, deps, pollStart)),
+  ])
 
   const outcome = tallyVotes(votes)
   const totalCost = votes.reduce((sum, v) => sum + v.costUsd, 0)

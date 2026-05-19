@@ -10,6 +10,7 @@ import {
   createLinearIssue,
   updateLinearIssue,
   createLinearComment,
+  getIssueComments,
   getWorkflowStates,
   getLabels,
   getIssueLabels,
@@ -192,6 +193,16 @@ export function createLinearAdapter(adapterConfig: LinearAdapterConfig): TaskAda
 
     async addComment(issueId, text) {
       await createLinearComment(config, issueId, text)
+    },
+
+    async getComments(issueId) {
+      const comments = await getIssueComments(config, issueId)
+      return comments.map(c => ({
+        id: c.id,
+        body: c.body,
+        author: c.user?.name ?? 'unknown',
+        createdAt: new Date(c.createdAt),
+      }))
     },
 
     async setStatus(issueId, status) {

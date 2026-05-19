@@ -28,4 +28,5 @@ export type AgentDefinition = {
   readonly capabilities: readonly AgentCapability[]
   readonly autonomy: AutonomyTier
   readonly customInstructions: string
+  readonly external?: boolean
 }

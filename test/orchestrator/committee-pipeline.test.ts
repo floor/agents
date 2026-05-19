@@ -28,7 +28,7 @@ function makeIssue(overrides?: Partial<Issue>): Issue {
   }
 }
 
-function makeAgent(id: string, provider: string = 'anthropic'): AgentDefinition {
+function makeAgent(id: string, provider: string = 'anthropic', external: boolean = false): AgentDefinition {
   return {
     id,
     name: `Agent ${id}`,
@@ -37,6 +37,7 @@ function makeAgent(id: string, provider: string = 'anthropic'): AgentDefinition 
     capabilities: ['read_code', 'review_rfc', 'vote'],
     autonomy: 'T1',
     customInstructions: '',
+    external,
   }
 }
 
@@ -60,6 +61,15 @@ function mockTaskAdapter(): TaskAdapter & { comments: Map<string, string[]>; sta
       const list = comments.get(id) ?? []
       list.push(text)
       comments.set(id, list)
+    },
+    async getComments(id) {
+      const list = comments.get(id) ?? []
+      return list.map((body, i) => ({
+        id: `comment-${i}`,
+        body,
+        author: 'bot',
+        createdAt: new Date(),
+      }))
     },
     async setStatus(id, status) { statuses.set(id, status) },
     async setLabel(id, label) {
@@ -116,7 +126,10 @@ function makeDeps(
   const llm = mockLLMAdapter(llmResponse)
   return {
     company: {
+      id: 'test-committee',
       name: 'Test Committee',
+      createdAt: new Date(),
+      updatedAt: new Date(),
       project: {
         name: 'test',
         repo: 'test',
@@ -431,5 +444,101 @@ describe('discussions sync', () => {
     await executeCommitteeReview(issue, agents, deps)
 
     expect(posted.length).toBe(0)
+  })
+})
+
+describe('external agents', () => {
+  test('polls for external vote from comments', async () => {
+    const taskAdapter = mockTaskAdapter()
+    let addCommentCount = 0
+    const originalAddComment = taskAdapter.addComment.bind(taskAdapter)
+
+    // Simulate an external agent posting a vote after the review starts
+    taskAdapter.addComment = async (id: string, text: string) => {
+      await originalAddComment(id, text)
+      addCommentCount++
+      // After the "started" comment, simulate the external agent posting its vote
+      if (addCommentCount === 1) {
+        setTimeout(async () => {
+          const list = taskAdapter.comments.get(id) ?? []
+          list.push('Agent codex here. After careful review, VOTE: APPROVE')
+          taskAdapter.comments.set(id, list)
+        }, 50)
+      }
+    }
+
+    const deps = makeDeps('VOTE: APPROVE', {
+      taskAdapter,
+      externalAgents: { pollIntervalMs: 30, timeoutMs: 2000 },
+    })
+    const agents = [makeAgent('claude'), makeAgent('codex', 'external', true)]
+
+    const result = await executeCommitteeReview(makeIssue(), agents, deps)
+
+    expect(result.votes.length).toBe(2)
+    expect(result.votes.find(v => v.agentId === 'claude')!.vote).toBe('approve')
+    expect(result.votes.find(v => v.agentId === 'codex')!.vote).toBe('approve')
+    expect(result.outcome).toBe('approved')
+  })
+
+  test('external agent times out → abstain', async () => {
+    const deps = makeDeps('VOTE: APPROVE', {
+      externalAgents: { pollIntervalMs: 30, timeoutMs: 100 },
+    })
+    const agents = [makeAgent('claude'), makeAgent('codex', 'external', true)]
+
+    const result = await executeCommitteeReview(makeIssue(), agents, deps)
+
+    expect(result.votes.find(v => v.agentId === 'codex')!.vote).toBe('abstain')
+    expect(result.votes.find(v => v.agentId === 'codex')!.summary).toContain('timed out')
+  })
+
+  test('mixed internal + external agents tally correctly', async () => {
+    const taskAdapter = mockTaskAdapter()
+    const originalAddComment = taskAdapter.addComment.bind(taskAdapter)
+    let started = false
+
+    taskAdapter.addComment = async (id: string, text: string) => {
+      await originalAddComment(id, text)
+      if (!started) {
+        started = true
+        setTimeout(() => {
+          const list = taskAdapter.comments.get(id) ?? []
+          list.push('Agent codex: I disagree with this approach. VOTE: REJECT')
+          taskAdapter.comments.set(id, list)
+        }, 50)
+      }
+    }
+
+    const deps = makeDeps('VOTE: APPROVE', {
+      taskAdapter,
+      externalAgents: { pollIntervalMs: 30, timeoutMs: 2000 },
+    })
+    const agents = [
+      makeAgent('claude'),
+      makeAgent('gemma', 'lmstudio'),
+      makeAgent('codex', 'external', true),
+    ]
+
+    const result = await executeCommitteeReview(makeIssue(), agents, deps)
+
+    expect(result.votes.filter(v => v.vote === 'approve').length).toBe(2)
+    expect(result.votes.filter(v => v.vote === 'reject').length).toBe(1)
+    expect(result.outcome).toBe('approved')
+  })
+
+  test('started comment shows agent types', async () => {
+    const taskAdapter = mockTaskAdapter()
+    const deps = makeDeps('VOTE: APPROVE', {
+      taskAdapter,
+      externalAgents: { pollIntervalMs: 30, timeoutMs: 100 },
+    })
+    const agents = [makeAgent('claude'), makeAgent('codex', 'external', true)]
+
+    await executeCommitteeReview(makeIssue(), agents, deps)
+
+    const comments = taskAdapter.comments.get('rfc-1') ?? []
+    expect(comments[0]).toContain('internal')
+    expect(comments[0]).toContain('external')
   })
 })

@@ -2,6 +2,7 @@ export type {
   IssueStatus,
   IssueEvent,
   Issue,
+  IssueComment,
   CreateIssueData,
   UpdateIssueData,
   TaskAdapter,

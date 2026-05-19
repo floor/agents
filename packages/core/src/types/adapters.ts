@@ -34,12 +34,20 @@ export type CreateIssueData = {
 
 export type UpdateIssueData = Partial<Pick<Issue, 'title' | 'body' | 'status' | 'labels'>>
 
+export type IssueComment = {
+  readonly id: string
+  readonly body: string
+  readonly author: string
+  readonly createdAt: Date
+}
+
 export type TaskAdapter = {
   watchIssues(filters?: { labels?: string[] }): AsyncIterable<IssueEvent>
   getIssue(issueId: string): Promise<Issue | null>
   createIssue(data: CreateIssueData, parentId?: string): Promise<Issue>
   updateIssue(issueId: string, changes: UpdateIssueData): Promise<void>
   addComment(issueId: string, text: string): Promise<void>
+  getComments?(issueId: string): Promise<IssueComment[]>
   setStatus(issueId: string, status: IssueStatus): Promise<void>
   setLabel(issueId: string, label: string): Promise<void>
   removeLabel(issueId: string, label: string): Promise<void>

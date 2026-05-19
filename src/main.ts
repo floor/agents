@@ -143,8 +143,9 @@ const costTracker = createCostTracker()
 
 // Start gateway if external agents are configured
 const GATEWAY_PORT = parseInt(process.env.GATEWAY_PORT ?? '3100', 10)
+const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN
 const gateway = hasExternalAgents
-  ? createGateway({ port: GATEWAY_PORT })
+  ? createGateway({ port: GATEWAY_PORT, token: GATEWAY_TOKEN })
   : undefined
 
 if (gateway) gateway.start()

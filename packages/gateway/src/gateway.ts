@@ -5,9 +5,11 @@ import type {
   TaskAssignment,
   TaskResult,
 } from './types.ts'
+import { validateAgentMessage } from './types.ts'
 
 export type GatewayConfig = {
   readonly port: number
+  readonly token?: string
   readonly heartbeatIntervalMs?: number
   readonly taskTimeoutMs?: number
 }
@@ -40,6 +42,7 @@ type GatewayState = {
   agents: Map<string, ConnectedAgent>
   pendingResults: Map<string, PendingResult>
   pendingTasks: Map<string, PendingTask>
+  inFlightTasks: Map<string, { agentId: string; task: TaskAssignment }>
   connectHandlers: ((agent: ConnectedAgent) => void)[]
   disconnectHandlers: ((agentId: string) => void)[]
 }
@@ -49,13 +52,20 @@ function send(ws: WS, msg: ServerMessage): void {
 }
 
 function handleMessage(s: GatewayState, ws: WS, raw: string | Buffer): void {
-  let msg: AgentMessage
+  let parsed: unknown
   try {
-    msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString()) as AgentMessage
+    parsed = JSON.parse(typeof raw === 'string' ? raw : raw.toString())
   } catch {
     send(ws, { type: 'error', message: 'Invalid JSON' })
     return
   }
+
+  if (!validateAgentMessage(parsed)) {
+    send(ws, { type: 'error', message: 'Invalid message shape' })
+    return
+  }
+
+  const msg: AgentMessage = parsed
 
   switch (msg.type) {
     case 'register': {
@@ -83,6 +93,7 @@ function handleMessage(s: GatewayState, ws: WS, raw: string | Buffer): void {
       for (const [taskId, entry] of s.pendingTasks) {
         if (entry.agentId === msg.agentId) {
           send(ws, { type: 'assignment', task: entry.task })
+          s.inFlightTasks.set(taskId, { agentId: msg.agentId, task: entry.task })
           s.pendingTasks.delete(taskId)
         }
       }
@@ -98,6 +109,7 @@ function handleMessage(s: GatewayState, ws: WS, raw: string | Buffer): void {
 
       clearTimeout(pending.timer)
       s.pendingResults.delete(msg.taskId)
+      s.inFlightTasks.delete(msg.taskId)
 
       const agentId = [...s.agents.entries()].find(([_, a]) => a.ws === ws)?.[0] ?? 'unknown'
       console.log(`[gateway] result received: task=${msg.taskId} agent=${agentId}`)
@@ -121,6 +133,16 @@ function handleClose(s: GatewayState, ws: WS): void {
     if (agent.ws === ws) {
       s.agents.delete(id)
       console.log(`[gateway] agent disconnected: ${id}`)
+
+      // Re-queue any in-flight tasks so they're retried on reconnect
+      for (const [taskId, entry] of s.inFlightTasks) {
+        if (entry.agentId === id) {
+          s.pendingTasks.set(taskId, entry)
+          s.inFlightTasks.delete(taskId)
+          console.log(`[gateway] re-queued task=${taskId} (agent ${id} disconnected)`)
+        }
+      }
+
       for (const handler of s.disconnectHandlers) handler(id)
       break
     }
@@ -129,12 +151,25 @@ function handleClose(s: GatewayState, ws: WS): void {
 
 // Module-level state — Bun.serve closures need this to be reachable
 let _state: GatewayState | null = null
+let _config: GatewayConfig | null = null
+
+function checkAuth(config: GatewayConfig, url: URL): boolean {
+  if (!config.token) return true
+  return url.searchParams.get('token') === config.token
+}
+
+function checkBearerAuth(config: GatewayConfig, req: Request): boolean {
+  if (!config.token) return true
+  const header = req.headers.get('authorization')
+  return header === `Bearer ${config.token}`
+}
 
 export function createGateway(config: GatewayConfig): Gateway {
   const s: GatewayState = {
     agents: new Map(),
     pendingResults: new Map(),
     pendingTasks: new Map(),
+    inFlightTasks: new Map(),
     connectHandlers: [],
     disconnectHandlers: [],
   }
@@ -145,18 +180,29 @@ export function createGateway(config: GatewayConfig): Gateway {
   return {
     start() {
       _state = s
+      _config = config
       server = Bun.serve({
         port: config.port,
         fetch(req, srv) {
           const st = _state!
+          const cfg = _config!
           const url = new URL(req.url)
 
           if (url.pathname === '/ws') {
+            if (!checkAuth(cfg, url)) {
+              return new Response('Unauthorized', { status: 401 })
+            }
             const upgraded = srv.upgrade(req, {})
             if (!upgraded) {
               return new Response('WebSocket upgrade failed', { status: 400 })
             }
             return undefined
+          }
+
+          if (url.pathname.startsWith('/api/')) {
+            if (!checkBearerAuth(cfg, req)) {
+              return Response.json({ error: 'Unauthorized' }, { status: 401 })
+            }
           }
 
           if (url.pathname.startsWith('/api/agents/') && url.pathname.endsWith('/tasks')) {
@@ -179,6 +225,7 @@ export function createGateway(config: GatewayConfig): Gateway {
 
               clearTimeout(pending.timer)
               st.pendingResults.delete(taskId)
+              st.inFlightTasks.delete(taskId)
 
               pending.resolve({
                 taskId,
@@ -240,6 +287,7 @@ export function createGateway(config: GatewayConfig): Gateway {
       const agent = s.agents.get(agentId)
       if (agent?.ws) {
         send(agent.ws as WS, { type: 'assignment', task })
+        s.inFlightTasks.set(task.id, { agentId, task })
         console.log(`[gateway] assigned task=${task.id} to ${agentId} via websocket`)
       } else {
         s.pendingTasks.set(task.id, { agentId, task })

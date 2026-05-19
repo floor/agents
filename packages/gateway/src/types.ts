@@ -2,6 +2,31 @@
 
 export type AgentChannel = 'websocket' | 'poll'
 
+// ── Validation ──────────────────────────────────────────────────
+
+const VALID_AGENT_MSG_TYPES = new Set(['register', 'result', 'heartbeat'])
+
+export function validateAgentMessage(data: unknown): data is AgentMessage {
+  if (typeof data !== 'object' || data === null) return false
+  const obj = data as Record<string, unknown>
+  if (typeof obj.type !== 'string' || !VALID_AGENT_MSG_TYPES.has(obj.type)) return false
+
+  switch (obj.type) {
+    case 'register':
+      return typeof obj.agentId === 'string' && obj.agentId.length > 0
+        && typeof obj.name === 'string' && obj.name.length > 0
+        && Array.isArray(obj.capabilities)
+        && (obj.capabilities as unknown[]).every(c => typeof c === 'string')
+    case 'result':
+      return typeof obj.taskId === 'string' && obj.taskId.length > 0
+        && typeof obj.content === 'string'
+    case 'heartbeat':
+      return true
+    default:
+      return false
+  }
+}
+
 export type AgentRegistration = {
   readonly agentId: string
   readonly name: string

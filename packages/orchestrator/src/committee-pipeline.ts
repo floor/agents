@@ -11,6 +11,7 @@ import type { ContextBuilder } from '@floor-agents/context-builder'
 import { runToolUseLoop, type LLMAdapterResolver } from './llm-runner.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import type { DiscussionsAdapter } from '@floor-agents/github'
+import type { Gateway } from '@floor-agents/gateway'
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ export type CommitteePipelineDeps = {
   readonly getAdapter: LLMAdapterResolver
   readonly discussions?: DiscussionsAdapter
   readonly externalAgents?: ExternalAgentConfig
+  readonly gateway?: Gateway
 }
 
 // ── Vote extraction ──────────────────────────────────────────────
@@ -140,28 +142,75 @@ async function runCommitteeAgent(
   }
 }
 
-// ── External agent vote polling ─────────────────────────────────
+// ── External agent dispatch via gateway ─────────────────────────
 
 const DEFAULT_POLL_INTERVAL_MS = 15_000
 const DEFAULT_EXTERNAL_TIMEOUT_MS = 5 * 60_000
+
+async function dispatchExternalAgent(
+  issue: Issue,
+  agent: AgentDefinition,
+  deps: CommitteePipelineDeps,
+  systemPrompt: string,
+): Promise<CommitteeVote> {
+  const { gateway } = deps
+  const config = deps.externalAgents ?? {}
+  const timeout = config.timeoutMs ?? DEFAULT_EXTERNAL_TIMEOUT_MS
+
+  // Gateway path: dispatch via WebSocket
+  if (gateway) {
+    const taskId = `${issue.id}:${agent.id}`
+    console.log(`[committee] ${agent.id}: dispatching via gateway (timeout ${timeout / 1000}s)`)
+
+    gateway.assign(agent.id, {
+      id: taskId,
+      issueId: issue.id,
+      title: issue.title,
+      body: issue.body,
+      systemPrompt,
+      createdAt: new Date().toISOString(),
+    })
+
+    try {
+      const result = await gateway.waitForResult(taskId, timeout)
+      const vote = extractVote(result.content)
+      console.log(`[committee] ${agent.id}: gateway vote received — ${vote}`)
+
+      return {
+        agentId: agent.id,
+        agentName: agent.name,
+        vote,
+        summary: result.content.slice(0, 500),
+        response: result.content,
+        costUsd: 0,
+      }
+    } catch {
+      console.log(`[committee] ${agent.id}: gateway vote timed out`)
+      return { agentId: agent.id, agentName: agent.name, vote: 'abstain', summary: 'External agent timed out', response: '', costUsd: 0 }
+    }
+  }
+
+  // Fallback: poll Linear comments
+  return pollForExternalVote(issue, agent, deps)
+}
 
 async function pollForExternalVote(
   issue: Issue,
   agent: AgentDefinition,
   deps: CommitteePipelineDeps,
-  afterTimestamp: Date,
 ): Promise<CommitteeVote> {
   const { taskAdapter } = deps
   const config = deps.externalAgents ?? {}
   const pollInterval = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
   const timeout = config.timeoutMs ?? DEFAULT_EXTERNAL_TIMEOUT_MS
+  const afterTimestamp = new Date()
 
   if (!taskAdapter.getComments) {
-    console.error(`[committee] ${agent.id}: taskAdapter does not support getComments — cannot poll`)
-    return { agentId: agent.id, agentName: agent.name, vote: 'abstain', summary: 'TaskAdapter does not support getComments', response: '', costUsd: 0 }
+    console.error(`[committee] ${agent.id}: no gateway and no getComments — cannot dispatch`)
+    return { agentId: agent.id, agentName: agent.name, vote: 'abstain', summary: 'No gateway or getComments available', response: '', costUsd: 0 }
   }
 
-  console.log(`[committee] ${agent.id}: waiting for external vote (timeout ${timeout / 1000}s)`)
+  console.log(`[committee] ${agent.id}: polling for external vote (timeout ${timeout / 1000}s)`)
 
   const deadline = Date.now() + timeout
 
@@ -227,10 +276,16 @@ export async function executeCommitteeReview(
       : 'Agents are reviewing in parallel. Votes will be posted when all reviews complete.',
   ].join('\n'))
 
+  // Build system prompt for external agents
+  const projectContext = company.project.customInstructions
+    ? `\n\n## Project Context\n${company.project.customInstructions}`
+    : ''
+  const externalSystemPrompt = `You are a technical committee member. Review the RFC and vote APPROVE or REJECT.${projectContext}`
+
   // Run internal and external agents in parallel
   const votes = await Promise.all([
     ...internalAgents.map(agent => runCommitteeAgent(issue, agent, deps)),
-    ...externalAgents.map(agent => pollForExternalVote(issue, agent, deps, pollStart)),
+    ...externalAgents.map(agent => dispatchExternalAgent(issue, agent, deps, externalSystemPrompt)),
   ])
 
   const outcome = tallyVotes(votes)

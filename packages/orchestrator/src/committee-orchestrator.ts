@@ -9,6 +9,7 @@ import type {
 import type { ContextBuilder } from '@floor-agents/context-builder'
 import type { CostTracker } from './cost-tracker.ts'
 import type { DiscussionsAdapter } from '@floor-agents/github'
+import type { Gateway } from '@floor-agents/gateway'
 import { executeCommitteeReview, type CommitteePipelineDeps } from './committee-pipeline.ts'
 
 export type CommitteeOrchestratorConfig = {
@@ -20,6 +21,7 @@ export type CommitteeOrchestratorConfig = {
   readonly stateStore: StateStore
   readonly costTracker: CostTracker
   readonly discussions?: DiscussionsAdapter
+  readonly gateway?: Gateway
   readonly label?: string
 }
 
@@ -31,7 +33,7 @@ export type CommitteeOrchestrator = {
 export function createCommitteeOrchestrator(config: CommitteeOrchestratorConfig): CommitteeOrchestrator {
   const {
     company, taskAdapter, llmAdapters, contextBuilder,
-    stateStore, costTracker, discussions,
+    stateStore, costTracker, discussions, gateway,
   } = config
 
   const watchLabel = config.label ?? 'committee'
@@ -57,6 +59,7 @@ export function createCommitteeOrchestrator(config: CommitteeOrchestratorConfig)
     costTracker,
     getAdapter: getLLMAdapter,
     discussions,
+    gateway,
   }
 
   return {

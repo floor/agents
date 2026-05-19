@@ -10,6 +10,7 @@ import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
 import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore } from '@floor-agents/orchestrator'
 import { createDiscussionsAdapter } from '@floor-agents/github'
+import { createGateway } from '@floor-agents/gateway'
 import { mkdir } from 'node:fs/promises'
 
 // Environment
@@ -135,9 +136,18 @@ await mkdir(STATE_DIR, { recursive: true })
 
 // Detect mode: committee if any agent has 'vote' capability, dev otherwise
 const isCommitteeMode = company.agents.some(a => a.capabilities.includes('vote'))
+const hasExternalAgents = company.agents.some(a => a.external)
 
 const stateStore = createStateStore(STATE_DIR)
 const costTracker = createCostTracker()
+
+// Start gateway if external agents are configured
+const GATEWAY_PORT = parseInt(process.env.GATEWAY_PORT ?? '3100', 10)
+const gateway = hasExternalAgents
+  ? createGateway({ port: GATEWAY_PORT })
+  : undefined
+
+if (gateway) gateway.start()
 
 const orchestrator = isCommitteeMode
   ? createCommitteeOrchestrator({
@@ -148,6 +158,7 @@ const orchestrator = isCommitteeMode
       contextBuilder,
       stateStore,
       costTracker,
+      gateway,
       discussions: company.project.repo
         ? createDiscussionsAdapter({
             token: requireEnv('GITHUB_TOKEN'),
@@ -178,11 +189,13 @@ console.log()
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\nShutting down...')
+  gateway?.stop()
   await orchestrator.stop()
   process.exit(0)
 })
 
 process.on('SIGTERM', async () => {
+  gateway?.stop()
   await orchestrator.stop()
   process.exit(0)
 })

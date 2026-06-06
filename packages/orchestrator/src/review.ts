@@ -35,6 +35,31 @@ const REVIEW_TOOLS: ToolDefinition[] = [
       required: ['decision', 'comments'],
     },
   },
+  {
+    name: 'create_issue',
+    description: 'Create a follow-up issue in the project tracker. Use for tasks discovered during review.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short, actionable issue title' },
+        description: { type: 'string', description: 'Full description with context and acceptance criteria' },
+        priority: { type: 'number', enum: [1, 2, 3, 4], description: '1=urgent, 2=high, 3=medium, 4=low' },
+        labels: { type: 'array', items: { type: 'string' }, description: 'Labels (e.g. "backend", "agent")' },
+      },
+      required: ['title', 'description'],
+    },
+  },
+  {
+    name: 'add_comment',
+    description: 'Add a comment to the current issue.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        comment: { type: 'string', description: 'Comment text (markdown)' },
+      },
+      required: ['comment'],
+    },
+  },
 ]
 
 function formatDuration(ms: number): string {
@@ -100,6 +125,7 @@ export async function runReviewAgent(
     'Use the `review_verdict` tool to submit your review.',
     'Set decision to "approve" if the code is ready, or "request_changes" if it needs work.',
     'In comments, be specific about what needs to change.',
+    'You can also use `create_issue` to create follow-up tasks and `add_comment` to post to the issue.',
   ].join('\n')
 
   const userMessage = [
@@ -118,6 +144,28 @@ export async function runReviewAgent(
   const result = await runToolUseLoop(reviewer, systemPrompt, [{ role: 'user', content: userMessage }], REVIEW_TOOLS, getAdapter)
   costTracker.recordCost(issue.id, result.totalCost)
   console.log(`[${reviewer.id}] LLM: ${result.totalInputTokens} in, ${result.totalOutputTokens} out, $${result.totalCost.toFixed(4)}`)
+
+  // Process create_issue and add_comment tool calls
+  for (const tc of result.toolCalls) {
+    if (tc.name === 'create_issue') {
+      const { title, description, labels } = tc.input as {
+        title: string
+        description: string
+        labels?: string[]
+      }
+      const created = await taskAdapter.createIssue({
+        title,
+        body: description,
+        labels: labels ?? [],
+        status: 'backlog',
+      }, issue.id)
+      console.log(`[${reviewer.id}] created issue: ${created.id} "${title}"`)
+    } else if (tc.name === 'add_comment') {
+      const { comment } = tc.input as { comment: string }
+      await taskAdapter.addComment(issue.id, comment)
+      console.log(`[${reviewer.id}] added comment to ${issue.id}`)
+    }
+  }
 
   const verdictCall = result.toolCalls.find(tc => tc.name === 'review_verdict')
   const verdict: ReviewVerdict = verdictCall

@@ -15,6 +15,13 @@ jobs:
         with:
           bun-version: latest
 
+      # The worktree tests create a throwaway git repo on the `main` branch.
+      - name: Configure git
+        run: |
+          git config --global init.defaultBranch main
+          git config --global user.email "ci@floor.io"
+          git config --global user.name "Floor CI"
+
       - name: Install
         run: bun install --frozen-lockfile
 

@@ -64,8 +64,9 @@ function tallyVotes(votes: readonly CommitteeVote[]): 'approved' | 'rejected' | 
   if (cast.length === 0) return 'no_quorum'
 
   const approvals = cast.filter(v => v.vote === 'approve').length
-  const majority = Math.ceil(cast.length / 2)
-  return approvals >= majority ? 'approved' : 'rejected'
+  // Strict majority: approvals must exceed half the cast votes, so a tie does
+  // not approve (e.g. 1 approve / 1 reject → rejected).
+  return approvals > cast.length / 2 ? 'approved' : 'rejected'
 }
 
 // ── Prompt assembly ─────────────────────────────────────────────
@@ -173,6 +174,10 @@ async function dispatchExternalAgent(
     const taskId = `${issue.id}:${agent.id}`
     console.log(`[committee] ${agent.id}: dispatching via gateway (timeout ${timeout / 1000}s)`)
 
+    // Register the pending-result handler BEFORE assigning, so a fast external
+    // agent that responds in the window between assign and await cannot have its
+    // result dropped (which would surface as a false timeout).
+    const resultP = gateway.waitForResult(taskId, timeout)
     gateway.assign(agent.id, {
       id: taskId,
       issueId: issue.id,
@@ -183,7 +188,7 @@ async function dispatchExternalAgent(
     })
 
     try {
-      const result = await gateway.waitForResult(taskId, timeout)
+      const result = await resultP
       const vote = extractVote(result.content)
       console.log(`[committee] ${agent.id}: gateway vote received — ${vote}`)
 

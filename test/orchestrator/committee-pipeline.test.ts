@@ -10,6 +10,7 @@ import type {
   StateStore,
 } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
+import type { Gateway, TaskResult } from '@floor-agents/gateway'
 import { executeCommitteeReview, type CommitteePipelineDeps } from '@floor-agents/orchestrator'
 import { createCostTracker } from '@floor-agents/orchestrator'
 
@@ -216,6 +217,36 @@ describe('vote extraction', () => {
     expect(result.outcome).toBe('approved')
     expect(result.votes.filter(v => v.vote === 'approve').length).toBe(2)
     expect(result.votes.filter(v => v.vote === 'reject').length).toBe(1)
+  })
+
+  test('1 approve + 1 reject → rejected (tie does not approve)', async () => {
+    let callCount = 0
+    const llm: LLMAdapter = {
+      async run(): Promise<LLMResponse> {
+        callCount++
+        const content = callCount === 1
+          ? 'Looks good. VOTE: APPROVE'
+          : 'Not convinced. VOTE: REJECT'
+        return {
+          content,
+          toolCalls: [],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 500, outputTokens: 200, cost: 0.005 },
+          provider: 'anthropic',
+          model: 'test',
+          durationMs: 50,
+        }
+      },
+    }
+
+    const deps = makeDeps('', { getAdapter: () => llm })
+    const agents = [makeAgent('claude'), makeAgent('gemini')]
+
+    const result = await executeCommitteeReview(makeIssue(), agents, deps)
+
+    expect(result.votes.filter(v => v.vote === 'approve').length).toBe(1)
+    expect(result.votes.filter(v => v.vote === 'reject').length).toBe(1)
+    expect(result.outcome).toBe('rejected')
   })
 
   test('1 approve + 2 reject → rejected', async () => {
@@ -540,5 +571,58 @@ describe('external agents', () => {
     const comments = taskAdapter.comments.get('rfc-1') ?? []
     expect(comments[0]).toContain('internal')
     expect(comments[0]).toContain('external')
+  })
+})
+
+describe('gateway dispatch', () => {
+  // BUG B regression: a fast external agent that delivers its result inside the
+  // window between assign() and await must not be dropped. The pending-result
+  // handler has to be registered (waitForResult) BEFORE assign() runs.
+  test('immediate gateway result is received, not timed out', async () => {
+    const callOrder: string[] = []
+    let resolvePending: ((result: TaskResult) => void) | undefined
+
+    const gateway: Gateway = {
+      start() {},
+      stop() {},
+      // Resolve synchronously from assign — simulates an external agent that
+      // "responds immediately". If waitForResult ran after assign, no pending
+      // entry would exist yet and the result would be dropped → false timeout.
+      assign(_agentId, task) {
+        callOrder.push('assign')
+        resolvePending?.({
+          taskId: task.id,
+          agentId: _agentId,
+          content: 'Reviewed via gateway. VOTE: APPROVE',
+          receivedAt: new Date(),
+        })
+      },
+      waitForResult(_taskId, _timeoutMs) {
+        callOrder.push('waitForResult')
+        return new Promise<TaskResult>(resolve => {
+          resolvePending = resolve
+        })
+      },
+      getConnectedAgents() { return [] },
+      isAgentConnected() { return true },
+      onAgentConnect() {},
+      onAgentDisconnect() {},
+    }
+
+    const deps = makeDeps('VOTE: APPROVE', {
+      gateway,
+      externalAgents: { timeoutMs: 1000 },
+    })
+    const agents = [makeAgent('codex', 'external', true)]
+
+    const result = await executeCommitteeReview(makeIssue(), agents, deps)
+
+    // waitForResult must be registered before assign fires the result.
+    expect(callOrder).toEqual(['waitForResult', 'assign'])
+
+    const codexVote = result.votes.find(v => v.agentId === 'codex')!
+    expect(codexVote.vote).toBe('approve')
+    expect(codexVote.summary).not.toContain('timed out')
+    expect(result.outcome).toBe('approved')
   })
 })

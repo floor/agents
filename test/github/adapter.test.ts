@@ -24,12 +24,18 @@ test('rejects committing to main', async () => {
   ).rejects.toThrow('protected branch')
 })
 
-test('allows agent branches', async () => {
-  const adapter = createGitHubAdapter({ token: 'test', owner: 'test' })
-  // This will fail with a network error (no real GitHub) but NOT with a protection error
+test('allows agent branches (past the protection guard, no network)', async () => {
+  const realFetch = globalThis.fetch
+  // Mock the GitHub API so the test is offline and deterministic — it must fail at
+  // the API (mocked 404), NOT at the protection guard.
+  globalThis.fetch = (async () => new Response('{"message":"Not Found"}', { status: 404 })) as typeof fetch
   try {
+    const adapter = createGitHubAdapter({ token: 'test', owner: 'test' })
     await adapter.createBranch('repo', 'agent/FLO-5-add-slugify')
+    throw new Error('expected createBranch to reject')
   } catch (err) {
     expect((err as GitHubError).message).not.toContain('protected branch')
+  } finally {
+    globalThis.fetch = realFetch
   }
 })

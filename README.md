@@ -76,7 +76,7 @@ Each agent is a different AI model chosen for its strengths:
 | PM | Anthropic API (Sonnet) | Decomposes tasks |
 | QA | Anthropic API (Sonnet) | Writes tests |
 
-Every agent is configurable — swap models, providers, or add custom agents. Use local models for free coding, cloud models for quality-critical reviews.
+This is just the default config — **the team is 100% configurable**: swap models, rename roles, or add custom agents, all in YAML (no hardcoded agents in the engine). Use local models for free coding, cloud models for quality-critical reviews. See **[Agents & the Team](./docs/agents.md)**.
 
 ## Quick Start
 
@@ -200,6 +200,7 @@ bun run src/main.ts   # start the orchestrator
 
 - [Getting Started](./docs/getting-started.md)
 - [Configuration](./docs/configuration.md)
+- [Agents & the Team](./docs/agents.md) — fully configurable; capabilities, modes, personas
 - [CLI](./docs/cli.md) — the `floor-agents` binary: flags, env vars, modes, trigger tags
 - [First Run Guide](./docs/guides/first-run.md)
 - [Architecture](./docs/architecture.md)

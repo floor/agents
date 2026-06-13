@@ -85,9 +85,21 @@ export function createLinearAdapter(adapterConfig: LinearAdapterConfig): TaskAda
 
   return {
     async *watchIssues(filters) {
-      const label = filters?.labels?.[0] ?? 'floor'
+      const labels = filters?.labels?.length ? filters.labels : ['floor']
 
-      const initial = await getIssuesByLabel(config, label)
+      // Union of issues across all trigger labels, deduped by id.
+      const fetchAll = async (): Promise<Awaited<ReturnType<typeof getIssuesByLabel>>> => {
+        const seen = new Set<string>()
+        const out: Awaited<ReturnType<typeof getIssuesByLabel>> = []
+        for (const label of labels) {
+          for (const li of await getIssuesByLabel(config, label)) {
+            if (!seen.has(li.id)) { seen.add(li.id); out.push(li) }
+          }
+        }
+        return out
+      }
+
+      const initial = await fetchAll()
       for (const li of initial) {
         knownIssues.set(li.id, li.updatedAt)
         yield { type: 'created' as const, issue: linearToIssue(li) }
@@ -98,7 +110,7 @@ export function createLinearAdapter(adapterConfig: LinearAdapterConfig): TaskAda
 
       const interval = setInterval(async () => {
         try {
-          const current = await getIssuesByLabel(config, label)
+          const current = await fetchAll()
           const currentIds = new Set<string>()
 
           for (const li of current) {

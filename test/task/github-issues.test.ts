@@ -112,3 +112,34 @@ test('getIssue returns null on API error', () => {
     globalThis.fetch = mockFetch
   })
 })
+
+test('watchIssues unions issues across multiple trigger labels (deduped)', async () => {
+  const mockFetch = globalThis.fetch
+
+  const mkIssue = (number: number, label: string) => ({
+    number, title: `#${number}`, body: '', state: 'open',
+    labels: [{ name: label }],
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z',
+  })
+
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    const url = String(input)
+    let issues: unknown[] = []
+    if (url.includes('labels=committee')) issues = [mkIssue(1, 'committee'), mkIssue(2, 'both')]
+    else if (url.includes('labels=agents')) issues = [mkIssue(2, 'both'), mkIssue(3, 'agents')]
+    return new Response(JSON.stringify(issues), { status: 200 })
+  }
+
+  try {
+    const adapter = createGitHubIssuesAdapter(config)
+    const ids: string[] = []
+    for await (const ev of adapter.watchIssues({ labels: ['committee', 'agents'] })) {
+      ids.push(ev.issue.id)
+      if (ids.length >= 3) break // only the initial scan (before the poll interval)
+    }
+    // #2 appears under both labels but is emitted once
+    expect(ids.sort()).toEqual(['1', '2', '3'])
+  } finally {
+    globalThis.fetch = mockFetch
+  }
+})

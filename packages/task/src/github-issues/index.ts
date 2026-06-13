@@ -89,9 +89,22 @@ export function createGitHubIssuesAdapter(config: GitHubIssuesConfig): TaskAdapt
 
   return {
     async *watchIssues(filters) {
-      const label = filters?.labels?.[0] ?? 'floor'
+      const labels = filters?.labels?.length ? filters.labels : ['floor']
 
-      const initial = await fetchIssuesByLabel(label)
+      // Union of issues across all trigger labels, deduped by number.
+      const fetchAll = async (): Promise<Awaited<ReturnType<typeof fetchIssuesByLabel>>> => {
+        const seen = new Set<string>()
+        const out: Awaited<ReturnType<typeof fetchIssuesByLabel>> = []
+        for (const label of labels) {
+          for (const gi of await fetchIssuesByLabel(label)) {
+            const id = String(gi.number)
+            if (!seen.has(id)) { seen.add(id); out.push(gi) }
+          }
+        }
+        return out
+      }
+
+      const initial = await fetchAll()
       for (const gi of initial) {
         const id = String(gi.number)
         knownIssues.set(id, gi.updated_at)
@@ -103,7 +116,7 @@ export function createGitHubIssuesAdapter(config: GitHubIssuesConfig): TaskAdapt
 
       const interval = setInterval(async () => {
         try {
-          const current = await fetchIssuesByLabel(label)
+          const current = await fetchAll()
           const currentIds = new Set<string>()
 
           for (const gi of current) {

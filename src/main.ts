@@ -46,6 +46,9 @@ Requires Bun. Docs: https://github.com/floor/agents`)
 // Environment
 const STATE_DIR = process.env.STATE_DIR ?? './data/executions'
 const TASK_ADAPTER = process.env.TASK_ADAPTER ?? 'linear'
+// Trigger tags the committee watches (comma-separated).
+const COMMITTEE_LABELS = (process.env.COMMITTEE_LABELS ?? 'committee,agents')
+  .split(',').map(s => s.trim()).filter(Boolean)
 
 // Resolve config. Require CONFIG_PATH explicitly unless a local default template
 // is present (dev) — so the published bin fails with a clear message instead of
@@ -204,6 +207,7 @@ const orchestrator = isCommitteeMode
       stateStore,
       costTracker,
       gateway,
+      labels: COMMITTEE_LABELS,
       discussions: company.project.repo
         ? createDiscussionsAdapter({
             token: requireEnv('GITHUB_TOKEN'),

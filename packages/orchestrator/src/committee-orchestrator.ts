@@ -23,6 +23,7 @@ export type CommitteeOrchestratorConfig = {
   readonly discussions?: DiscussionsAdapter
   readonly gateway?: Gateway
   readonly label?: string
+  readonly labels?: readonly string[]
 }
 
 export type CommitteeOrchestrator = {
@@ -36,7 +37,7 @@ export function createCommitteeOrchestrator(config: CommitteeOrchestratorConfig)
     stateStore, costTracker, discussions, gateway,
   } = config
 
-  const watchLabel = config.label ?? 'committee'
+  const watchLabels = config.labels ?? [config.label ?? 'committee']
   let running = true
   const abortController = new AbortController()
   const processedIds = new Set<string>()
@@ -66,7 +67,7 @@ export function createCommitteeOrchestrator(config: CommitteeOrchestratorConfig)
     async start() {
       const agents = getCommitteeAgents()
       console.log(`[committee] starting with ${agents.length} agents: ${agents.map(a => a.id).join(', ')}`)
-      console.log(`[committee] watching for label: "${watchLabel}"`)
+      console.log(`[committee] watching for labels: ${watchLabels.map(l => `"${l}"`).join(', ')}`)
       if (discussions) {
         console.log('[committee] GitHub Discussions sync: enabled')
       }
@@ -76,7 +77,7 @@ export function createCommitteeOrchestrator(config: CommitteeOrchestratorConfig)
       })
 
       const watchLoop = async () => {
-        for await (const event of taskAdapter.watchIssues({ labels: [watchLabel] })) {
+        for await (const event of taskAdapter.watchIssues({ labels: [...watchLabels] })) {
           if (!running) break
 
           if (event.type === 'created' && event.issue.status !== 'done') {

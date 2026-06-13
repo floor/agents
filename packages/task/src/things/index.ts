@@ -32,8 +32,15 @@ function todoToIssue(todo: ThingsTodo): Issue {
 export function createThingsAdapter(): TaskAdapter {
   const knownTodos = new Map<string, ThingsTodo>()
 
-  async function diffTodos(tag: string): Promise<IssueEvent[]> {
-    const current = await getTodosByTag(tag)
+  async function diffTodos(tags: string[]): Promise<IssueEvent[]> {
+    // Union of todos across all trigger tags, deduped by id.
+    const current: ThingsTodo[] = []
+    const seen = new Set<string>()
+    for (const tag of tags) {
+      for (const todo of await getTodosByTag(tag)) {
+        if (!seen.has(todo.id)) { seen.add(todo.id); current.push(todo) }
+      }
+    }
     const currentIds = new Set<string>()
     const events: IssueEvent[] = []
 
@@ -62,10 +69,10 @@ export function createThingsAdapter(): TaskAdapter {
 
   return {
     async *watchIssues(filters) {
-      const tag = filters?.labels?.[0] ?? 'agent'
+      const tags = filters?.labels?.length ? [...filters.labels] : ['agent']
 
       // Initial scan
-      const initial = await diffTodos(tag)
+      const initial = await diffTodos(tags)
       for (const event of initial) {
         yield event
       }
@@ -76,7 +83,7 @@ export function createThingsAdapter(): TaskAdapter {
 
       const watcher = await watchThingsDb(async () => {
         try {
-          const events = await diffTodos(tag)
+          const events = await diffTodos(tags)
           eventQueue.push(...events)
           if (eventQueue.length > 0) resolve?.()
         } catch (err) {

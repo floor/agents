@@ -18,6 +18,13 @@ export type LLMRunResult = {
 
 export type LLMAdapterResolver = (provider: string) => LLMAdapter
 
+/**
+ * Maximum number of tool-use rounds before the conversation loop bails out.
+ * Guards against a misbehaving model/tool that keeps returning `tool_use`
+ * forever, which would otherwise burn time and money unbounded.
+ */
+const MAX_TOOL_ROUNDS = 25
+
 export async function runToolUseLoop(
   agent: AgentDefinition,
   systemPrompt: string,
@@ -35,7 +42,9 @@ export async function runToolUseLoop(
   let totalDurationMs = 0
   const conversation = [...messages]
 
+  let round = 0
   while (true) {
+    round++
     const response = await llm.run({
       provider: agent.llm.provider,
       model: agent.llm.model,
@@ -57,6 +66,13 @@ export async function runToolUseLoop(
     }
 
     if (response.stopReason !== 'tool_use') break
+
+    if (round >= MAX_TOOL_ROUNDS) {
+      console.warn(
+        `[llm-runner] tool-round cap reached (${MAX_TOOL_ROUNDS}) for agent ${agent.id} — stopping loop with incomplete result`,
+      )
+      break
+    }
 
     const assistantBlocks: ContentBlock[] = []
     if (response.content) {

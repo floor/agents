@@ -1,21 +1,70 @@
 {
-  "name": "floor-agents",
+  "name": "@floor/agents",
+  "version": "0.1.0",
+  "description": "Your AI dev team — autonomous multi-agent engineering. A committee of local CLI tools and LLM adapters that reviews and writes code. Bun runtime.",
   "type": "module",
-  "private": true,
-  "workspaces": ["packages/*"],
+  "license": "GPL-3.0-or-later",
+  "author": "Floor IO (https://floor.io)",
+  "homepage": "https://github.com/floor/agents#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/floor/agents.git"
+  },
+  "bugs": {
+    "url": "https://github.com/floor/agents/issues"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "llm",
+    "code-review",
+    "committee",
+    "claude",
+    "codex",
+    "gemini",
+    "mcp",
+    "autonomous",
+    "bun"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "bin": {
+    "floor-agents": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "bun": "./dist/index.js",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "start": "bun run src/main.ts",
+    "build": "bun run build.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "prepublishOnly": "bun run build.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "yaml": "^2.7.1",
+    "zod": "^3"
   },
   "devDependencies": {
     "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "zod": "^3"
   }
 }

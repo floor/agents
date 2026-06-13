@@ -1,4 +1,3 @@
-import { parse } from 'yaml'
 import type { CompanyConfig } from '../types/company.ts'
 import type { AgentDefinition, AgentCapability, AutonomyTier } from '../types/agent.ts'
 import type { ProjectConfig } from '../types/project.ts'
@@ -131,7 +130,9 @@ export async function loadCompanyConfig(path?: string): Promise<CompanyConfig> {
 }
 
 function parseConfig(text: string): CompanyConfig {
-  const raw = parse(text)
+  // Bun's built-in YAML parser — no third-party dependency.
+  // (raw is loosely typed, matching the parseX helpers below.)
+  const raw = Bun.YAML.parse(text) as Record<string, any>
   const now = new Date()
   const name = raw.name ?? 'Unnamed'
 

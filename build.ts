@@ -8,7 +8,9 @@
  */
 import { rm, chmod } from 'node:fs/promises'
 
-const EXTERNAL = ['yaml']
+// Zero runtime dependencies — everything internal is inlined; YAML parsing uses
+// Bun's built-in Bun.YAML. Only Node built-ins remain external (runtime-provided).
+const EXTERNAL: string[] = []
 const externalArgs = EXTERNAL.flatMap(p => ['--external', p])
 
 await rm('dist', { recursive: true, force: true })

@@ -8,7 +8,7 @@
  */
 import { rm, chmod } from 'node:fs/promises'
 
-const EXTERNAL = ['yaml', '@modelcontextprotocol/sdk', 'zod']
+const EXTERNAL = ['yaml']
 const externalArgs = EXTERNAL.flatMap(p => ['--external', p])
 
 await rm('dist', { recursive: true, force: true })

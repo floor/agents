@@ -5,12 +5,12 @@
     "": {
       "name": "agents",
       "dependencies": {
-        "@modelcontextprotocol/sdk": "^1.29.0",
         "yaml": "^2.7.1",
-        "zod": "^3",
       },
       "devDependencies": {
+        "@modelcontextprotocol/sdk": "^1.29.0",
         "@types/bun": "latest",
+        "zod": "^3",
       },
       "peerDependencies": {
         "typescript": "^5",

@@ -39,7 +39,10 @@ const company = await loadCompanyConfig('./agents.yaml')
 
 ```bash
 CONFIG_PATH=./agents.yaml GITHUB_TOKEN=… GITHUB_OWNER=your-org floor-agents
+floor-agents --help    # flags, env vars, and modes
 ```
+
+In **committee** mode it reviews any task tagged `committee` or `agents` (configurable via `COMMITTEE_LABELS`). Full reference: **[CLI](./docs/cli.md)**.
 
 See [Configuration](#configuration) for the config format and [docs/](./docs) for guides.
 
@@ -189,10 +192,14 @@ bun run src/main.ts   # start the orchestrator
 
 - [Getting Started](./docs/getting-started.md)
 - [Configuration](./docs/configuration.md)
+- [CLI](./docs/cli.md) — the `floor-agents` binary: flags, env vars, modes, trigger tags
 - [First Run Guide](./docs/guides/first-run.md)
 - [Architecture](./docs/architecture.md)
+- [Committee Mode](./docs/guides/committee.md) — parallel multi-agent review + voting
+- [Local Committee](./docs/guides/local-committee.md) — Claude Code + Codex + Antigravity, event-driven
 - [Zero-Cost Committee](./docs/guides/zero-cost-committee.md) — Claude Code + Gemma + Codex for $0/review
 - [Agent Gateway](./docs/gateway.md) — WebSocket protocol, REST fallback, building custom agents
+- [Scripts](./docs/scripts.md) — committee runner + gateway bridges
 - [Package Docs](./docs/README.md)
 - [Adding an LLM Provider](./docs/guides/adding-llm-provider.md)
 - [Adding a Task Manager](./docs/guides/adding-task-manager.md)

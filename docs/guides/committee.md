@@ -4,7 +4,7 @@ Run a multi-agent technical committee that reviews proposals in parallel, votes,
 
 ## How it works
 
-1. A Linear issue with the `committee` label triggers the pipeline
+1. A task tagged `committee` or `agents` triggers the pipeline (trigger tags are configurable via `COMMITTEE_LABELS`)
 2. Internal agents are dispatched via their LLM adapters; external agents receive assignments via the [gateway](../gateway.md) WebSocket
 3. All agents review in parallel — each returns `VOTE: APPROVE` or `VOTE: REJECT`
 4. Votes are tallied (simple majority), results posted to Linear
@@ -117,7 +117,7 @@ The entry point auto-detects committee mode when any agent has the `vote` capabi
   project:   my-project (my-project)
   agents:    claude (anthropic), gemini (gemini), gpt (openai)
 [committee] starting with 3 agents: claude, gemini, gpt
-[committee] watching for label: "committee"
+[committee] watching for labels: "committee", "agents"
 [committee] GitHub Discussions sync: enabled
 ```
 

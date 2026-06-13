@@ -55,6 +55,25 @@ The `workflow:` config (states, transitions, cycle limits) is currently parsed a
 > the final integration was deferred. They are kept deliberately as the basis for this
 > work — not dead code. (A dependency scan will flag them as orphan modules; that's expected.)
 
+### 5. Provider registry (pluggable LLM adapters)
+
+**Priority:** Medium
+
+Today the provider → adapter mapping is hardcoded (`src/main.ts` does
+`if (requiredProviders.has('anthropic')) createAnthropicAdapter()…`), so the set of LLM
+providers is fixed at the five built-ins (anthropic, openai, gemini, lmstudio, claude-code).
+
+Replace the switch with a **registry**: built-in adapters register by name, and consumers
+can `registerProvider("mycorp-llm", createMyAdapter)` to add or override any provider
+without forking — an agent's `provider:` field then resolves to a registered factory. The
+`LLMAdapter` interface already exists in `@floor-agents/core`, so this is mostly wiring.
+
+Keep the built-ins **bundled** (they're tiny and dependency-free — native `fetch` /
+`Bun.spawn` — so there's nothing to gain by splitting them into separate packages). The goal
+is *extensibility*, not slimming: built-in ≠ hardcoded. Completes the "vendor-agnostic AI"
+design goal and lets library consumers (e.g. the interactive front-end) register only the
+providers they use.
+
 ---
 
 ## Sprint Summary

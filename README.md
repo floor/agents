@@ -17,6 +17,32 @@ Linear issue (labeled "committee")
   → Majority wins → outcome posted to Linear + GitHub Discussions
 ```
 
+## Install
+
+> Requires [Bun](https://bun.sh) — `@floor/agents` is a Bun package (it uses `Bun.serve`, `Bun.spawn`, `Bun.file`).
+
+```bash
+bun add @floor/agents       # use as a library
+bunx @floor/agents --help    # use as a CLI
+```
+
+**Library:**
+
+```ts
+import { createCommitteeOrchestrator, createGateway, loadCompanyConfig } from '@floor/agents'
+
+const company = await loadCompanyConfig('./agents.yaml')
+// wire your adapters, then run a committee or dev pipeline — see ./docs
+```
+
+**CLI** (operator-run) — point it at a team config and your environment:
+
+```bash
+CONFIG_PATH=./agents.yaml GITHUB_TOKEN=… GITHUB_OWNER=your-org floor-agents
+```
+
+See [Configuration](#configuration) for the config format and [docs/](./docs) for guides.
+
 ## How It Works
 
 1. Create an issue in Linear with the `agent` label
@@ -183,4 +209,4 @@ bun run src/main.ts   # start the orchestrator
 
 ## License
 
-Proprietary. Floor IO SA.
+[GPL-3.0-or-later](./LICENSE) © Floor IO SA.

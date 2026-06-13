@@ -13,10 +13,52 @@ import { createDiscussionsAdapter } from '@floor-agents/github'
 import { createGateway } from '@floor-agents/gateway'
 import { mkdir } from 'node:fs/promises'
 
+// ── CLI flags (handle before any startup work) ───────────────────
+const VERSION = (
+  await Bun.file(new URL('../package.json', import.meta.url)).json().catch(() => ({ version: '0.0.0' }))
+).version as string
+
+const argv = Bun.argv.slice(2)
+
+if (argv.includes('-v') || argv.includes('--version')) {
+  console.log(VERSION)
+  process.exit(0)
+}
+
+if (argv.includes('-h') || argv.includes('--help')) {
+  console.log(`floor-agents v${VERSION} — autonomous multi-agent code review & development
+
+Usage:
+  floor-agents              Start the orchestrator (set CONFIG_PATH)
+  floor-agents --help       Show this help
+  floor-agents --version    Show the version
+
+Environment:
+  CONFIG_PATH   Path to your team config YAML (required)
+  TASK_ADAPTER  linear | things | github-issues  (default: linear)
+  STATE_DIR     Execution state directory        (default: ./data/executions)
+  Plus GITHUB_TOKEN / GITHUB_OWNER and the provider + task-manager keys your config uses.
+
+Requires Bun. Docs: https://github.com/floor/agents`)
+  process.exit(0)
+}
+
 // Environment
-const CONFIG_PATH = process.env.CONFIG_PATH
 const STATE_DIR = process.env.STATE_DIR ?? './data/executions'
 const TASK_ADAPTER = process.env.TASK_ADAPTER ?? 'linear'
+
+// Resolve config. Require CONFIG_PATH explicitly unless a local default template
+// is present (dev) — so the published bin fails with a clear message instead of
+// crashing on a CWD-relative default that isn't shipped.
+const CONFIG_PATH = process.env.CONFIG_PATH
+if (!CONFIG_PATH && !(await Bun.file('config/templates/default.yaml').exists())) {
+  console.error('floor-agents: no config found.\n')
+  console.error('Set CONFIG_PATH to your team config (YAML), e.g.:')
+  console.error('  CONFIG_PATH=./agents.yaml floor-agents\n')
+  console.error('Config format: https://github.com/floor/agents#configuration')
+  console.error('Run `floor-agents --help` for usage.')
+  process.exit(1)
+}
 
 // Load and validate config
 const company = await loadCompanyConfig(CONFIG_PATH)

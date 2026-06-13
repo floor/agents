@@ -1,5 +1,9 @@
 # Floor Agents — Documentation
 
+A **Bun-native** AI agent orchestration **service** (and **library**) with **zero
+dependencies**. Run it as a long-running process that watches your task source and
+orchestrates agents, or embed the engine in your own Bun app.
+
 ## Overview
 
 - [Architecture](./architecture.md) — system design, principles, competitive landscape, rollout plan

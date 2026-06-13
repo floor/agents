@@ -2,6 +2,8 @@
 
 **Your AI dev team. Plugs into your tools. Ships code while you sleep.**
 
+A **Bun-native** AI agent orchestration **service** — and a **library**. Zero dependencies.
+
 Floor Agents gives any software team an autonomous AI engineering team. Connect your GitHub, your Linear, your preferred AI models — and get a team of specialized agents that write code, review PRs, and iterate on feedback.
 
 ```
@@ -19,23 +21,18 @@ Linear issue (labeled "committee")
 
 ## Install
 
-> Requires [Bun](https://bun.sh) — `@floor/agents` is a Bun package (it uses `Bun.serve`, `Bun.spawn`, `Bun.file`).
+> **[Bun](https://bun.sh)-native, zero-dependency.** Built entirely on Bun's
+> built-ins (`Bun.serve`, `Bun.spawn`, `Bun.file`, `Bun.YAML`) — so it runs only
+> on Bun, and ships with no third-party dependencies.
 
 ```bash
-bun add @floor/agents       # use as a library
-bunx @floor/agents --help    # use as a CLI
+bunx @floor/agents --help    # run it as a service
+bun add @floor/agents         # or embed it as a library
 ```
 
-**Library:**
+### Run it as a service
 
-```ts
-import { createCommitteeOrchestrator, createGateway, loadCompanyConfig } from '@floor/agents'
-
-const company = await loadCompanyConfig('./agents.yaml')
-// wire your adapters, then run a committee or dev pipeline — see ./docs
-```
-
-**CLI** (operator-run) — point it at a team config and your environment:
+A long-running process that watches your task source and orchestrates agents — point it at a team config and your environment:
 
 ```bash
 CONFIG_PATH=./agents.yaml GITHUB_TOKEN=… GITHUB_OWNER=your-org floor-agents
@@ -43,6 +40,17 @@ floor-agents --help    # flags, env vars, and modes
 ```
 
 In **committee** mode it reviews any task tagged `committee` or `agents` (configurable via `COMMITTEE_LABELS`). Full reference: **[CLI](./docs/cli.md)**.
+
+> Only the machine running the service needs Bun — your own app and stack can be anything.
+
+### …or embed it as a library
+
+```ts
+import { createCommitteeOrchestrator, createGateway, loadCompanyConfig } from '@floor/agents'
+
+const company = await loadCompanyConfig('./agents.yaml')
+// wire your adapters, then run a committee or dev pipeline — see ./docs
+```
 
 See [Configuration](#configuration) for the config format and [docs/](./docs) for guides.
 

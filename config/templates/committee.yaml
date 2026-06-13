@@ -95,9 +95,12 @@ autonomy:
   overrides: []
 
 guardrails:
-  maxFilesPerTask: 0
-  maxFileSizeBytes: 0
-  maxTotalOutputBytes: 0
+  # Writes are blocked entirely by blockedPaths: ["*"], so these limits never
+  # actually apply. They exist only to satisfy the config validator, which
+  # requires positive values.
+  maxFilesPerTask: 1
+  maxFileSizeBytes: 1024
+  maxTotalOutputBytes: 1024
   blockedPaths: ["*"]
   allowedPaths: []
   blockedExtensions: ["*"]

@@ -60,15 +60,15 @@ async function spawnClaudeCode(
 
   const start = performance.now()
 
-  // TODO: Use setup-token for Max plan auth instead of ANTHROPIC_API_KEY.
-  // Currently passing the full env including API key — this bills per-token.
-  // Run `claude setup-token` to configure long-lived Max plan auth, then
-  // we can strip ANTHROPIC_API_KEY here.
+  // ANTHROPIC_API_KEY is stripped from the child env (see cleanEnv above) so the
+  // Claude Code subprocess authenticates via the local Max plan session instead of
+  // routing through paid per-token API billing. Run `claude setup-token` once to
+  // configure long-lived Max plan auth.
   const proc = Bun.spawn(args, {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...process.env, CLAUDE_CODE_SKIP_HOOKS: '1' },
+    env: { ...cleanEnv, CLAUDE_CODE_SKIP_HOOKS: '1' },
   })
 
   const timeout = setTimeout(() => proc.kill(), timeoutMs)
@@ -284,8 +284,12 @@ export async function runNativeReviewAgent(
     costTracker.recordCost(issue.id, result.cost)
     console.log(`[${reviewer.id}] native review: ${formatDuration(result.durationMs)}, $${result.cost.toFixed(4)}, exit ${result.exitCode}`)
 
-    // Extract verdict from the response
-    let verdict: ReviewVerdict = { decision: 'approve', comments: result.resultText || 'No specific feedback.' }
+    // Extract verdict from the response. Fail closed: default to request_changes
+    // so a missing/unparseable verdict never counts as an approval.
+    let verdict: ReviewVerdict = {
+      decision: 'request_changes',
+      comments: 'No review verdict could be parsed from the reviewer output — failing closed.',
+    }
 
     const jsonMatch = result.resultText.match(/```json\s*([\s\S]*?)```/)
     if (jsonMatch) {
@@ -305,6 +309,17 @@ export async function runNativeReviewAgent(
           verdict = { decision: parsed.decision, comments: parsed.comments ?? '' }
         }
       } catch {}
+    }
+
+    // A crashed or timed-out reviewer must never count as an approval.
+    // exit 143 = killed by the timeout (SIGTERM); any nonzero exit is a failure.
+    if (result.exitCode !== 0) {
+      verdict = {
+        decision: 'request_changes',
+        comments: result.exitCode === 143
+          ? 'Reviewer timed out before producing a verdict — failing closed.'
+          : `Reviewer exited with code ${result.exitCode} before producing a verdict — failing closed.`,
+      }
     }
 
     console.log(`[${reviewer.id}] verdict: ${verdict.decision}`)

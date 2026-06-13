@@ -144,9 +144,15 @@ function mockGitAdapter(): GitAdapter & { branches: string[]; commits: { branch:
 function mockLLMAdapter(toolCalls: LLMResponse['toolCalls'] = []): LLMAdapter {
   return {
     async run(config: LLMConfig): Promise<LLMResponse> {
+      // When called as a reviewer (the review_verdict tool is offered), approve —
+      // so the default mock drives the happy path to completion under the
+      // fail-closed review default (no verdict → request_changes).
+      const reviewVerdict = config.tools?.some(t => t.name === 'review_verdict')
+        ? [{ id: 'tc-review', name: 'review_verdict', input: { decision: 'approve', comments: 'LGTM' } }]
+        : null
       return {
         content: 'Here is my implementation.',
-        toolCalls: toolCalls.length > 0 ? toolCalls : [
+        toolCalls: toolCalls.length > 0 ? toolCalls : reviewVerdict ?? [
           {
             id: 'tc-1',
             name: 'write_file',

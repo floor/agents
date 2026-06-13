@@ -170,7 +170,7 @@ export async function runReviewAgent(
   const verdictCall = result.toolCalls.find(tc => tc.name === 'review_verdict')
   const verdict: ReviewVerdict = verdictCall
     ? { decision: verdictCall.input.decision as 'approve' | 'request_changes', comments: verdictCall.input.comments as string }
-    : { decision: 'approve', comments: result.content || 'No specific feedback.' }
+    : { decision: 'request_changes', comments: 'No review verdict was returned — failing closed.' }
 
   console.log(`[${reviewer.id}] verdict: ${verdict.decision}`)
 

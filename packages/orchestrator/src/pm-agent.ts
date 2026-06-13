@@ -1,3 +1,12 @@
+/**
+ * PM agent — decomposes an issue into independent backend/frontend sub-tasks via
+ * tool calls (`create_subtask` / `subtasks_done`) before dev agents pick them up.
+ *
+ * STATUS: implemented but NOT yet wired into `createOrchestrator` — kept intentionally.
+ * Roadmap: docs/next-steps.md §2. Built on the agent-authored branch
+ * `agent/d6bf3bd8-implement-configurable-workflow-engine-pm-dev-cto` (Floor Agents
+ * building its own engine). An orphan-module scan will flag this; that's expected.
+ */
 import type {
   AgentDefinition,
   Issue,

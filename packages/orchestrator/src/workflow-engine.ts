@@ -1,3 +1,15 @@
+/**
+ * WorkflowEngine — config-driven state machine for the dev pipeline: trigger
+ * matching, agent resolution, status transitions, and the "max review cycles →
+ * Needs Human" rule. It executes the `workflow:` config (states/transitions).
+ *
+ * STATUS: implemented but NOT yet wired into `createOrchestrator`, which currently
+ * runs a simpler hardcoded dev → review flow. So the `workflow:` config is parsed
+ * and validated but not yet executed at runtime. Kept intentionally as the basis
+ * for that integration. Roadmap: docs/next-steps.md §4. Built on the agent-authored
+ * branch `agent/d6bf3bd8-implement-configurable-workflow-engine-pm-dev-cto` (Floor
+ * Agents building its own engine). An orphan-module scan will flag this; that's expected.
+ */
 import type {
   WorkflowDefinition,
   WorkflowStateDefinition,

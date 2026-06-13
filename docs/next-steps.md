@@ -32,8 +32,9 @@ Current: 5-second polling, no backoff on errors. Hit 5000 req/hr limit during sp
 ### 2. PM agent (task decomposition)
 
 **Priority:** Medium — depends on workflow engine.
+**Status:** Implemented in `packages/orchestrator/src/pm-agent.ts` (`runPMAgent`), **not yet wired into the orchestrator.**
 
-Complex tasks timeout or produce incomplete results. The PM agent should assess complexity and decompose large tasks into sub-issues before assigning to dev agents.
+Complex tasks timeout or produce incomplete results. The PM agent assesses an issue and decomposes it into independent backend/frontend sub-tasks (via `create_subtask` / `subtasks_done` tool calls) before assigning to dev agents. The implementation exists; the remaining work is integration into `createOrchestrator`.
 
 ### 3. Context builder hints for native agents
 
@@ -44,8 +45,15 @@ Only include file paths as hints (not full content — Claude Code reads them it
 ### 4. Workflow engine
 
 **Priority:** Medium
+**Status:** Implemented in `packages/orchestrator/src/workflow-engine.ts` (`WorkflowEngine`), **not yet wired into the orchestrator.**
 
-State machine execution with dependency resolution between sub-issues. Currently defined in config but not enforced at runtime.
+The `workflow:` config (states, transitions, cycle limits) is currently parsed and validated but **not executed at runtime** — the live `createOrchestrator` uses a simpler hardcoded dev → review flow. `WorkflowEngine` is the config-driven state machine that would execute it: trigger matching, agent resolution, status transitions, and the "max review cycles → Needs Human" rule. Remaining work: wire it into `createOrchestrator`.
+
+> **Dogfooding note.** Both `pm-agent.ts` and `workflow-engine.ts` were built on the
+> `agent/d6bf3bd8-implement-configurable-workflow-engine-pm-dev-cto` branch — i.e. Floor
+> Agents implementing its *own* orchestration engine. The code landed and was merged, but
+> the final integration was deferred. They are kept deliberately as the basis for this
+> work — not dead code. (A dependency scan will flag them as orphan modules; that's expected.)
 
 ---
 

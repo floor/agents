@@ -28,7 +28,7 @@ test('allows agent branches (past the protection guard, no network)', async () =
   const realFetch = globalThis.fetch
   // Mock the GitHub API so the test is offline and deterministic — it must fail at
   // the API (mocked 404), NOT at the protection guard.
-  globalThis.fetch = (async () => new Response('{"message":"Not Found"}', { status: 404 })) as typeof fetch
+  globalThis.fetch = (async () => new Response('{"message":"Not Found"}', { status: 404 })) as unknown as typeof fetch
   try {
     const adapter = createGitHubAdapter({ token: 'test', owner: 'test' })
     await adapter.createBranch('repo', 'agent/FLO-5-add-slugify')

@@ -16,7 +16,8 @@ const externalArgs = EXTERNAL.flatMap(p => ['--external', p])
 await rm('dist', { recursive: true, force: true })
 
 async function bundle(entry: string, outfile: string, banner?: string): Promise<void> {
-  const args = ['build', entry, '--outfile', outfile, '--target', 'bun', ...externalArgs]
+  // --keep-names: minify but preserve function/class names for readable stack traces.
+  const args = ['build', entry, '--outfile', outfile, '--target', 'bun', '--minify', '--keep-names', ...externalArgs]
   if (banner) args.push(`--banner=${banner}`)
   const proc = Bun.spawn(['bun', ...args], { stdout: 'inherit', stderr: 'inherit' })
   if ((await proc.exited) !== 0) {

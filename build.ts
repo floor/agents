@@ -1,34 +1,31 @@
 #!/usr/bin/env bun
 /**
- * Bundle @floor/agents for publication. The internal @floor-agents/* workspace
- * packages are inlined into a single self-contained output; third-party runtime
- * deps stay external (declared in package.json dependencies). Bun runtime target.
+ * Bundle @floor/agents for publication with code splitting: the shared engine is
+ * emitted once as a chunk that BOTH the library entry (dist/index.js) and the CLI
+ * entry (dist/cli.js) import — no duplication. Zero runtime dependencies, Bun
+ * target, minified (--keep-names for readable stack traces).
  *
- *   bun run build   →  dist/index.js (library) + dist/cli.js (bin)
+ *   bun run build  →  dist/index.js (library) + dist/cli.js (bin) + shared chunk
  */
-import { rm, chmod } from 'node:fs/promises'
-
-// Zero runtime dependencies — everything internal is inlined; YAML parsing uses
-// Bun's built-in Bun.YAML. Only Node built-ins remain external (runtime-provided).
-const EXTERNAL: string[] = []
-const externalArgs = EXTERNAL.flatMap(p => ['--external', p])
+import { rm, rename, chmod, readFile, writeFile } from 'node:fs/promises'
 
 await rm('dist', { recursive: true, force: true })
 
-async function bundle(entry: string, outfile: string, banner?: string): Promise<void> {
-  // --keep-names: minify but preserve function/class names for readable stack traces.
-  const args = ['build', entry, '--outfile', outfile, '--target', 'bun', '--minify', '--keep-names', ...externalArgs]
-  if (banner) args.push(`--banner=${banner}`)
-  const proc = Bun.spawn(['bun', ...args], { stdout: 'inherit', stderr: 'inherit' })
-  if ((await proc.exited) !== 0) {
-    console.error(`build failed: ${entry}`)
-    process.exit(1)
-  }
+// Build both entries together so Bun extracts the shared engine into one chunk.
+const proc = Bun.spawn([
+  'bun', 'build', 'src/index.ts', 'src/main.ts',
+  '--target', 'bun', '--minify', '--keep-names', '--splitting', '--outdir', 'dist',
+], { stdout: 'inherit', stderr: 'inherit' })
+if ((await proc.exited) !== 0) {
+  console.error('build failed')
+  process.exit(1)
 }
 
-// Runtime bundles (internals inlined; yaml/sdk/zod stay external)
-await bundle('src/index.ts', 'dist/index.js')
-await bundle('src/main.ts', 'dist/cli.js', '#!/usr/bin/env bun')
+// The CLI entry is emitted as main.js — rename it to the published bin name and
+// make it an executable (shebang + +x). It imports the shared chunk, untouched.
+await rename('dist/main.js', 'dist/cli.js')
+const cli = await readFile('dist/cli.js', 'utf8')
+await writeFile('dist/cli.js', `#!/usr/bin/env bun\n${cli}`)
 await chmod('dist/cli.js', 0o755)
 
-console.log('✓ dist/index.js + dist/cli.js')
+console.log('✓ dist/index.js (library) + dist/cli.js (bin) + shared chunk')

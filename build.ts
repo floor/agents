@@ -28,4 +28,15 @@ const cli = await readFile('dist/cli.js', 'utf8')
 await writeFile('dist/cli.js', `#!/usr/bin/env bun\n${cli}`)
 await chmod('dist/cli.js', 0o755)
 
-console.log('✓ dist/index.js (library) + dist/cli.js (bin) + shared chunk')
+// Type declarations: a single self-contained rollup matching dist/index.js
+// (the @floor-agents/* internal types are inlined, so consumers get full types).
+const dts = Bun.spawn(
+  ['./node_modules/.bin/dts-bundle-generator', '-o', 'dist/index.d.ts', '--no-check', 'src/index.ts'],
+  { stdout: 'inherit', stderr: 'inherit' },
+)
+if ((await dts.exited) !== 0) {
+  console.error('type declaration generation failed')
+  process.exit(1)
+}
+
+console.log('✓ dist/index.js + dist/cli.js + dist/index.d.ts + shared chunk')

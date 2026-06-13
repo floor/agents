@@ -23,7 +23,7 @@ Linear issue (labeled "committee")
 
 > **[Bun](https://bun.sh)-native, zero-dependency.** Built entirely on Bun's
 > built-ins (`Bun.serve`, `Bun.spawn`, `Bun.file`, `Bun.YAML`) — so it runs only
-> on Bun, and ships with no third-party dependencies.
+> on Bun (**≥ 1.2.21**), and ships with no third-party dependencies.
 
 ```bash
 bunx @floor/agents --help    # run it as a service

@@ -29,7 +29,7 @@
     "bun"
   ],
   "engines": {
-    "bun": ">=1.2.0"
+    "bun": ">=1.2.21"
   },
   "bin": {
     "floor-agents": "./dist/cli.js"

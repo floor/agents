@@ -1,7 +1,7 @@
 # CLI
 
 `@floor/agents` ships a `floor-agents` binary that runs the orchestrator from a
-config + environment. Requires [Bun](https://bun.sh).
+config + environment. Requires [Bun](https://bun.sh) ≥ 1.2.21 (for `Bun.YAML`).
 
 ```bash
 bunx @floor/agents --help       # or, installed: floor-agents --help

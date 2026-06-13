@@ -72,6 +72,14 @@ await orchestrator.start()
 
 The entry point (`src/main.ts`) auto-detects committee mode when agents have the `vote` capability. See [Committee Mode](../guides/committee.md) for the full guide.
 
+#### Per-agent system prompts (internal and external)
+
+`committee-pipeline.ts` builds each agent's system prompt via a shared `buildSystemPrompt(agent, company)` helper: the agent's `promptTemplate` file (falling back to a generic prompt if missing), plus the project's `customInstructions` and the agent's `customInstructions`.
+
+This applies to **external** agents (dispatched over the [gateway](../gateway.md)) the same way it does to internal ones — each external agent's `promptTemplate` is loaded and passed as its `systemPrompt` in the assignment. So a Codex reviewer and an Antigravity reviewer review through distinct personas rather than a shared generic prompt.
+
+External agents do **not** require their `llm.provider` API key: `src/main.ts` computes required providers from non-external agents only, since external agents run via the gateway, not an in-process LLM adapter. See the [Local Committee guide](../guides/local-committee.md) for an all-local trio (Claude Code + Codex + Antigravity).
+
 ## Execution State Machine
 
 Each task progresses through 10 steps. State is saved between each step for crash recovery.

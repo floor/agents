@@ -6,6 +6,7 @@
 - [Phase 1 Spec](./Phase1-Specs_1.md) — detailed specification for the MVP implementation
 - [Getting Started](./getting-started.md) — setup, configuration, first run
 - [Configuration](./configuration.md) — YAML config reference, environment variables
+- [Scripts](./scripts.md) — committee runner + gateway bridges (`scripts/`) reference
 - [Known Issues](./known-issues.md) — tracked issues and their resolution status
 - [Next Steps](./next-steps.md) — prioritized roadmap after three sprints of dogfooding
 
@@ -32,6 +33,7 @@ Each package has its own documentation:
 - [First Run](./guides/first-run.md) — end-to-end setup with Gemma + Claude Code Opus
 - [Zero-Cost Committee](./guides/zero-cost-committee.md) — Claude Code + Gemma + Codex for $0/review
 - [Committee Mode](./guides/committee.md) — multi-agent proposal review with parallel voting
+- [Local Committee](./guides/local-committee.md) — Claude Code + Codex + Antigravity, event-driven, no cloud keys
 - [Agent Gateway](./gateway.md) — WebSocket protocol, REST fallback, building custom agents
 - [Adding an LLM Provider](./guides/adding-llm-provider.md)
 - [Adding a Task Manager](./guides/adding-task-manager.md)

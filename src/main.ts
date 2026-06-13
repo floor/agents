@@ -1,4 +1,4 @@
-import { loadCompanyConfig, validateCompanyConfig } from '@floor-agents/core'
+import { loadCompanyConfig, validateCompanyConfig, computeRequiredProviders } from '@floor-agents/core'
 import type { LLMAdapter } from '@floor-agents/core'
 import { createAnthropicAdapter } from '@floor-agents/anthropic'
 import { createOpenAIAdapter } from '@floor-agents/openai'
@@ -28,8 +28,10 @@ if (errors.length > 0) {
   process.exit(1)
 }
 
-// Determine which LLM providers are needed from agent definitions
-const requiredProviders = new Set(company.agents.map(a => a.llm.provider))
+// Determine which LLM providers are needed from agent definitions.
+// External agents (Codex, Antigravity) run via the gateway, not an in-process
+// LLM adapter, so they don't require their provider's API key.
+const requiredProviders = computeRequiredProviders(company.agents)
 
 function requireEnv(name: string): string {
   const value = process.env[name]

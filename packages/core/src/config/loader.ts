@@ -31,6 +31,7 @@ function parseAgents(raw: unknown[]): AgentDefinition[] {
     capabilities: a.capabilities as AgentCapability[],
     autonomy: (a.autonomy ?? 'T1') as AutonomyTier,
     customInstructions: a.customInstructions ?? '',
+    external: a.external ?? false,
   }))
 }
 

@@ -68,6 +68,30 @@ function tallyVotes(votes: readonly CommitteeVote[]): 'approved' | 'rejected' | 
   return approvals >= majority ? 'approved' : 'rejected'
 }
 
+// ── Prompt assembly ─────────────────────────────────────────────
+
+/**
+ * Build an agent's system prompt from its persona template + project/agent
+ * context. Used by both internal agents and external agents (gateway/MCP), so
+ * Codex and Antigravity each review through their own lens rather than a shared
+ * generic prompt.
+ */
+export async function buildSystemPrompt(agent: AgentDefinition, company: CompanyConfig): Promise<string> {
+  const promptFile = Bun.file(agent.promptTemplate)
+  const base = (await promptFile.exists())
+    ? await promptFile.text()
+    : `You are ${agent.name}, a technical committee member. Review the RFC and vote APPROVE or REJECT.`
+
+  const projectContext = company.project.customInstructions
+    ? `\n\n## Project Context\n${company.project.customInstructions}`
+    : ''
+  const agentContext = agent.customInstructions
+    ? `\n\n## Agent-Specific Instructions\n${agent.customInstructions}`
+    : ''
+
+  return base + projectContext + agentContext
+}
+
 // ── Single agent review ──────────────────────────────────────────
 
 async function runCommitteeAgent(
@@ -79,20 +103,7 @@ async function runCommitteeAgent(
 
   console.log(`[committee] ${agent.id}: reviewing "${issue.title}"`)
 
-  const promptPath = agent.promptTemplate
-  const promptFile = Bun.file(promptPath)
-  const systemPrompt = await promptFile.exists()
-    ? await promptFile.text()
-    : `You are ${agent.name}, a technical committee member. Review the RFC and vote APPROVE or REJECT.`
-
-  const projectContext = company.project.customInstructions
-    ? `\n\n## Project Context\n${company.project.customInstructions}`
-    : ''
-
-  const agentContext = agent.customInstructions
-    ? `\n\n## Agent-Specific Instructions\n${agent.customInstructions}`
-    : ''
-
+  const systemPrompt = await buildSystemPrompt(agent, company)
 
   const messages: LLMMessage[] = [{
     role: 'user',
@@ -108,7 +119,7 @@ async function runCommitteeAgent(
   try {
     const result = await runToolUseLoop(
       agent,
-      systemPrompt + projectContext + agentContext,
+      systemPrompt,
       messages,
       [],
       getAdapter,
@@ -276,16 +287,13 @@ export async function executeCommitteeReview(
       : 'Agents are reviewing in parallel. Votes will be posted when all reviews complete.',
   ].join('\n'))
 
-  // Build system prompt for external agents
-  const projectContext = company.project.customInstructions
-    ? `\n\n## Project Context\n${company.project.customInstructions}`
-    : ''
-  const externalSystemPrompt = `You are a technical committee member. Review the RFC and vote APPROVE or REJECT.${projectContext}`
-
-  // Run internal and external agents in parallel
+  // Run internal and external agents in parallel — each external agent gets its
+  // own persona from its promptTemplate (codex-reviewer.md, antigravity-reviewer.md)
+  // rather than a shared generic prompt.
   const votes = await Promise.all([
     ...internalAgents.map(agent => runCommitteeAgent(issue, agent, deps)),
-    ...externalAgents.map(agent => dispatchExternalAgent(issue, agent, deps, externalSystemPrompt)),
+    ...externalAgents.map(async agent =>
+      dispatchExternalAgent(issue, agent, deps, await buildSystemPrompt(agent, company))),
   ])
 
   const outcome = tallyVotes(votes)

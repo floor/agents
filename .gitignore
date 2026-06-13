@@ -39,3 +39,6 @@ data/executions/
 # Agent worktrees
 .worktrees/
 logs/
+
+# Local Claude Code settings
+.claude/

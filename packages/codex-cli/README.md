@@ -13,7 +13,7 @@ export type Reviewer = {
 
 export type ReviewInput = {
   readonly repo: string
-  readonly prNumber: number
+  readonly prNumber: string
   readonly headSha: string
   readonly worktreePath?: string
   readonly prompt: string
@@ -24,12 +24,12 @@ export type ReviewResult = {
 }
 ```
 
-This shape mirrors the `Reviewer` interface defined in `@floor-agents/core` for the
-review-and-gate loop. `core` did not yet export `Reviewer` on `main` when this package
-was written, so it is redefined identically in `src/types.ts` (as a `type`, per this
-repo's convention) rather than imported, so this PR and core's can merge in either
-order. Once core exports `Reviewer`, replace `src/types.ts` with a re-export from
-`@floor-agents/core`.
+`src/types.ts` re-exports this `Reviewer`/`ReviewInput`/`ReviewResult` shape directly
+from `@floor-agents/core` — it is not redefined here. (An earlier revision of this
+package mirrored the shape locally, from before `core` exported it on `main`; that
+mirror had `prNumber: number`, which core's actual shape does not match — core uses
+`string` — so double check `prNumber`'s type if you're working from an old snapshot of
+this README or package.)
 
 ## Usage
 
@@ -44,7 +44,7 @@ const reviewer = createCodexReviewer({
 const template = await readFile('packages/codex-cli/prompts/review.md', 'utf-8')
 const prompt = renderReviewPrompt(template, {
   repo: 'floor/agents',
-  prNumber: 42,
+  prNumber: '42',
   headSha: 'abc1234',
   title: 'Add codex reviewer',
   body: 'Implements the Reviewer interface for Codex.',
@@ -54,7 +54,7 @@ const prompt = renderReviewPrompt(template, {
 
 const { text } = await reviewer.review({
   repo: 'floor/agents',
-  prNumber: 42,
+  prNumber: '42',
   headSha: 'abc1234',
   prompt,
 })

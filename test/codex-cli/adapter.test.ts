@@ -33,7 +33,7 @@ const RECORD = join(FIXTURES, 'record.ts')
 
 const baseInput = {
   repo: 'floor/agents',
-  prNumber: 1,
+  prNumber: '14', // core's ReviewInput.prNumber is a string
   headSha: 'deadbeef', // placeholder — every test overrides this with the real `headSha` below
   prompt: 'review this please',
 }

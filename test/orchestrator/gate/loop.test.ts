@@ -32,6 +32,12 @@ type FakePR = { -readonly [K in keyof PRDetails]: PRDetails[K] } & {
   checkStatus: CheckStatus
   commitDate: Date
   merged?: boolean
+  /** How many more listOpenPRs() calls should still include this PR after
+   *  it's merged — simulates GitHub's PR list lagging behind reality (e.g.
+   *  read replica staleness), so a test can actually exercise the
+   *  persisted `merged` guard instead of relying on the fake never
+   *  offering a stale list in the first place. */
+  staleListRemaining?: number
 }
 
 function makeFakeGitAdapter(prs: FakePR[]) {
@@ -62,7 +68,14 @@ function makeFakeGitAdapter(prs: FakePR[]) {
     },
     async getRecentCommits(): Promise<Commit[]> { return [] },
     async listOpenPRs(repo) {
-      return prs.filter(p => !p.merged)
+      return prs.filter(p => {
+        if (!p.merged) return true
+        if ((p.staleListRemaining ?? 0) > 0) {
+          p.staleListRemaining!--
+          return true
+        }
+        return false
+      })
     },
     async getPR(_repo, prId) {
       return prs.find(p => p.id === prId) ?? null
@@ -260,8 +273,43 @@ test('enabled mode calls mergePR exactly once, even across repeated passes', asy
     commitMessage: 'Implements the feature.',
   })
 
-  // Second pass: the fake adapter's listOpenPRs already excludes merged PRs,
-  // but even if a stale PR list came back, the persisted `merged` flag guards it.
+  // Second pass: the fake adapter's listOpenPRs already excludes merged PRs
+  // in this test, so this alone doesn't prove the persisted `merged` guard
+  // works — see the next test, which forces a stale list, for that.
+  await runGatePass(deps)
+  expect(mergeCalls.length).toBe(1)
+})
+
+test('the persisted `merged` guard is actually exercised: a stale open-PR list does not trigger a second mergePR call', async () => {
+  const pr = makePR()
+  pr.comments = [verdictComment(pr, 'approve as-is')]
+  // Force listOpenPRs() to keep returning this PR for one pass after it's
+  // merged, simulating GitHub's list lagging behind reality — without
+  // this, the fake's normal filtering alone would prevent processPR from
+  // ever being called again, and the `merged` guard inside it would never
+  // actually run.
+  pr.staleListRemaining = 1
+  const { adapter, mergeCalls } = makeFakeGitAdapter([pr])
+  const reviewer = createFakeReviewer({ vendor: 'codex' })
+  const deps = {
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ mergeEnabled: true }),
+    log: NOOP_LOG,
+  }
+
+  await runGatePass(deps)
+  expect(mergeCalls.length).toBe(1)
+
+  // Second pass: the fake still returns this PR (staleListRemaining was 1),
+  // proving processPR runs again for it — and that the persisted `merged`
+  // flag, not just the adapter's own filtering, is what stops a second merge.
+  await runGatePass(deps)
+  expect(mergeCalls.length).toBe(1)
+
+  // Third pass: the stale window has now elapsed, adapter filtering alone
+  // would also exclude it — confirms the fixture behaves as documented.
   await runGatePass(deps)
   expect(mergeCalls.length).toBe(1)
 })
@@ -351,6 +399,67 @@ test('a malformed reviewer response is not posted, and is not retried on the nex
   await runGatePass(deps)
   expect(commentCalls.length).toBe(0)
   expect(reviewCalls).toBe(1) // not retried — the attempt was persisted regardless of outcome
+})
+
+test('a reviewer that throws still leaves the head marked as attempted on disk (durable mark, not just in-memory)', async () => {
+  const reviewer: Reviewer = {
+    vendor: 'codex',
+    async review() {
+      throw new Error('simulated network failure calling the reviewer')
+    },
+  }
+  const pr = makePR()
+  const { adapter } = makeFakeGitAdapter([pr])
+  const gateStateStore = makeFakeGateStateStore()
+  const deps = {
+    git: adapter,
+    reviewer,
+    gateStateStore,
+    config: makeConfig(),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'template',
+  }
+
+  // The thrown error propagates out of processPR/runGatePass — this
+  // mirrors what actually happens (startGateLoop's tick() is what catches
+  // it in production). The mark must already be durable by this point,
+  // saved BEFORE the call that threw, not only held in memory pending a
+  // save that this throw prevented from ever running.
+  await expect(runGatePass(deps)).rejects.toThrow('simulated network failure')
+
+  const state = await gateStateStore.get('acme/widgets', '1')
+  expect(state).not.toBeNull()
+  expect(state!.reviewedHeads[pr.headSha]).toEqual(['codex'])
+})
+
+test('a crash immediately after mergePR() still leaves `merged: true` durably saved', async () => {
+  const pr = makePR()
+  pr.comments = [verdictComment(pr, 'approve as-is')]
+  const { adapter, mergeCalls } = makeFakeGitAdapter([pr])
+  const reviewer = createFakeReviewer({ vendor: 'codex' })
+  const gateStateStore = makeFakeGateStateStore()
+
+  // Simulate a crash occurring right after the merge — anything logged
+  // after a successful merge throws, standing in for the process dying
+  // between the merge API call returning and the rest of the pass
+  // finishing (see docs/known-issues.md for the window this doesn't cover).
+  const crashingLog = (line: string) => {
+    if (line.includes('merged head')) throw new Error('simulated crash right after merging')
+  }
+
+  await expect(runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore,
+    config: makeConfig({ mergeEnabled: true }),
+    log: crashingLog,
+  })).rejects.toThrow('simulated crash right after merging')
+
+  expect(mergeCalls.length).toBe(1) // the merge itself did happen
+
+  const state = await gateStateStore.get('acme/widgets', '1')
+  expect(state).not.toBeNull()
+  expect(state!.merged).toBe(true) // durably saved despite the "crash" right after
 })
 
 test('persisted reviewedHeads dedup survives even if the posted comment later disappears from the live list', async () => {

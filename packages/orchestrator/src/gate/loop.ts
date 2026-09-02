@@ -110,6 +110,22 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
   let merged = prevState?.headSha === pr.headSha ? prevState.merged : false
   let reviewedHeads = prevState?.reviewedHeads ?? {}
 
+  // Saves the current in-memory state immediately — called at each point
+  // below where a crash or a thrown error must not lose durability, not
+  // just once at the end of the function.
+  async function persist(): Promise<void> {
+    await gateStateStore.save({
+      repo,
+      prNumber: pr.id,
+      headSha: pr.headSha,
+      decisionKind: decision.kind,
+      reason: decisionReason(decision),
+      merged,
+      reviewedHeads,
+      updatedAt: new Date().toISOString(),
+    })
+  }
+
   if (decision.kind === 'needs_review') {
     if (reviewer.vendor.toLowerCase() === implementerVendor.toLowerCase()) {
       log(`[gate] ${repo}#${pr.id}: skipping review — configured reviewer vendor "${reviewer.vendor}" matches the implementer`)
@@ -132,12 +148,14 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
         changedFiles: extractChangedFiles(diff),
       })
 
-      const result = await reviewer.review({ repo, prNumber: pr.id, headSha: pr.headSha, prompt })
-
-      // Record the attempt regardless of outcome — a malformed response, a
-      // comment later deleted, or a trustedReviewers mapping that changes
-      // must never cause this same head to be re-reviewed every pass.
+      // Mark (and durably persist) the attempt BEFORE calling the
+      // reviewer — a thrown Reviewer.review() call, or a crash mid-call,
+      // must still leave this head recorded as attempted on disk, not
+      // only in memory pending a save that never happens.
       reviewedHeads = withReviewedHead(reviewedHeads, pr.headSha, reviewer.vendor)
+      await persist()
+
+      const result = await reviewer.review({ repo, prNumber: pr.id, headSha: pr.headSha, prompt })
 
       if (!parseVerdictComment(result.text)) {
         log(`[gate] ${repo}#${pr.id}: reviewer "${reviewer.vendor}" returned malformed output for head ${pr.headSha.slice(0, 7)} (no valid header/verdict line) — not posted`)
@@ -158,21 +176,21 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
         commitMessage: firstParagraph(pr.body),
       })
       merged = true
+      // Persist immediately — a crash between mergePR() returning and the
+      // end-of-pass save (below) would otherwise leave `merged: false` on
+      // disk even though GitHub already merged and closed the PR. The
+      // remaining, unavoidable window (a crash between GitHub applying
+      // the merge and this save call returning) is documented in
+      // docs/known-issues.md; recovery is that the next pass sees the PR
+      // missing from listOpenPRs() (GitHub only returns open PRs) and
+      // simply stops touching it, merged flag or not.
+      await persist()
       log(`[gate] ${repo}#${pr.id}: merged head ${pr.headSha.slice(0, 7)}`)
     }
   }
   // 'hold' and 'blocked': no action beyond the log line above and persisting state below.
 
-  await gateStateStore.save({
-    repo,
-    prNumber: pr.id,
-    headSha: pr.headSha,
-    decisionKind: decision.kind,
-    reason: decisionReason(decision),
-    merged,
-    reviewedHeads,
-    updatedAt: new Date().toISOString(),
-  })
+  await persist()
 }
 
 /** Runs exactly one poll pass over every configured repo. Exported

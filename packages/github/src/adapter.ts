@@ -69,16 +69,22 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
         return api(path, opts, attempt + 1)
       }
 
-      if (opts?.raw) {
-        console.log(`[github] ${method} ${path} -> ${res.status} (${duration}ms)`)
-        return res
-      }
-
+      // The ok-check runs BEFORE the raw early-return: an exhausted 429 (or
+      // any other error status) must throw a typed GitHubError regardless
+      // of `raw`, so callers like getPRDiff (which uses raw: true) surface
+      // it the same way every other method does — otherwise the gate
+      // loop's backoff (packages/orchestrator/src/gate/loop.ts) never
+      // observes the failure, and the error body gets treated as data.
       if (!res.ok) {
         const text = await res.text()
         const errorMessage = `GitHub API ${res.status}: ${text}`
         console.error(`[github] ${method} ${path} -> ${res.status} (${duration}ms): ${text}`)
         throw new GitHubError(errorMessage, res.status, path)
+      }
+
+      if (opts?.raw) {
+        console.log(`[github] ${method} ${path} -> ${res.status} (${duration}ms)`)
+        return res
       }
 
       console.log(`[github] ${method} ${path} -> ${res.status} (${duration}ms)`)

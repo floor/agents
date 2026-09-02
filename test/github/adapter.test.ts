@@ -291,3 +291,54 @@ test('mergePR without options keeps prior behavior', async () => {
     restore()
   }
 })
+
+test('getPRDiff returns the diff text on success', async () => {
+  const restore = withMockFetch(() => new Response('diff --git a/x b/x\n+hi\n', { status: 200 }))
+  try {
+    const adapter = createGitHubAdapter({ token: 't', owner: 'o' })
+    const diff = await adapter.getPRDiff('r', '7')
+    expect(diff).toBe('diff --git a/x b/x\n+hi\n')
+  } finally {
+    restore()
+  }
+})
+
+test('getPRDiff (raw) throws a typed GitHubError with status 429 once retries are exhausted, rather than returning the error body as the diff', async () => {
+  let calls = 0
+  const restore = withMockFetch(() => {
+    calls++
+    return new Response('rate limited', { status: 429, headers: { 'retry-after': '0' } })
+  })
+  try {
+    const adapter = createGitHubAdapter({ token: 't', owner: 'o' })
+    let caught: unknown = null
+    try {
+      await adapter.getPRDiff('r', '7')
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(GitHubError)
+    expect((caught as GitHubError).status).toBe(429)
+    // 1 initial attempt + MAX_429_RETRIES(3) retries = 4 total requests.
+    expect(calls).toBe(4)
+  } finally {
+    restore()
+  }
+})
+
+test('a raw request retries a 429 and returns normally once it clears', async () => {
+  let calls = 0
+  const restore = withMockFetch(() => {
+    calls++
+    if (calls < 2) return new Response('rate limited', { status: 429, headers: { 'retry-after': '0' } })
+    return new Response('diff --git a/x b/x\n+hi\n', { status: 200 })
+  })
+  try {
+    const adapter = createGitHubAdapter({ token: 't', owner: 'o' })
+    const diff = await adapter.getPRDiff('r', '7')
+    expect(diff).toBe('diff --git a/x b/x\n+hi\n')
+    expect(calls).toBe(2)
+  } finally {
+    restore()
+  }
+})

@@ -5,12 +5,22 @@
 // flipping merging on.
 //
 // This file intentionally carries NO target-specific values (no repo name,
-// no token, no merge-enabled flag) — everything environment-specific lives
-// in the gitignored .env.gate and a gitignored config/gate/local.*.yaml,
-// loaded at process start via --env-file. This file is never started
-// automatically by any agent; a human (or an operator explicitly running
-// the soak) runs `pm2 start ecosystem.gate.config.cjs` by hand once those
-// two local files exist and are filled in.
+// no token, no clone/config path) — those live in the gitignored .env.gate
+// and a gitignored config/gate/local.*.yaml, loaded at process start via
+// --env-file. It DOES pin one thing on purpose, below: `env.GATE_MERGE_ENABLED:
+// 'false'`, so the process can never start with real merges enabled by
+// ambient shell/daemon state — see that field's own comment for why. The
+// only way to flip it on is to edit that value in this tracked file (never
+// .env.gate or a shell export) and then re-apply it with
+// `pm2 restart ecosystem.gate.config.cjs --update-env` (or `pm2 reload
+// ecosystem.gate.config.cjs --update-env`, or `pm2 delete` followed by
+// `pm2 start ecosystem.gate.config.cjs`) — a plain `pm2 restart <name>`
+// keeps whatever environment PM2 cached at the process's first start and
+// will not pick up the edit; see "When to flip GATE_MERGE_ENABLED on" in
+// docs/dry-run-soak.md. This file is never started automatically by any
+// agent; a human (or an operator explicitly running the soak) runs
+// `pm2 start ecosystem.gate.config.cjs` by hand once .env.gate and a local
+// gate config exist and are filled in.
 
 module.exports = {
   apps: [

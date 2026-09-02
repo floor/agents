@@ -78,7 +78,11 @@ test('prints a table sorted by repo then numeric PR number, not lexical or times
     expect(stdout).toContain('checks failing')
     expect(stdout).toMatch(/acme\/widgets#42\s+3333333\s+mergeable\s+-/)
   } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {})
+    // Deliberately NOT `.catch(() => {})` here: a cleanup failure (e.g. a
+    // permissions problem, or something else holding the directory open)
+    // should fail this test loudly, not vanish silently while leaving a
+    // stray temp directory behind and reporting green.
+    await rm(dir, { recursive: true, force: true })
   }
 })
 

@@ -318,16 +318,29 @@ Only once **all** of the following hold:
 When all four hold, edit `ecosystem.gate.config.cjs`'s own `env` block —
 change `GATE_MERGE_ENABLED: 'false'` to `GATE_MERGE_ENABLED: 'true'` (this
 is deliberately a tracked-file edit, not a `.env.gate` change or a shell
-`export` — see the "why pinned" note above) — then re-apply it:
+`export` — see the "why pinned" note above) — then re-apply it with **one**
+of:
 
 ```bash
-pm2 start ecosystem.gate.config.cjs   # re-reads the file and updates + restarts the registered app
+pm2 restart ecosystem.gate.config.cjs --update-env
+# or:
+pm2 reload ecosystem.gate.config.cjs --update-env
+# or, most certain of the three:
+pm2 delete floor-agents-gate-dryrun && pm2 start ecosystem.gate.config.cjs
 ```
 
-(A plain `pm2 restart floor-agents-gate-dryrun` restarts the process using
-PM2's previously *registered* config, not this file's latest contents — it
-will not pick up the edit. `pm2 start ecosystem.gate.config.cjs` is the
-form that actually re-reads the file.)
+**A plain `pm2 restart floor-agents-gate-dryrun` (by app name, no
+`--update-env`, no ecosystem file argument) will NOT pick up the edit.**
+PM2 caches the environment a process was given at its first `pm2 start` and
+reuses that cached copy on an ordinary restart — it does not re-read
+`ecosystem.gate.config.cjs` just because the file on disk changed. Passing
+the ecosystem file itself (not just the app name) to `restart`/`reload`,
+together with `--update-env`, is what makes PM2 re-resolve that app's `env`
+block from the file's current contents; deleting and re-starting the app
+sidesteps the cached-environment behavior entirely, which is why it's
+listed as the most certain option. See PM2's own "Environment variables"
+documentation (https://pm2.keymetrics.io/docs/usage/environment/) for this
+caching behavior and the `--update-env` flag.
 
 Keep watching the logs and `scripts/gate-audit.ts` output closely for at
 least the first day after the flip — the switch to real merges is the one

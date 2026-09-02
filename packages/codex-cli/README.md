@@ -66,10 +66,22 @@ const { text } = await reviewer.review({
 |---|---|---|
 | `binary` | `'codex'` | Path to the codex binary, or a fixture script in tests. |
 | `timeoutMs` | 15 minutes | The process is killed and `CodexTimeoutError` thrown past this. |
-| `sandbox` | `'read-only'` | `--sandbox` value. This reviewer never writes to the worktree. |
-| `extraArgs` | `[]` | Extra argv entries inserted between the sandbox flag and the prompt. Must not override the sandbox or approval policy — no `--sandbox`/`-s` (any form, including compact `-s<mode>`), `--add-dir`, a bypass flag (`--yolo`, `--approve-for-me`, `--not-so-yolo`, `--full-auto`, `--dangerously-bypass-approvals-and-sandbox`), or a `-c`/`--config` setting `sandbox_mode`/`approval_policy` — the constructor throws if any are present, case-insensitively. Copied and frozen at construction, so mutating the array afterward has no effect. |
+| `model` | — | Emitted as `--model <value>`. Must match `/^[A-Za-z0-9._-]+$/`; the constructor throws otherwise. |
+| `profile` | — | Emitted as `--profile <value>`. Must match `/^[A-Za-z0-9._-]+$/`; the constructor throws otherwise. |
 | `clonePath` | — | Local clone used to create a detached worktree at `headSha` when `review()` is called without a `worktreePath`. Required in that case. |
 | `worktreeRoot` | OS temp dir | Directory under which detached worktrees are created. |
+
+**argv is fixed by design, not by a denylist.** There is no `extraArgs` option and no
+way for a caller to add, remove, or reorder an argv element. Earlier drafts of this
+package tried to allow arbitrary extra flags while denylisting anything that looked
+like a sandbox override, and each review round found a new spelling the denylist
+missed (a second `--sandbox`, a short alias, a compact `-s<mode>` form, `-c`/`--config`
+keys, `--add-dir`, `--cd`/`-C`...). Rather than keep extending that list, the adapter
+now always emits exactly `[binary, 'exec', '--sandbox', 'read-only', ...flags from
+model/profile, prompt]` — `model` and `profile` are the only configurable values, each
+validated against a strict charset, and each can only ever render as its own
+`--model`/`--profile` flag pair. There is no argv position a config value can reach
+other than its own flag's value.
 
 ## Invocation, and the pitfalls it exists to avoid
 

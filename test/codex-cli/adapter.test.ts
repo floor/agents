@@ -52,42 +52,118 @@ test('vendor is "codex"', () => {
   expect(reviewer.vendor).toBe('codex')
 })
 
-test('rejects an extraArgs entry that would override the sandbox, including the short alias and the bypass flag', () => {
-  expect(() => createCodexReviewer({ binary: OK, extraArgs: ['--sandbox', 'danger-full-access'] })).toThrow(
-    /sandbox/i,
-  )
-  expect(() => createCodexReviewer({ binary: OK, extraArgs: ['--sandbox=danger-full-access'] })).toThrow(
-    /sandbox/i,
-  )
-  expect(() => createCodexReviewer({ binary: OK, extraArgs: ['-s', 'danger-full-access'] })).toThrow(/sandbox/i)
-  expect(() =>
-    createCodexReviewer({ binary: OK, extraArgs: ['--dangerously-bypass-approvals-and-sandbox'] }),
-  ).toThrow(/sandbox/i)
+// ── argv is fixed by design: no extraArgs, only two typed & validated options ──────
+//
+// After three rounds of a denylist chasing new bypass spellings (a second --sandbox,
+// a short alias, a compact form, -c/--config, --add-dir, --cd/-C...), there is no
+// caller-extensible argv any more. `model`/`profile` are the only configurable
+// pieces, each validated against a strict charset and each rendered as exactly its
+// own flag pair — there is no path from a config value to an arbitrary argv element.
+
+async function recordArgLines(recordFile: string): Promise<string[]> {
+  const record = await readFile(recordFile, 'utf-8')
+  return record
+    .split('\n')
+    .filter((l) => l.startsWith('ARG:'))
+    .map((l) => l.slice('ARG:'.length))
+}
+
+test('rejects an invalid model value before ever spawning', () => {
+  expect(() => createCodexReviewer({ binary: OK, model: 'gpt-4; rm -rf /' })).toThrow(/model/i)
+  expect(() => createCodexReviewer({ binary: OK, model: '' })).toThrow(/model/i)
+  expect(() => createCodexReviewer({ binary: OK, model: 'has spaces' })).toThrow(/model/i)
+  expect(() => createCodexReviewer({ binary: OK, model: '$(whoami)' })).toThrow(/model/i)
 })
 
-test('extraArgs without a sandbox override in it still work', async () => {
-  const reviewer = createCodexReviewer({ binary: OK, extraArgs: ['--json'] })
-  const result = await reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
-  expect(result.text).toContain('Verdict: approve as-is')
+test('rejects an invalid profile value before ever spawning', () => {
+  expect(() => createCodexReviewer({ binary: OK, profile: 'ci reviewer' })).toThrow(/profile/i)
+  expect(() => createCodexReviewer({ binary: OK, profile: '$(whoami)' })).toThrow(/profile/i)
+  expect(() => createCodexReviewer({ binary: OK, profile: 'a/b' })).toThrow(/profile/i)
 })
 
-test('extraArgs is copied at construction — mutating the caller\'s array afterward cannot smuggle a sandbox override into argv', async () => {
+test('emits exactly [binary, "exec", "--sandbox", "read-only", prompt] when neither model nor profile is set', async () => {
   const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
   const prevEnv = process.env.CODEX_TEST_RECORD
   process.env.CODEX_TEST_RECORD = recordFile
 
   try {
-    const mutableExtraArgs = ['--json']
-    const reviewer = createCodexReviewer({ binary: RECORD, extraArgs: mutableExtraArgs })
-
-    // If extraArgs were stored by reference instead of copied, this would let a
-    // caller bypass the constructor-time guard entirely.
-    mutableExtraArgs.push('--sandbox=danger-full-access')
-
+    const reviewer = createCodexReviewer({ binary: RECORD })
     await reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
 
-    const record = await readFile(recordFile, 'utf-8')
-    expect(record).not.toContain('danger-full-access')
+    expect(await recordArgLines(recordFile)).toEqual(['exec', '--sandbox', 'read-only', baseInput.prompt])
+  } finally {
+    if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
+    else process.env.CODEX_TEST_RECORD = prevEnv
+    await rm(recordFile, { force: true }).catch(() => {})
+  }
+}, 10_000)
+
+test('emits exactly [..., "--model", <model>, prompt] when only model is set', async () => {
+  const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
+  const prevEnv = process.env.CODEX_TEST_RECORD
+  process.env.CODEX_TEST_RECORD = recordFile
+
+  try {
+    const reviewer = createCodexReviewer({ binary: RECORD, model: 'gpt-5.1-codex' })
+    await reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
+
+    expect(await recordArgLines(recordFile)).toEqual([
+      'exec',
+      '--sandbox',
+      'read-only',
+      '--model',
+      'gpt-5.1-codex',
+      baseInput.prompt,
+    ])
+  } finally {
+    if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
+    else process.env.CODEX_TEST_RECORD = prevEnv
+    await rm(recordFile, { force: true }).catch(() => {})
+  }
+}, 10_000)
+
+test('emits exactly [..., "--model", <model>, "--profile", <profile>, prompt] when both are set', async () => {
+  const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
+  const prevEnv = process.env.CODEX_TEST_RECORD
+  process.env.CODEX_TEST_RECORD = recordFile
+
+  try {
+    const reviewer = createCodexReviewer({ binary: RECORD, model: 'gpt-5.1-codex', profile: 'ci-reviewer_v1' })
+    await reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
+
+    expect(await recordArgLines(recordFile)).toEqual([
+      'exec',
+      '--sandbox',
+      'read-only',
+      '--model',
+      'gpt-5.1-codex',
+      '--profile',
+      'ci-reviewer_v1',
+      baseInput.prompt,
+    ])
+  } finally {
+    if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
+    else process.env.CODEX_TEST_RECORD = prevEnv
+    await rm(recordFile, { force: true }).catch(() => {})
+  }
+}, 10_000)
+
+test('the prompt is always the final argv element, even when it starts with a dash and looks like flags', async () => {
+  const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
+  const prevEnv = process.env.CODEX_TEST_RECORD
+  process.env.CODEX_TEST_RECORD = recordFile
+  const dashPrompt = '--sandbox danger-full-access --add-dir / -c sandbox_mode=danger-full-access'
+
+  try {
+    const reviewer = createCodexReviewer({ binary: RECORD, model: 'gpt-5.1-codex' })
+    await reviewer.review({ ...baseInput, prompt: dashPrompt, worktreePath: REAL_TMP })
+
+    const argLines = await recordArgLines(recordFile)
+    expect(argLines).toEqual(['exec', '--sandbox', 'read-only', '--model', 'gpt-5.1-codex', dashPrompt])
+    // The prompt arrives as ONE argv entry, last, verbatim — not split into separate
+    // flags, and not capable of injecting an earlier argv element.
+    expect(argLines).toHaveLength(6)
+    expect(argLines.at(-1)).toBe(dashPrompt)
   } finally {
     if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
     else process.env.CODEX_TEST_RECORD = prevEnv
@@ -139,11 +215,7 @@ test('passes the prompt as a single argv element, with metacharacters inert, and
   process.env.CODEX_TEST_RECORD = recordFile
 
   try {
-    const reviewer = createCodexReviewer({
-      binary: RECORD,
-      sandbox: 'read-only',
-      extraArgs: ['--extra-flag'],
-    })
+    const reviewer = createCodexReviewer({ binary: RECORD })
 
     await reviewer.review({ ...baseInput, prompt: dangerousPrompt, worktreePath: REAL_TMP })
 
@@ -153,7 +225,6 @@ test('passes the prompt as a single argv element, with metacharacters inert, and
     expect(lines).toContain('ARG:exec')
     expect(lines).toContain('ARG:--sandbox')
     expect(lines).toContain('ARG:read-only')
-    expect(lines).toContain('ARG:--extra-flag')
     // The whole dangerous prompt arrives as ONE argv entry, verbatim — proof there was
     // no shell involved to interpret `` ` `` / `$()` / quotes inside it.
     expect(lines).toContain(`ARG:${dangerousPrompt}`)

@@ -233,9 +233,18 @@ vendor:
 ```
 
 `GATE_MERGE_ENABLED` (env) overrides the file's `mergeEnabled`. `GATE_REVIEWER`
-selects the Reviewer `src/gate.ts` wires: `codex` (default — shells out to
-`codex exec --sandbox read-only "<prompt>" < /dev/null`) or `fake` (no
-shell-out, for smoke-testing the loop).
+selects the Reviewer `src/gate.ts` wires: `codex` (default — the
+`@floor-agents/codex-cli` package's `createCodexReviewer`, built directly
+against the `Reviewer` interface below; see `packages/codex-cli/README.md`
+for its exact invocation contract) or `fake` (no shell-out, for
+smoke-testing the loop). The `codex` reviewer's own options
+(`binary`/`timeoutMs`/`model`/`profile`/`clonePath`/`worktreeRoot`) are set
+via `GATE_CODEX_BINARY`/`GATE_CODEX_TIMEOUT_MS`/`GATE_CODEX_MODEL`/
+`GATE_CODEX_PROFILE`/`GATE_CODEX_CLONE_PATH`/`GATE_CODEX_WORKTREE_ROOT`, all
+optional — an unset one keeps the package's own default. `GATE_CODEX_CLONE_PATH`
+in particular has to be set for `codex` review to actually run: the gate
+loop always calls `reviewer.review()` without a `worktreePath`, so the
+package needs `clonePath` to create its own detached worktree per review.
 
 ## Running it against your own repo
 
@@ -267,13 +276,17 @@ type Reviewer = { vendor: string; review(input: ReviewInput): Promise<ReviewResu
 ```
 
 Exported from `@floor-agents/core`, along with `createFakeReviewer(...)` for
-tests. A separate `@floor-agents/codex-cli` package is being built against
-this exact interface; `src/gate.ts`'s inline `codex exec` glue is meant to
-be replaced by it once available, not extended.
+tests. `@floor-agents/codex-cli`'s `createCodexReviewer` implements this
+interface directly and is what `src/gate.ts` constructs for `GATE_REVIEWER=codex`
+(the default) — see `packages/codex-cli/README.md` for the worktree lifecycle,
+the fixed (non-extensible) argv, and the `"## Reviewer agent (Codex)"` header
+extraction it does before ever returning a `ReviewResult`.
 
 **On "verbatim":** the loop posts `Reviewer.review()`'s returned `text`
 exactly as returned — no editing, summarizing, or re-wrapping happens in
 `loop.ts`. A `Reviewer` implementation is responsible for what it returns;
-`src/gate.ts`'s inline Codex reviewer trims incidental leading/trailing
-subprocess whitespace before returning (not a content edit, but worth
-knowing if you're relying on byte-exact output).
+`@floor-agents/codex-cli`'s adapter returns Codex's raw output from the
+`"## Reviewer agent (Codex)"` header onward with trailing whitespace
+stripped (see `packages/codex-cli/src/extract.ts`'s `extractReview`) — that
+is the only shaping applied anywhere on the path from the Codex subprocess
+to the posted PR comment.

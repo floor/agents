@@ -25,6 +25,13 @@
         "@floor-agents/core": "workspace:*",
       },
     },
+    "packages/codex-cli": {
+      "name": "@floor-agents/codex-cli",
+      "version": "0.0.1",
+      "dependencies": {
+        "@floor-agents/core": "workspace:*",
+      },
+    },
     "packages/context-builder": {
       "name": "@floor-agents/context-builder",
       "version": "0.0.1",
@@ -92,6 +99,8 @@
     "@floor-agents/anthropic": ["@floor-agents/anthropic@workspace:packages/anthropic"],
 
     "@floor-agents/claude-code": ["@floor-agents/claude-code@workspace:packages/claude-code"],
+
+    "@floor-agents/codex-cli": ["@floor-agents/codex-cli@workspace:packages/codex-cli"],
 
     "@floor-agents/context-builder": ["@floor-agents/context-builder@workspace:packages/context-builder"],
 

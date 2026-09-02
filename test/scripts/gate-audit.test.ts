@@ -30,12 +30,17 @@ async function writeState(dir: string, fileName: string, state: Record<string, u
 }
 
 test('prints an empty-state message and exits 0 when the state directory does not exist', async () => {
-  const missingDir = join(await mkdtemp(join(tmpdir(), 'gate-audit-test-')), 'does-not-exist')
-  const { stdout, stderr, exitCode } = await runAudit([missingDir])
+  const parent = await mkdtemp(join(tmpdir(), 'gate-audit-test-'))
+  try {
+    const missingDir = join(parent, 'does-not-exist')
+    const { stdout, stderr, exitCode } = await runAudit([missingDir])
 
-  expect(exitCode).toBe(0)
-  expect(stderr).toContain('state directory not found')
-  expect(stdout).toContain('no persisted gate state found')
+    expect(exitCode).toBe(0)
+    expect(stderr).toContain('state directory not found')
+    expect(stdout).toContain('no persisted gate state found')
+  } finally {
+    await rm(parent, { recursive: true, force: true }).catch(() => {})
+  }
 })
 
 test('prints a table sorted by repo then numeric PR number, not lexical or timestamp order', async () => {

@@ -30,6 +30,29 @@ handing it real merge authority.
 
 ## Prerequisites
 
+**This runbook assumes `src/gate.ts` is wired to `@floor-agents/codex-cli`'s
+`createCodexReviewer` (tracked as issue #17), not the older ad hoc inline
+`codex exec` reviewer that predates it.** The two behave differently enough
+that it matters which one a soak is actually running:
+
+- The **inline** reviewer (`src/gate.ts` before #17) spawns `codex exec`
+  directly from wherever the gate process's own working directory is — the
+  `floor/agents` checkout itself, not a checkout of the target repository —
+  and has no concept of a clone path or a worktree at all. A soak run
+  against it produces reviews with **no real access to the target
+  repository's code**, which defeats the point of evaluating review
+  quality: don't start a soak on this version.
+- The **`@floor-agents/codex-cli`-backed** reviewer (post-#17) creates its
+  own detached git worktree of the target repository, checked out at the PR
+  head, and runs `codex` there — see `packages/codex-cli/README.md`. This is
+  the version the rest of this section assumes.
+
+Before starting a soak, confirm which one you have — `bun run gate`'s
+startup log prints the reviewer vendor either way, but only the
+`@floor-agents/codex-cli` version actually reads the target repository's
+files; check `git log --oneline -- src/gate.ts` for the issue #17 wiring
+commit if in doubt.
+
 - **A GitHub token** with:
   - read access to the target repository (to list PRs, read diffs, checks, comments)
   - write access to post PR comments (to post the reviewer's verdict)
@@ -44,11 +67,13 @@ handing it real merge authority.
   out to it for every `needs_review` decision; an unauthenticated CLI fails
   every review attempt, not just the merge step.
 - **A local clone path** for the target repository, used to create detached
-  git worktrees per review (`GateConfig`'s reviewer needs a real checkout to
-  run `git diff`/read files against). Any plain `git clone` of the target
-  repository on the host works; the loop only ever reads from it and creates
-  worktrees under a separate directory — it never pushes to or otherwise
-  mutates the clone itself.
+  git worktrees per review (`@floor-agents/codex-cli`'s reviewer needs a
+  real checkout to run `git diff`/read files against — see the prerequisite
+  callout above). Any plain `git clone` of the target repository on the host
+  works; the loop only ever reads from it and creates worktrees under a
+  separate directory — it never pushes to or otherwise mutates the clone
+  itself. Once #17 lands, this is set via `GATE_CODEX_CLONE_PATH` in
+  `.env.gate` (see below).
 - **Bun** installed on the host (same runtime the rest of this repo uses).
 
 ## Config file shape
@@ -154,6 +179,15 @@ module.exports = {
       out_file: './data/logs/gate-dryrun-out.log',
       error_file: './data/logs/gate-dryrun-error.log',
       time: true,
+
+      // Pinned here rather than left to .env.gate or ambient shell/daemon
+      // environment — see the comment on this field in the actual file for
+      // why. The only way to flip this on is to edit this value directly
+      // (see "When to flip GATE_MERGE_ENABLED on" below), not to set it in
+      // .env.gate or export it in the shell that runs PM2.
+      env: {
+        GATE_MERGE_ENABLED: 'false',
+      },
     },
   ],
 }
@@ -164,7 +198,21 @@ inbound HTTP traffic to load-balance — there is nothing for a second cluster
 worker to do except double-poll the same PRs and duplicate every review and
 log line. One fork instance is correct, not a limitation.
 
-`.env.gate` (gitignored) holds the actual secrets/config pointers:
+**Why `GATE_MERGE_ENABLED` is pinned in the tracked ecosystem file instead
+of `.env.gate`:** PM2 forwards its own daemon process environment into a
+forked app before `.env.gate` is ever loaded, and Bun's `--env-file` does
+not override a variable that's already set in the environment. An unrelated
+`GATE_MERGE_ENABLED=true` left over in the PM2 daemon's own environment
+(from testing something else in the same shell, say) would silently enable
+real merges even though `.env.gate` never mentions it and the YAML config
+defaults to `false`. Explicitly setting it to `'false'` in
+`ecosystem.gate.config.cjs`'s own `env` block closes that gap: PM2 applies
+an app's own registered `env` on top of its daemon environment when
+starting it, so this value wins regardless of what's ambient in the shell.
+
+`.env.gate` (gitignored) holds the actual secrets/config pointers —
+deliberately **not** `GATE_MERGE_ENABLED`, which lives in the tracked
+ecosystem file instead (see above):
 
 ```bash
 # .env.gate — never commit this file
@@ -172,9 +220,9 @@ GITHUB_TOKEN=ghp_...
 GITHUB_OWNER=<target repo's owner>
 GATE_CONFIG_PATH=config/gate/local.dry-run.yaml
 GATE_REVIEWER=codex
-# Deliberately omitted: GATE_MERGE_ENABLED. Leaving it unset means the
-# config file's mergeEnabled: false is what actually governs behavior —
-# see "What dry run means here" above.
+# Local clone of the target repository, used to create a detached worktree
+# per review (see "Prerequisites" above) — required once #17 lands.
+GATE_CODEX_CLONE_PATH=/path/to/a/local/clone/of/the/target/repo
 ```
 
 **This agent does not create `.env.gate` or `config/gate/local.dry-run.yaml`
@@ -267,8 +315,21 @@ Only once **all** of the following hold:
    PRs got their two independent reviews from elsewhere and the gate held
    them correctly, not that they simply never came up).
 
-When all four hold, set `GATE_MERGE_ENABLED=true` in `.env.gate` and
-`pm2 restart floor-agents-gate-dryrun --update-env`. Keep watching the logs
-and `scripts/gate-audit.ts` output closely for at least the first day after
-the flip — the switch to real merges is the one change in this whole runbook
-that isn't reversible after the fact for whatever it merges.
+When all four hold, edit `ecosystem.gate.config.cjs`'s own `env` block —
+change `GATE_MERGE_ENABLED: 'false'` to `GATE_MERGE_ENABLED: 'true'` (this
+is deliberately a tracked-file edit, not a `.env.gate` change or a shell
+`export` — see the "why pinned" note above) — then re-apply it:
+
+```bash
+pm2 start ecosystem.gate.config.cjs   # re-reads the file and updates + restarts the registered app
+```
+
+(A plain `pm2 restart floor-agents-gate-dryrun` restarts the process using
+PM2's previously *registered* config, not this file's latest contents — it
+will not pick up the edit. `pm2 start ecosystem.gate.config.cjs` is the
+form that actually re-reads the file.)
+
+Keep watching the logs and `scripts/gate-audit.ts` output closely for at
+least the first day after the flip — the switch to real merges is the one
+change in this whole runbook that isn't reversible after the fact for
+whatever it merges.

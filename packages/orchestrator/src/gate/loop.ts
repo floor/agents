@@ -5,8 +5,8 @@
 // default) never calls GitAdapter.mergePR.
 
 import type { GitAdapter, PRDetails, Reviewer } from '@floor-agents/core'
-import { decideGate, type GateDecision } from './decision.ts'
-import { parseVerdictComment } from './verdict.ts'
+import { decideGate, latestValidVerdictsByVendor, type GateDecision } from './decision.ts'
+import { parseVerdictComment, type Decision as VerdictDecision } from './verdict.ts'
 import { attributeImplementerVendor } from './vendor.ts'
 import { buildReviewPrompt, extractChangedFiles } from './prompt.ts'
 import type { GateStateStore } from './state-store.ts'
@@ -15,6 +15,15 @@ import type { GateModeConfig } from './config.ts'
 export type GateLoopDeps = {
   readonly git: GitAdapter
   readonly reviewer: Reviewer
+  /** A second, independent-vendor `Reviewer`, run in addition to `reviewer`
+   *  on any PR carrying a `config.gate.authLabels` label (see
+   *  `config.gate.secondReviewer` for the vendor name this should be built
+   *  from, and processPR below for the scheduling rule) — so an
+   *  auth-sensitive PR can collect the two independent-vendor
+   *  `approve as-is` verdicts the auth gate requires without a human
+   *  triggering the second review by hand. Optional; when unset, only
+   *  `reviewer` ever runs automatically, same as before this existed. */
+  readonly secondReviewer?: Reviewer
   readonly gateStateStore: GateStateStore
   readonly config: GateModeConfig
   /** Injected for tests; defaults to console.log. */
@@ -71,7 +80,7 @@ function hasVendorReviewedHead(
 
 async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promise<void> {
   const log = deps.log ?? console.log
-  const { git, reviewer, gateStateStore, config } = deps
+  const { git, reviewer, secondReviewer, gateStateStore, config } = deps
 
   const implementerVendor = attributeImplementerVendor(
     { headRef: pr.headRef, body: pr.body, labels: pr.labels },
@@ -126,46 +135,116 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
     })
   }
 
-  if (decision.kind === 'needs_review') {
-    if (reviewer.vendor.toLowerCase() === implementerVendor.toLowerCase()) {
-      log(`[gate] ${repo}#${pr.id}: skipping review — configured reviewer vendor "${reviewer.vendor}" matches the implementer`)
-    } else if (hasVendorReviewedHead(reviewedHeads, pr.headSha, reviewer.vendor)) {
-      log(`[gate] ${repo}#${pr.id}: reviewer "${reviewer.vendor}" was already asked to review head ${pr.headSha.slice(0, 7)}`)
-    } else {
-      const diff = await git.getPRDiff(repo, pr.id)
-      const template = deps.loadPromptTemplate
-        ? await deps.loadPromptTemplate()
-        : await defaultLoadPromptTemplate(config.promptTemplatePath)
-
-      const prompt = buildReviewPrompt(template, {
-        repo,
-        prNumber: pr.id,
-        title: pr.title,
-        body: pr.body,
-        baseRef: pr.baseRef,
-        headRef: pr.headRef,
-        headSha: pr.headSha,
-        changedFiles: extractChangedFiles(diff),
-      })
-
-      // Mark (and durably persist) the attempt BEFORE calling the
-      // reviewer — a thrown Reviewer.review() call, or a crash mid-call,
-      // must still leave this head recorded as attempted on disk, not
-      // only in memory pending a save that never happens.
-      reviewedHeads = withReviewedHead(reviewedHeads, pr.headSha, reviewer.vendor)
-      await persist()
-
-      const result = await reviewer.review({ repo, prNumber: pr.id, headSha: pr.headSha, prompt })
-
-      if (!parseVerdictComment(result.text)) {
-        log(`[gate] ${repo}#${pr.id}: reviewer "${reviewer.vendor}" returned malformed output for head ${pr.headSha.slice(0, 7)} (no valid header/verdict line) — not posted`)
-      } else {
-        // Posted verbatim — never edited, summarized, or re-wrapped.
-        await git.addPRComment(repo, pr.id, result.text)
-        log(`[gate] ${repo}#${pr.id}: posted ${reviewer.vendor} review for head ${pr.headSha.slice(0, 7)}`)
-      }
+  // Calls `rv` to review the current head, unless its vendor matches the
+  // implementer or it was already asked to review this exact head (per the
+  // durable `reviewedHeads` mark, not a live-comment scan — see
+  // `hasVendorReviewedHead`'s own doc comment). Shared by the default
+  // gate's single-reviewer `needs_review` handling below and the
+  // auth-labelled-PR scheduling further down, so both paths post/log/mark
+  // identically instead of drifting apart. Returns the posted verdict's
+  // decision (or `null` when nothing was posted — skipped, or malformed
+  // output) so a caller scheduling more than one reviewer in the same pass
+  // can react to what this one just found, not just what was already on
+  // the PR before this pass started.
+  async function tryReview(rv: Reviewer): Promise<VerdictDecision | null> {
+    if (rv.vendor.toLowerCase() === implementerVendor.toLowerCase()) {
+      log(`[gate] ${repo}#${pr.id}: skipping review — configured reviewer vendor "${rv.vendor}" matches the implementer`)
+      return null
     }
-  } else if (decision.kind === 'mergeable') {
+    if (hasVendorReviewedHead(reviewedHeads, pr.headSha, rv.vendor)) {
+      log(`[gate] ${repo}#${pr.id}: reviewer "${rv.vendor}" was already asked to review head ${pr.headSha.slice(0, 7)}`)
+      return null
+    }
+
+    const diff = await git.getPRDiff(repo, pr.id)
+    const template = deps.loadPromptTemplate
+      ? await deps.loadPromptTemplate()
+      : await defaultLoadPromptTemplate(config.promptTemplatePath)
+
+    const prompt = buildReviewPrompt(template, {
+      repo,
+      prNumber: pr.id,
+      title: pr.title,
+      body: pr.body,
+      baseRef: pr.baseRef,
+      headRef: pr.headRef,
+      headSha: pr.headSha,
+      changedFiles: extractChangedFiles(diff),
+    })
+
+    // Mark (and durably persist) the attempt BEFORE calling the
+    // reviewer — a thrown Reviewer.review() call, or a crash mid-call,
+    // must still leave this head recorded as attempted on disk, not
+    // only in memory pending a save that never happens.
+    reviewedHeads = withReviewedHead(reviewedHeads, pr.headSha, rv.vendor)
+    await persist()
+
+    const result = await rv.review({ repo, prNumber: pr.id, headSha: pr.headSha, prompt })
+    const parsed = parseVerdictComment(result.text)
+
+    if (!parsed) {
+      log(`[gate] ${repo}#${pr.id}: reviewer "${rv.vendor}" returned malformed output for head ${pr.headSha.slice(0, 7)} (no valid header/verdict line) — not posted`)
+      return null
+    }
+
+    // Posted verbatim — never edited, summarized, or re-wrapped.
+    await git.addPRComment(repo, pr.id, result.text)
+    log(`[gate] ${repo}#${pr.id}: posted ${rv.vendor} review for head ${pr.headSha.slice(0, 7)}`)
+    return parsed.decision
+  }
+
+  if (decision.kind === 'needs_review') {
+    await tryReview(reviewer)
+  } else if (decision.kind !== 'mergeable' && !skipFetch && config.gate.authLabels.some(l => pr.labels.includes(l))) {
+    // decideGate()'s auth gate always returns `blocked` (never
+    // `needs_review`), even with zero verdicts yet — see the "Known
+    // limitation" section of docs/review-gate.md and decision.ts's own
+    // rule table, which this deliberately leaves UNCHANGED. This loop
+    // closes that gap for itself instead: an auth-labelled PR still needs
+    // its reviews triggered somehow, so both the primary `reviewer` and,
+    // if configured, `secondReviewer` are asked here, in addition to (not
+    // instead of) the decision table above. Explicitly excludes
+    // `decision.kind === 'mergeable'` — a PR already fully approved and
+    // green has nothing left to trigger, and calling a reviewer again there
+    // (however harmlessly `tryReview`'s own dedup would make it) would be
+    // pure waste. The merge/hold/blocked handling below is otherwise
+    // unaffected by any of this.
+    //
+    // Skipped when there's already a blocking verdict (`changes needed` /
+    // `approve with nits`) from a trusted vendor for this exact head — same
+    // as the default gate, that means a human/fix is needed, not another
+    // review round. `tryReview` itself also short-circuits cheaply (before
+    // ever fetching the diff) for a vendor already asked about this head,
+    // so calling it here even when nothing is actually needed costs at
+    // most a wasted function call, never a wasted API call.
+    const hasBlockingVerdict = latestValidVerdictsByVendor(
+      {
+        pr: { labels: pr.labels, draft: pr.draft, headSha: pr.headSha, body: pr.body },
+        implementerVendor,
+        checkStatus,
+        comments,
+        config: config.gate,
+      },
+      config.gate,
+    ).some(v => v.decision === 'changes needed' || v.decision === 'approve with nits')
+
+    if (!hasBlockingVerdict) {
+      // `hasBlockingVerdict` above only reflects comments fetched BEFORE
+      // this pass called anything — if the primary reviewer's OWN verdict,
+      // just posted, is itself blocking, that must stop the second
+      // reviewer from running in this SAME pass too (it would otherwise
+      // review a PR the primary just said needs changes, in the same
+      // breath as posting that verdict). `tryReview`'s return value is
+      // this pass's own knowledge of what the primary just found — more
+      // immediate than waiting for the next pass to re-fetch comments and
+      // recompute `hasBlockingVerdict` from them.
+      const primaryDecision = await tryReview(reviewer)
+      const primaryIsBlocking = primaryDecision === 'changes needed' || primaryDecision === 'approve with nits'
+      if (secondReviewer && !primaryIsBlocking) await tryReview(secondReviewer)
+    }
+  }
+
+  if (decision.kind === 'mergeable') {
     if (!config.mergeEnabled) {
       log(`DRY RUN would merge #${pr.id} at ${pr.headSha}`)
     } else if (merged) {

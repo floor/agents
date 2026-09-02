@@ -291,6 +291,95 @@ test('trustedReviewers lookup is case-insensitive on the login', () => {
   expect(result).toEqual({ kind: 'mergeable' })
 })
 
+// ── Multi-vendor trustedReviewers (a single login trusted for more than
+// one vendor, e.g. a gate-loop bot account posting both a primary and a
+// secondReviewer review) — trustedReviewers[login] can be an array, in
+// which case the actual vendor comes from the comment's OWN header text,
+// but only when that header names one of the vendors the login is listed
+// for. This is the rule a spoofed header must not be able to defeat: an
+// array entry is NOT "trust this login for any vendor it claims" — it is
+// "trust this login for exactly these vendors, whichever its header says."
+
+test('a login trusted for an array of vendors: the vendor is taken from the header when it is in the allowed list', () => {
+  const config: GateConfig = { ...DEFAULT_GATE_CONFIG, trustedReviewers: { 'gate-bot': ['codex', 'gemini'] } }
+  const result = decideGate(baseInput({
+    config,
+    comments: [approveComment('gemini', { sha: HEAD_SHA, createdAt: new Date(), author: 'gate-bot' })],
+  }))
+  expect(result).toEqual({ kind: 'mergeable' })
+})
+
+test('a login trusted for an array of vendors: a header naming a vendor OUTSIDE the allowed list is rejected outright, not attributed to any vendor', () => {
+  const config: GateConfig = { ...DEFAULT_GATE_CONFIG, trustedReviewers: { 'gate-bot': ['codex', 'gemini'] } }
+  const result = decideGate(baseInput({
+    config,
+    // "grok" is not in gate-bot's allowed list — this must not count as a
+    // verdict from "grok" (or from anything else), however well-formed.
+    comments: [approveComment('grok', { sha: HEAD_SHA, createdAt: new Date(), author: 'gate-bot' })],
+  }))
+  expect(result.kind).toBe('needs_review')
+})
+
+test('a spoofed header cannot make a multi-vendor login count as a vendor it never actually posted', () => {
+  // gate-bot is trusted for codex+gemini. Even a well-formed "changes
+  // needed" from a vendor outside that list must not block the gate either
+  // — it simply never counts, in either direction.
+  const config: GateConfig = { ...DEFAULT_GATE_CONFIG, trustedReviewers: { 'gate-bot': ['codex', 'gemini'] } }
+  const result = decideGate(baseInput({
+    config,
+    comments: [
+      approveComment('codex', { sha: HEAD_SHA, createdAt: new Date('2026-01-11'), author: 'gate-bot' }),
+      approveComment('claude', { sha: HEAD_SHA, createdAt: new Date('2026-01-12'), author: 'gate-bot', decision: 'changes needed' }),
+    ],
+  }))
+  expect(result).toEqual({ kind: 'mergeable' }) // the "claude" comment never counted at all
+})
+
+test('auth gate: a single multi-vendor login can supply BOTH required distinct-vendor approvals via its header', () => {
+  const config: GateConfig = { ...DEFAULT_GATE_CONFIG, trustedReviewers: { 'gate-bot': ['codex', 'gemini'] } }
+  const result = decideGate(authInput({
+    config,
+    comments: [
+      approveComment('codex', { sha: HEAD_SHA, createdAt: new Date('2026-01-11'), author: 'gate-bot' }),
+      approveComment('gemini', { sha: HEAD_SHA, createdAt: new Date('2026-01-12'), author: 'gate-bot' }),
+    ],
+  }))
+  expect(result).toEqual({ kind: 'mergeable' })
+})
+
+test('auth gate: a multi-vendor login posting the SAME header vendor twice still only counts as one vendor', () => {
+  const config: GateConfig = { ...DEFAULT_GATE_CONFIG, trustedReviewers: { 'gate-bot': ['codex', 'gemini'] } }
+  const result = decideGate(authInput({
+    config,
+    comments: [
+      approveComment('codex', { sha: HEAD_SHA, createdAt: new Date('2026-01-11'), author: 'gate-bot' }),
+      approveComment('codex', { sha: HEAD_SHA, createdAt: new Date('2026-01-12'), author: 'gate-bot' }),
+    ],
+  }))
+  expect(result.kind).toBe('blocked')
+})
+
+test('a single-string trustedReviewers value ignores the header entirely, even for an unrelated vendor name', () => {
+  // Unlike the array form, a plain string value is unconditional — this
+  // pins that widening trustedReviewers to allow arrays did not change the
+  // existing single-vendor string behavior.
+  const config: GateConfig = { ...DEFAULT_GATE_CONFIG, trustedReviewers: { 'codex-bot': 'codex' } }
+  const result = decideGate(baseInput({
+    config,
+    comments: [approveComment('some-other-vendor-name', { sha: HEAD_SHA, createdAt: new Date(), author: 'codex-bot' })],
+  }))
+  expect(result).toEqual({ kind: 'mergeable' })
+})
+
+test('an empty array value trusts the login for nothing — every comment from it is rejected', () => {
+  const config: GateConfig = { ...DEFAULT_GATE_CONFIG, trustedReviewers: { 'gate-bot': [] } }
+  const result = decideGate(baseInput({
+    config,
+    comments: [approveComment('codex', { sha: HEAD_SHA, createdAt: new Date(), author: 'gate-bot' })],
+  }))
+  expect(result.kind).toBe('needs_review')
+})
+
 // ── Auth gate ────────────────────────────────────────────────────────────
 
 function authInput(overrides: Partial<GateDecisionInput> = {}): GateDecisionInput {

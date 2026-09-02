@@ -16,21 +16,46 @@ export type GateConfig = {
   readonly authLabels: readonly string[]
   /** Label that unconditionally holds a PR for a human. Default: 'needs-human'. */
   readonly needsHumanLabel: string
-  /** GitHub comment-author login (lowercased) -> vendor. A verdict comment
-   *  only counts if its AUTHOR is a key here — the vendor used for every
-   *  gating rule (differs-from-implementer, latest-per-vendor, the auth
-   *  gate's two-distinct-vendor count) is this mapped vendor, never the
-   *  free-text vendor name the comment's own header claims. The header is
-   *  formatting, not an identity: without this check, anyone who can
-   *  comment on the PR (including its own author) could post
-   *  `## Reviewer agent (Codex)` / `Verdict: approve as-is` and satisfy
-   *  the gate. Include the gate loop's own posting identity here, mapped
-   *  to its configured Reviewer's vendor — otherwise its own posted review
-   *  never counts as a verdict, nothing merges, and every PR stays at
-   *  `needs_review` after one attempted review (`reviewedHeads` persistence
-   *  prevents a repeat review; it does not make the verdict count).
+  /** GitHub comment-author login (lowercased) -> vendor, OR -> an array of
+   *  vendors when a single posting identity legitimately posts reviews for
+   *  more than one (e.g. the gate loop's own bot account, running both a
+   *  primary and a `secondReviewer` under one `GITHUB_TOKEN`). A verdict
+   *  comment only counts if its AUTHOR is a key here.
+   *
+   *  - String value: the vendor used for every gating rule
+   *    (differs-from-implementer, latest-per-vendor, the auth gate's
+   *    two-distinct-vendor count) is this mapped vendor UNCONDITIONALLY —
+   *    never the free-text vendor name the comment's own header claims.
+   *  - Array value: the vendor comes from the comment's own header text
+   *    instead, but ONLY when that header names one of the vendors this
+   *    login is listed for (case-insensitive) — a header naming anything
+   *    else is rejected outright, not attributed to the first entry or any
+   *    other default. This is what lets one posting identity be trusted
+   *    for multiple vendors without letting it (or anyone impersonating
+   *    its comments) claim an arbitrary vendor by simply writing a
+   *    different header.
+   *
+   *  Either way, the header is formatting, not an identity on its own:
+   *  without an entry here, anyone who can comment on the PR (including its
+   *  own author) could post `## Reviewer agent (Codex)` /
+   *  `Verdict: approve as-is` and satisfy the gate. Include the gate loop's
+   *  own posting identity here, mapped to its configured Reviewer's vendor
+   *  (and its `secondReviewer`'s vendor too, as an array, if one is
+   *  configured) — otherwise a posted review never counts as a verdict,
+   *  nothing merges, and every PR stays at `needs_review`/`blocked` after
+   *  one attempted review (`reviewedHeads` persistence prevents a repeat
+   *  review; it does not make the verdict count).
    *  Default `{}` is fail-closed: no comment is trusted until configured. */
-  readonly trustedReviewers: Readonly<Record<string, string>>
+  readonly trustedReviewers: Readonly<Record<string, string | readonly string[]>>
+  /** Vendor name of a second `Reviewer` the gate loop should also run, in
+   *  addition to the primary, on any PR carrying an `authLabels` label —
+   *  so an auth-sensitive PR can collect the two independent-vendor
+   *  `approve as-is` verdicts the auth gate below requires without a human
+   *  or a separate process triggering the second review by hand. Optional;
+   *  unset means only the primary reviewer ever runs automatically. This
+   *  is loop scheduling, not a gating rule: it never changes what
+   *  `decideGate` itself decides (see `packages/orchestrator/src/gate/loop.ts`). */
+  readonly secondReviewer?: string
 }
 
 export const DEFAULT_GATE_CONFIG: GateConfig = {
@@ -69,7 +94,7 @@ export type GateDecisionInput = {
 
 const RUNTIME_SIGN_IN_CHECK_RE = /runtime sign-in check/i
 
-type ValidVerdict = {
+export type ValidVerdict = {
   readonly vendor: string
   readonly decision: VerdictDecision
   readonly id: string
@@ -112,19 +137,46 @@ function compareCommentOrder(a: { id: string; createdAt: Date }, b: { id: string
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
+/** Resolves the trusted vendor for a comment from `config.trustedReviewers`,
+ *  given its author and the vendor name its own header claims. Returns
+ *  `null` when the comment does not count as a verdict from ANY vendor:
+ *
+ *  - The author isn't a key in `trustedReviewers` at all.
+ *  - The author is trusted for multiple vendors (an array value) but the
+ *    header names something outside that list — this is what stops a
+ *    spoofed header from claiming a DIFFERENT vendor than the one that
+ *    actually posted, even from an otherwise-trusted multi-vendor login.
+ *
+ *  A string value is returned unconditionally — the mapped vendor, never
+ *  whatever the header itself claims (see `GateConfig.trustedReviewers`). */
+function resolveTrustedVendor(config: GateConfig, author: string, headerVendor: string): string | null {
+  const allowed = config.trustedReviewers[author.toLowerCase()]
+  if (allowed === undefined) return null
+
+  if (typeof allowed === 'string') return allowed
+
+  const headerVendorLower = headerVendor.toLowerCase()
+  return allowed.find(vendor => vendor.toLowerCase() === headerVendorLower) ?? null
+}
+
 /** Latest valid verdict per vendor (by createdAt, then comment id to break
  *  a same-second tie), keyed case-insensitively. The vendor identity comes
- *  from `config.trustedReviewers[comment.author]` — never from the
- *  comment's own header text — so an untrusted author's comment is
- *  skipped entirely, regardless of how well-formed it looks. */
-function latestValidVerdictsByVendor(input: GateDecisionInput, config: GateConfig): ValidVerdict[] {
+ *  from `resolveTrustedVendor` (author identity, plus the header only when
+ *  the author is trusted for more than one vendor) — never from the
+ *  comment's own header text alone — so an untrusted author's comment, or
+ *  a trusted-but-out-of-list header claim, is skipped entirely, regardless
+ *  of how well-formed it looks. Exported for the gate loop's own auth-PR
+ *  review-scheduling logic, which needs the same "is there already a
+ *  blocking verdict for this head?" answer `decideGate` computes, without
+ *  duplicating this resolution logic. */
+export function latestValidVerdictsByVendor(input: GateDecisionInput, config: GateConfig): ValidVerdict[] {
   const byVendor = new Map<string, ValidVerdict>()
 
   for (const comment of input.comments) {
     const parsed = parseVerdictComment(comment.body)
     if (!parsed) continue
 
-    const trustedVendor = config.trustedReviewers[comment.author.toLowerCase()]
+    const trustedVendor = resolveTrustedVendor(config, comment.author, parsed.vendor)
     if (!trustedVendor) continue
 
     if (!isValidForHead(trustedVendor, parsed.shas, input.implementerVendor, input.pr.headSha)) continue

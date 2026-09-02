@@ -1,11 +1,8 @@
 // Thin, label-bound wrapper around @floor-agents/core's shared worktree
-// lifecycle (extracted there once @floor-agents/antigravity-cli needed
-// byte-for-byte the same behavior — see that package's src/worktree.ts for
-// its own wrapper, and core's src/review/worktree.ts for the shared
-// implementation and full doc comments). Re-exported from this package's
-// index.ts so existing callers/tests importing `resolveWorktree`/
-// `GitRunner`/`ResolvedWorktree` from `@floor-agents/codex-cli` keep working
-// unchanged.
+// lifecycle (see @floor-agents/codex-cli's own src/worktree.ts for the
+// sibling wrapper, and core's src/review/worktree.ts for the shared
+// implementation and full doc comments) — this package never duplicates
+// that ~100-line lifecycle, only binds its own label to it.
 
 import { resolveWorktree as sharedResolveWorktree } from '@floor-agents/core'
 import type { GitRunner, ResolvedWorktree } from '@floor-agents/core'
@@ -21,5 +18,5 @@ export async function resolveWorktree(
   },
   deps: { readonly runGit?: GitRunner } = {},
 ): Promise<ResolvedWorktree> {
-  return sharedResolveWorktree({ ...input, label: 'CodexReviewer' }, deps)
+  return sharedResolveWorktree({ ...input, label: 'AntigravityReviewer' }, deps)
 }

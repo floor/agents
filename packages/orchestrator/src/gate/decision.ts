@@ -55,9 +55,27 @@ type ValidVerdict = {
   readonly createdAt: Date
 }
 
-/** A verdict comment is valid for the given head only if its vendor
- *  differs from the implementer, and either it names the head sha or (it
- *  names no sha at all and was posted after the head commit was made). */
+/** A verdict is current for the given head if it either names the head sha
+ *  (full or abbreviated) or names no sha at all and was posted after the
+ *  head commit was made — the staleness check for a push that happened
+ *  after the verdict but where the comment never mentioned a sha. Exported
+ *  for the gate loop's own "has this vendor already reviewed the head?"
+ *  dedup check, which needs the same currency rule but not the
+ *  vendor-differs-from-implementer half of validity. */
+export function isVerdictCurrentForHead(
+  shas: readonly string[],
+  createdAt: Date,
+  headSha: string,
+  headCommitDate: Date,
+): boolean {
+  const namesHead = shas.some(sha => headSha.toLowerCase().startsWith(sha))
+  if (namesHead) return true
+  if (shas.length === 0 && createdAt.getTime() > headCommitDate.getTime()) return true
+  return false
+}
+
+/** A verdict comment is valid for gating only if its vendor differs from
+ *  the implementer, and it is current for the head (see above). */
 function isValidForHead(
   vendor: string,
   shas: readonly string[],
@@ -67,11 +85,7 @@ function isValidForHead(
   headCommitDate: Date,
 ): boolean {
   if (vendor.toLowerCase() === implementerVendor.toLowerCase()) return false
-
-  const namesHead = shas.some(sha => headSha.toLowerCase().startsWith(sha))
-  if (namesHead) return true
-  if (shas.length === 0 && createdAt.getTime() > headCommitDate.getTime()) return true
-  return false
+  return isVerdictCurrentForHead(shas, createdAt, headSha, headCommitDate)
 }
 
 /** Latest valid verdict per vendor (by createdAt), keyed case-insensitively

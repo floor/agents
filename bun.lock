@@ -81,6 +81,7 @@
         "@floor-agents/github": "workspace:*",
         "@floor-agents/openai": "workspace:*",
         "@floor-agents/task": "workspace:*",
+        "yaml": "^2.7.1",
       },
     },
     "packages/task": {

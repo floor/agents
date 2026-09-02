@@ -11,6 +11,7 @@
     "@floor-agents/openai": "workspace:*",
     "@floor-agents/github": "workspace:*",
     "@floor-agents/task": "workspace:*",
-    "@floor-agents/context-builder": "workspace:*"
+    "@floor-agents/context-builder": "workspace:*",
+    "yaml": "^2.7.1"
   }
 }

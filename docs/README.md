@@ -6,6 +6,7 @@
 - [Phase 1 Spec](./Phase1-Specs_1.md) — detailed specification for the MVP implementation
 - [Getting Started](./getting-started.md) — setup, configuration, first run
 - [Configuration](./configuration.md) — YAML config reference, environment variables
+- [Review & Gate Mode](./review-gate.md) — watches external PRs, drives independent review, gates merge
 - [Known Issues](./known-issues.md) — tracked issues and their resolution status
 - [Next Steps](./next-steps.md) — prioritized roadmap after three sprints of dogfooding
 

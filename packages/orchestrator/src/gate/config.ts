@@ -40,10 +40,16 @@ function parseVendorConfig(raw: any): VendorAttributionConfig {
   }
 }
 
-function parseTrustedReviewers(raw: any): Record<string, string> {
-  const trusted: Record<string, string> = {}
-  for (const [login, vendor] of Object.entries(raw ?? {})) {
-    trusted[String(login).toLowerCase()] = String(vendor)
+/** A trustedReviewers value is either a single vendor name, or an array of
+ *  vendor names for a login that's trusted to post reviews for more than
+ *  one vendor (see GateConfig.trustedReviewers's doc comment in decision.ts
+ *  for why: e.g. the gate loop's own bot account posting both a primary and
+ *  a `secondReviewer` review under one GitHub identity). */
+function parseTrustedReviewers(raw: any): Record<string, string | readonly string[]> {
+  const trusted: Record<string, string | readonly string[]> = {}
+  for (const [login, value] of Object.entries(raw ?? {})) {
+    const key = String(login).toLowerCase()
+    trusted[key] = Array.isArray(value) ? value.map(v => String(v)) : String(value)
   }
   return trusted
 }
@@ -54,6 +60,7 @@ function parseGateConfig(raw: any): GateConfig {
     authLabels: raw.authLabels ?? DEFAULT_GATE_CONFIG.authLabels,
     needsHumanLabel: raw.needsHumanLabel ?? DEFAULT_GATE_CONFIG.needsHumanLabel,
     trustedReviewers: raw.trustedReviewers ? parseTrustedReviewers(raw.trustedReviewers) : DEFAULT_GATE_CONFIG.trustedReviewers,
+    secondReviewer: raw.secondReviewer !== undefined ? String(raw.secondReviewer) : undefined,
   }
 }
 

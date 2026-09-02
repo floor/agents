@@ -30,16 +30,8 @@ export class CodexProcessError extends Error {
   }
 }
 
-export class WorktreeMismatchError extends Error {
-  readonly dir: string
-  readonly expectedSha: string
-  readonly actualSha: string
-
-  constructor(message: string, dir: string, expectedSha: string, actualSha: string) {
-    super(message)
-    this.name = 'WorktreeMismatchError'
-    this.dir = dir
-    this.expectedSha = expectedSha
-    this.actualSha = actualSha
-  }
-}
+// WorktreeMismatchError moved to @floor-agents/core (see review/errors.ts)
+// once @floor-agents/antigravity-cli needed the exact same worktree
+// lifecycle and error type — re-exported from this package's index.ts so
+// `import { WorktreeMismatchError } from '@floor-agents/codex-cli'` keeps
+// working unchanged.

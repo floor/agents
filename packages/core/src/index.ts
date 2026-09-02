@@ -46,6 +46,13 @@ export type { ReviewInput, ReviewResult, Reviewer } from './types/reviewer.ts'
 export { createFakeReviewer } from './testing/fake-reviewer.ts'
 export type { FakeReviewerConfig } from './testing/fake-reviewer.ts'
 
+// Review worktree lifecycle — shared by Reviewer packages that need a git
+// worktree checked out at a PR's head commit (@floor-agents/codex-cli,
+// @floor-agents/antigravity-cli, ...). See review/worktree.ts.
+export { resolveWorktree } from './review/worktree.ts'
+export type { GitRunner, ResolvedWorktree, ResolveWorktreeInput } from './review/worktree.ts'
+export { WorktreeMismatchError } from './review/errors.ts'
+
 // Config
 export { loadCompanyConfig } from './config/loader.ts'
 export { validateCompanyConfig } from './config/validator.ts'

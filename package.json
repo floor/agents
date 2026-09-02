@@ -6,6 +6,7 @@
   "scripts": {
     "start": "bun run src/main.ts",
     "gate": "bun run src/gate.ts",
+    "gate-audit": "bun run scripts/gate-audit.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

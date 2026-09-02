@@ -5,6 +5,10 @@ import type {
   Commit,
   PullRequest,
   FileWrite,
+  PRDetails,
+  PRCommentEntry,
+  CheckStatus,
+  MergeOptions,
 } from '@floor-agents/core'
 
 export type GitHubAdapterConfig = {
@@ -30,7 +34,9 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
   const baseUrl = config.baseUrl ?? DEFAULT_BASE_URL
   const { token, owner } = config
 
-  async function api(path: string, opts?: RequestInit & { raw?: boolean }): Promise<any> {
+  const MAX_429_RETRIES = 3
+
+  async function api(path: string, opts?: RequestInit & { raw?: boolean }, attempt = 0): Promise<any> {
     const startTime = Date.now()
     const fullUrl = `${baseUrl}${path}`
     const method = opts?.method || 'GET'
@@ -48,24 +54,37 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
 
       const duration = Date.now() - startTime
 
-      if (res.status === 429) {
+      // Retry a bounded number of times, honoring Retry-After when GitHub
+      // sends one. After MAX_429_RETRIES, stop retrying silently and fall
+      // through to the normal error path below — a persistent 429 must
+      // surface as a thrown GitHubError so the gate loop's own backoff
+      // (packages/orchestrator/src/gate/loop.ts) can see and react to it,
+      // rather than this function retrying forever with nothing to show
+      // for it at the caller.
+      if (res.status === 429 && attempt < MAX_429_RETRIES) {
         const retryAfter = res.headers.get('retry-after')
         const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 5000
-        console.log(`[github] ${method} ${path} -> 429 (${duration}ms): Rate limited, retrying in ${delay}ms`)
+        console.log(`[github] ${method} ${path} -> 429 (${duration}ms): rate limited, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_429_RETRIES})`)
         await new Promise(r => setTimeout(r, delay))
-        return api(path, opts)
+        return api(path, opts, attempt + 1)
       }
 
-      if (opts?.raw) {
-        console.log(`[github] ${method} ${path} -> ${res.status} (${duration}ms)`)
-        return res
-      }
-
+      // The ok-check runs BEFORE the raw early-return: an exhausted 429 (or
+      // any other error status) must throw a typed GitHubError regardless
+      // of `raw`, so callers like getPRDiff (which uses raw: true) surface
+      // it the same way every other method does — otherwise the gate
+      // loop's backoff (packages/orchestrator/src/gate/loop.ts) never
+      // observes the failure, and the error body gets treated as data.
       if (!res.ok) {
         const text = await res.text()
         const errorMessage = `GitHub API ${res.status}: ${text}`
         console.error(`[github] ${method} ${path} -> ${res.status} (${duration}ms): ${text}`)
         throw new GitHubError(errorMessage, res.status, path)
+      }
+
+      if (opts?.raw) {
+        console.log(`[github] ${method} ${path} -> ${res.status} (${duration}ms)`)
+        return res
       }
 
       console.log(`[github] ${method} ${path} -> ${res.status} (${duration}ms)`)
@@ -100,6 +119,23 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
         403,
         `/repos/${owner}/${repo}/git/refs/heads/${branch}`,
       )
+    }
+  }
+
+  function toPRDetails(data: any): PRDetails {
+    return {
+      id: String(data.number),
+      url: data.html_url,
+      title: data.title,
+      body: data.body ?? '',
+      headSha: data.head.sha,
+      headRef: data.head.ref,
+      baseRef: data.base.ref,
+      authorLogin: data.user?.login ?? '',
+      labels: (data.labels as any[]).map((l: any) => (typeof l === 'string' ? l : l.name)),
+      draft: Boolean(data.draft),
+      createdAt: new Date(data.created_at),
+      updatedAt: new Date(data.updated_at),
     }
   }
 
@@ -264,10 +300,14 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
       })
     },
 
-    async mergePR(repo, prId) {
+    async mergePR(repo, prId, options?: MergeOptions) {
+      const body: Record<string, unknown> = { merge_method: 'squash' }
+      if (options?.commitTitle) body.commit_title = options.commitTitle
+      if (options?.commitMessage) body.commit_message = options.commitMessage
+
       await api(`/repos/${owner}/${repo}/pulls/${prId}/merge`, {
         method: 'PUT',
-        body: JSON.stringify({ merge_method: 'squash' }),
+        body: JSON.stringify(body),
       })
     },
 
@@ -281,6 +321,111 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
         author: c.commit.author.name,
         date: new Date(c.commit.author.date),
       }))
+    },
+
+    async listOpenPRs(repo) {
+      const results: PRDetails[] = []
+      let page = 1
+      // Paginate defensively: a busy repo can have more than one page of open PRs.
+      while (true) {
+        const data = await api(`/repos/${owner}/${repo}/pulls?state=open&per_page=100&page=${page}`)
+        const items = data as any[]
+        results.push(...items.map(toPRDetails))
+        if (items.length < 100) break
+        page++
+      }
+      return results
+    },
+
+    async getPR(repo, prId) {
+      try {
+        const data = await api(`/repos/${owner}/${repo}/pulls/${prId}`)
+        return toPRDetails(data)
+      } catch (err) {
+        if (err instanceof GitHubError && err.status === 404) return null
+        throw err
+      }
+    },
+
+    async getCheckStatus(repo, sha): Promise<CheckStatus> {
+      const [statusData, checksData] = await Promise.all([
+        api(`/repos/${owner}/${repo}/commits/${sha}/status`),
+        api(`/repos/${owner}/${repo}/commits/${sha}/check-runs`),
+      ])
+
+      const results: CheckStatus[] = []
+
+      // Legacy combined "status" API (statuses/status contexts, e.g. external CI)
+      if (Array.isArray(statusData?.statuses) && statusData.statuses.length > 0) {
+        if (statusData.state === 'failure' || statusData.state === 'error') results.push('failure')
+        else if (statusData.state === 'success') results.push('success')
+        else results.push('pending')
+      }
+
+      // Checks API (GitHub Actions and check-run-based integrations)
+      for (const run of (checksData?.check_runs as any[]) ?? []) {
+        if (run.status !== 'completed') {
+          results.push('pending')
+        } else if (run.conclusion === 'success' || run.conclusion === 'neutral' || run.conclusion === 'skipped') {
+          results.push('success')
+        } else {
+          // failure, cancelled, timed_out, action_required, stale
+          results.push('failure')
+        }
+      }
+
+      // No checks configured at all: treat as pending, never as an implicit pass.
+      if (results.length === 0) return 'pending'
+      if (results.some(r => r === 'failure')) return 'failure'
+      if (results.every(r => r === 'success')) return 'success'
+      return 'pending'
+    },
+
+    async listComments(repo, prId) {
+      const results: PRCommentEntry[] = []
+      let page = 1
+      // Paginate: gate correctness depends on seeing every comment (e.g. a
+      // later "changes needed" on page 2 must not be missed because an
+      // earlier "approve as-is" on page 1 looked sufficient).
+      while (true) {
+        const data = await api(`/repos/${owner}/${repo}/issues/${prId}/comments?per_page=100&page=${page}`)
+        const items = data as any[]
+        results.push(...items.map((c: any): PRCommentEntry => ({
+          id: String(c.id),
+          author: c.user?.login ?? '',
+          body: c.body ?? '',
+          createdAt: new Date(c.created_at),
+        })))
+        if (items.length < 100) break
+        page++
+      }
+      return results
+    },
+
+    async addLabel(repo, prId, label) {
+      await api(`/repos/${owner}/${repo}/issues/${prId}/labels`, {
+        method: 'POST',
+        body: JSON.stringify({ labels: [label] }),
+      })
+    },
+
+    async removeLabel(repo, prId, label) {
+      try {
+        await api(`/repos/${owner}/${repo}/issues/${prId}/labels/${encodeURIComponent(label)}`, {
+          method: 'DELETE',
+        })
+      } catch (err) {
+        // Idempotent: 404 means the label wasn't present.
+        if (err instanceof GitHubError && err.status === 404) return
+        throw err
+      }
+    },
+
+    async getCommitDate(repo, sha) {
+      const data = await api(`/repos/${owner}/${repo}/commits/${sha}`)
+      // Committer date reflects when the commit entered the branch (survives
+      // rebases/amends), which is what "how stale is a verdict" cares about.
+      return new Date(data.commit.committer.date)
     },
   }
 }

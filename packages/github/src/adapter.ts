@@ -34,7 +34,9 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
   const baseUrl = config.baseUrl ?? DEFAULT_BASE_URL
   const { token, owner } = config
 
-  async function api(path: string, opts?: RequestInit & { raw?: boolean }): Promise<any> {
+  const MAX_429_RETRIES = 3
+
+  async function api(path: string, opts?: RequestInit & { raw?: boolean }, attempt = 0): Promise<any> {
     const startTime = Date.now()
     const fullUrl = `${baseUrl}${path}`
     const method = opts?.method || 'GET'
@@ -52,12 +54,19 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
 
       const duration = Date.now() - startTime
 
-      if (res.status === 429) {
+      // Retry a bounded number of times, honoring Retry-After when GitHub
+      // sends one. After MAX_429_RETRIES, stop retrying silently and fall
+      // through to the normal error path below — a persistent 429 must
+      // surface as a thrown GitHubError so the gate loop's own backoff
+      // (packages/orchestrator/src/gate/loop.ts) can see and react to it,
+      // rather than this function retrying forever with nothing to show
+      // for it at the caller.
+      if (res.status === 429 && attempt < MAX_429_RETRIES) {
         const retryAfter = res.headers.get('retry-after')
         const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 5000
-        console.log(`[github] ${method} ${path} -> 429 (${duration}ms): Rate limited, retrying in ${delay}ms`)
+        console.log(`[github] ${method} ${path} -> 429 (${duration}ms): rate limited, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_429_RETRIES})`)
         await new Promise(r => setTimeout(r, delay))
-        return api(path, opts)
+        return api(path, opts, attempt + 1)
       }
 
       if (opts?.raw) {

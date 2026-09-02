@@ -21,6 +21,7 @@ function makeState(overrides: Partial<GatePrState> = {}): GatePrState {
     decisionKind: 'needs_review',
     reason: 'no valid approve-as-is verdict yet',
     merged: false,
+    reviewedHeads: {},
     updatedAt: new Date().toISOString(),
     ...overrides,
   }
@@ -59,6 +60,14 @@ test('overwrites existing state for the same repo + PR', async () => {
   expect(loaded!.decisionKind).toBe('mergeable')
   expect(loaded!.headSha).toBe('b'.repeat(40))
   expect(loaded!.merged).toBe(true)
+})
+
+test('persists and retrieves reviewedHeads', async () => {
+  const store = createGateStateStore(TEST_DIR)
+  await store.save(makeState({ reviewedHeads: { [`${'a'.repeat(40)}`]: ['codex', 'gemini'] } }))
+
+  const loaded = await store.get('acme/widgets', '42')
+  expect(loaded!.reviewedHeads).toEqual({ [`${'a'.repeat(40)}`]: ['codex', 'gemini'] })
 })
 
 test('returns null and logs rather than throwing on a corrupt state file', async () => {

@@ -3,7 +3,6 @@ import { decideGate, DEFAULT_GATE_CONFIG, type GateDecisionInput, type GateConfi
 
 const HEAD_SHA = 'deadbeef00112233445566778899aabbccddeeff'
 const HEAD_SHORT = HEAD_SHA.slice(0, 7)
-const HEAD_COMMIT_DATE = new Date('2026-01-10T00:00:00Z')
 
 // Trusted comment-author logins used across these tests, mapped to the
 // vendor they're trusted for — the same shape a real GateConfig.trustedReviewers
@@ -17,22 +16,28 @@ const TRUSTED_REVIEWERS: Record<string, string> = {
 
 const TEST_CONFIG: GateConfig = { ...DEFAULT_GATE_CONFIG, trustedReviewers: TRUSTED_REVIEWERS }
 
+let nextCommentId = 1
+
 function approveComment(
   vendor: string,
-  opts: { sha?: string; createdAt: Date; decision?: string; author?: string } = { createdAt: new Date() },
+  opts: { sha?: string; createdAt: Date; decision?: string; author?: string; id?: string } = { createdAt: new Date() },
 ) {
   const decision = opts.decision ?? 'approve as-is'
   const lines = [`## Reviewer agent (${vendor})`, '']
   if (opts.sha) lines.push(`Reviewed at ${opts.sha}.`)
   lines.push(`Verdict: ${decision}`)
-  return { author: opts.author ?? `${vendor.toLowerCase()}-bot`, body: lines.join('\n'), createdAt: opts.createdAt }
+  return {
+    id: opts.id ?? String(nextCommentId++),
+    author: opts.author ?? `${vendor.toLowerCase()}-bot`,
+    body: lines.join('\n'),
+    createdAt: opts.createdAt,
+  }
 }
 
 function baseInput(overrides: Partial<GateDecisionInput> = {}): GateDecisionInput {
   return {
     pr: { labels: [], draft: false, headSha: HEAD_SHA, body: 'A normal PR body.' },
     implementerVendor: 'human',
-    headCommitDate: HEAD_COMMIT_DATE,
     checkStatus: 'success',
     comments: [],
     config: TEST_CONFIG,
@@ -133,7 +138,7 @@ test('vendor comparison is case-insensitive', () => {
   expect(result.kind).toBe('needs_review')
 })
 
-test('a verdict naming a different (stale) sha does not count, even if posted after the head commit', () => {
+test('a verdict naming a different (stale) sha does not count', () => {
   const staleSha = 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1'
   const result = decideGate(baseInput({
     comments: [approveComment('codex', { sha: staleSha, createdAt: new Date('2026-02-01') })],
@@ -141,21 +146,28 @@ test('a verdict naming a different (stale) sha does not count, even if posted af
   expect(result.kind).toBe('needs_review')
 })
 
-test('a sha-less verdict posted BEFORE the head commit is stale and does not count', () => {
+// ── Naming the head sha is mandatory — no date-based fallback ────────────
+//
+// A verdict that never names a sha at all does not count, no matter when
+// it was posted. This closes a real hole: without this rule, a verdict
+// posted before a force-push to an OLDER commit could still read as
+// "posted after the (old) head's commit date" and incorrectly carry over.
+
+test('a sha-less verdict never counts, however recently it was posted', () => {
   const result = decideGate(baseInput({
-    comments: [approveComment('codex', { createdAt: new Date('2026-01-05') })], // before HEAD_COMMIT_DATE
+    comments: [approveComment('codex', { createdAt: new Date() })], // no `sha` at all
   }))
   expect(result.kind).toBe('needs_review')
 })
 
-test('a sha-less verdict posted AFTER the head commit counts as valid for the head', () => {
+test('a sha-less verdict does not block either: it simply does not count', () => {
   const result = decideGate(baseInput({
-    comments: [approveComment('codex', { createdAt: new Date('2026-01-15') })], // after HEAD_COMMIT_DATE
+    comments: [approveComment('codex', { createdAt: new Date(), decision: 'changes needed' })],
   }))
-  expect(result).toEqual({ kind: 'mergeable' })
+  expect(result.kind).toBe('needs_review')
 })
 
-test('only the latest verdict per vendor counts: a later approval supersedes an earlier "changes needed"', () => {
+test('only the latest valid verdict per vendor counts: a later approval supersedes an earlier "changes needed"', () => {
   const result = decideGate(baseInput({
     comments: [
       approveComment('codex', { sha: HEAD_SHA, createdAt: new Date('2026-01-11'), decision: 'changes needed' }),
@@ -165,7 +177,7 @@ test('only the latest verdict per vendor counts: a later approval supersedes an 
   expect(result).toEqual({ kind: 'mergeable' })
 })
 
-test('only the latest verdict per vendor counts: a later "changes needed" supersedes an earlier approval', () => {
+test('only the latest valid verdict per vendor counts: a later "changes needed" supersedes an earlier approval', () => {
   const result = decideGate(baseInput({
     comments: [
       approveComment('codex', { sha: HEAD_SHA, createdAt: new Date('2026-01-11') }),
@@ -173,6 +185,40 @@ test('only the latest verdict per vendor counts: a later "changes needed" supers
     ],
   }))
   expect(result.kind).toBe('blocked')
+})
+
+test('a same-second tie between two verdicts from the same vendor is broken by comment id: approve then changes-needed blocks', () => {
+  const t = new Date('2026-01-11T00:00:00.000Z')
+  const result = decideGate(baseInput({
+    comments: [
+      approveComment('codex', { sha: HEAD_SHA, createdAt: t, id: '100' }),
+      approveComment('codex', { sha: HEAD_SHA, createdAt: t, id: '101', decision: 'changes needed' }),
+    ],
+  }))
+  expect(result.kind).toBe('blocked')
+})
+
+test('a same-second tie between two verdicts from the same vendor is broken by comment id: changes-needed then approve merges', () => {
+  const t = new Date('2026-01-11T00:00:00.000Z')
+  const result = decideGate(baseInput({
+    comments: [
+      approveComment('codex', { sha: HEAD_SHA, createdAt: t, id: '100', decision: 'changes needed' }),
+      approveComment('codex', { sha: HEAD_SHA, createdAt: t, id: '101' }),
+    ],
+  }))
+  expect(result).toEqual({ kind: 'mergeable' })
+})
+
+test('the tie-break is by id order, not comment array order', () => {
+  const t = new Date('2026-01-11T00:00:00.000Z')
+  // The higher-id (later) comment appears FIRST in the array; it must still win.
+  const result = decideGate(baseInput({
+    comments: [
+      approveComment('codex', { sha: HEAD_SHA, createdAt: t, id: '101' }),
+      approveComment('codex', { sha: HEAD_SHA, createdAt: t, id: '100', decision: 'changes needed' }),
+    ],
+  }))
+  expect(result).toEqual({ kind: 'mergeable' })
 })
 
 test('structural label alone uses the same rule as the default gate', () => {

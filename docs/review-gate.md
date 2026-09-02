@@ -22,15 +22,22 @@ Every `pollIntervalMs` (default 60s), for each configured repo:
    login in `excludeAuthors` — put this process's own posting identity
    there so it never reviews or merges its own PRs.
 2. For each remaining PR, compute a gate decision (`decideGate`, pure, no
-   I/O) from its labels, draft flag, check status, comments, and the head
-   commit's date.
+   I/O) from its labels, draft flag, check status, and comments.
 3. Act on the decision:
    - **`needs_review`** — if the configured `Reviewer`'s vendor hasn't
-     already posted a current, *trusted* verdict for this head (and isn't
-     the same vendor as the PR's implementer), build a prompt from
+     already been asked to review this exact head (and isn't the same
+     vendor as the PR's implementer), build a prompt from
      `promptTemplatePath` plus the PR's title/body/base/head/changed-file
      list, call `Reviewer.review()`, and post the returned text **as-is**
-     as a PR comment. It is never edited, summarized, or re-wrapped.
+     as a PR comment — unless it's malformed (no valid header/verdict
+     line), in which case nothing is posted, but the attempt is still
+     recorded so a broken reviewer response doesn't get retried every
+     pass. Either way, it's never edited, summarized, or re-wrapped.
+     "Already asked" is tracked in persisted per-PR state
+     (`reviewedHeads`), not by re-scanning live comments — a comment
+     later deleted, a malformed response, or a `trustedReviewers` mapping
+     that changes afterward can't cause the same head to be re-reviewed
+     forever.
    - **`mergeable`** — squash-merge (`GitAdapter.mergePR`) if
      `mergeEnabled` is true; otherwise log `DRY RUN would merge #<n> at
      <sha>` and do nothing. **Dry run is the default.**
@@ -39,8 +46,15 @@ Every `pollIntervalMs` (default 60s), for each configured repo:
      PR is waiting on CI, on being marked ready for review, or on the
      `needs-human` label being lifted.)
 4. Log one line per PR: repo, head sha, implementer vendor, decision kind,
-   and reason. Persist the decision to `stateDir` so a restart doesn't
-   double-merge or double-review.
+   and reason. Persist the decision (and `reviewedHeads`) to `stateDir` so
+   a restart doesn't double-merge or double-review.
+
+On a 403/429 from GitHub, the outer poll loop backs off the delay before
+its next pass — compounding across consecutive rate-limit failures (2x,
+4x, 8x, ... up to a 30-minute cap) and resetting on the next successful
+pass. The GitHub adapter itself retries a 429 a bounded number of times
+first (honoring `Retry-After`); only once those retries are exhausted
+does the error reach the loop's own backoff.
 
 ## The verdict contract
 
@@ -90,24 +104,37 @@ only counts if:
 `trustedReviewers` defaults to `{}` — fail-closed: nothing is trusted
 until you configure it. That must include the gate loop's **own** posting
 identity (the account `GITHUB_TOKEN` posts as), mapped to the configured
-`Reviewer`'s vendor — otherwise the loop can never recognize its own
-posted review as valid and will re-review the same head every single
-poll. See `config/gate/gate.example.yaml`.
+`Reviewer`'s vendor — otherwise `decideGate` can never see its own posted
+review as a valid, trusted verdict, and the PR sits at `needs_review`
+forever. (This doesn't cause repeat reviews, since the loop's own
+`reviewedHeads` dedup — see "How it works" above — is independent of
+`trustedReviewers`; it just means the review gets posted once and then
+never counts toward merging.) See `config/gate/gate.example.yaml`.
 
 ## Verdict validity ("is this verdict for the *current* head?")
 
-A verdict from a trusted author only counts toward a decision if it is
-**current for the head**: it either names the head sha (full or
-abbreviated, 7-40 hex chars extracted from anywhere in the comment), or it
-names no sha at all *and* was posted after the head commit's own date.
-This lets a plain "LGTM" style verdict count without insisting every
-reviewer paste a sha, while still treating a verdict as stale once a new
-commit lands after it — a push invalidates it, for every gate, not just
-the auth gate.
+A verdict from a trusted author only counts toward a decision if it
+**names the head sha** — full or abbreviated (7-40 hex chars extracted
+from anywhere in the comment), matched as a prefix of the actual head
+sha. **Naming the head sha is mandatory: there is no fallback for a
+verdict that names no sha at all.** The shipped review prompt template
+(`config/gate/review-prompt.md`) tells the reviewer this explicitly.
 
-The **latest** valid verdict per vendor is what counts; an earlier
-`changes needed` from a vendor is superseded by that same vendor's later
-`approve as-is` (and vice versa).
+This is deliberate, not an oversight: an earlier version of this rule let
+a sha-less verdict count if it was merely posted after the head commit's
+own date, on the theory that a plain "LGTM" without a sha still obviously
+meant the current head. That fallback was a real hole — a verdict posted
+before a force-push to an *older* commit could still read as "posted
+after that (older) head's own date" and incorrectly carry an approval
+over to a commit the reviewer never saw. A sha-less verdict now simply
+never counts, for any gate; the PR just sits at `needs_review` until a
+reviewer names the commit it reviewed.
+
+The **latest** valid verdict per vendor is what counts (by comment
+timestamp, with the comment id breaking a same-second tie — GitHub ids
+are monotonically increasing); an earlier `changes needed` from a vendor
+is superseded by that same vendor's later `approve as-is` (and vice
+versa).
 
 ## Vendor attribution
 

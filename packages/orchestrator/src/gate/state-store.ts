@@ -16,6 +16,14 @@ export type GatePrState = {
   /** Set once a squash-merge for this head has actually been issued, so a
    *  later poll (before GitHub's PR list catches up) never re-merges. */
   readonly merged: boolean
+  /** Head sha -> vendors that have been ASKED to review it (Reviewer.review()
+   *  was called for that vendor on that head), regardless of what happened
+   *  to the result afterward — a malformed response, a deleted comment, or
+   *  a since-changed trustedReviewers mapping must never cause a repeat
+   *  review of the same head. This is the loop's own dedup record, kept
+   *  deliberately separate from decideGate()'s live view of currently
+   *  valid/trusted verdict comments. */
+  readonly reviewedHeads: Readonly<Record<string, readonly string[]>>
   readonly updatedAt: string
 }
 

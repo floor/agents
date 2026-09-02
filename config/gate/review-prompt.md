@@ -31,6 +31,13 @@ Head branch: {{headRef}} ({{headSha}})
    Nothing else satisfies the gate: a missing header or a verdict line
    that doesn't match one of those three exactly does not count as a
    review.
+5. **You MUST name the exact commit you reviewed somewhere in your
+   response** — write out the full head sha `{{headSha}}` at least once
+   (for example: "Reviewed at {{headSha}}."). This is mandatory, not
+   optional: a verdict that never names a sha does not count toward the
+   gate at all, however it's worded and however recently it was posted.
+   If the PR is pushed to again after your review, your verdict stops
+   applying to the new head automatically — there is no grace period.
 
 Only give `approve as-is` if you would be comfortable merging this exactly
 as it stands.

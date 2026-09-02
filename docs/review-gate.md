@@ -245,14 +245,24 @@ optional — an unset one keeps the package's own default. `GATE_CODEX_CLONE_PAT
 in particular has to be set for `codex` review to actually run: the gate
 loop always calls `reviewer.review()` without a `worktreePath`, so the
 package needs `clonePath` to create its own detached worktree per review.
+`GATE_CODEX_TIMEOUT_MS`, if set, must be a plain positive decimal integer
+(milliseconds) — `"900000"`, not `"15m"`/`"1e5"`/`"900000.0"` — anything
+else is rejected with a clear error before the reviewer is ever constructed.
+An env var that is explicitly set to an empty string counts as set (not the
+same as unset) and is passed straight through to the package's own
+validation, which rejects an empty `binary`/`model`/`profile`/`clonePath`/
+`worktreeRoot` the same as any other malformed value.
 
 ## Running it against your own repo
 
 ```bash
 cp .env.example .env
-# Edit .env: GITHUB_TOKEN, GITHUB_OWNER=<your org>, and point
-# GATE_CONFIG_PATH at a copy of config/gate/gate.example.yaml with your
-# own repos/labels/vendor rules filled in.
+# Edit .env: GITHUB_TOKEN, GITHUB_OWNER=<your org>, GATE_CODEX_CLONE_PATH
+# (a local clone of the target repo — required for GATE_REVIEWER=codex,
+# the default, since the gate loop always reviews via an auto-created
+# worktree), and point GATE_CONFIG_PATH at a copy of
+# config/gate/gate.example.yaml with your own repos/labels/vendor rules
+# filled in.
 bun run gate
 ```
 

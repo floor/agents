@@ -74,6 +74,32 @@ test('trustedReviewers accepts an array value for a login trusted for multiple v
   }
 })
 
+test('a "__proto__" login key in trustedReviewers does not pollute the parsed object\'s prototype', async () => {
+  const { mkdir, writeFile, rm } = await import('node:fs/promises')
+  const dir = './data/test-gate-config-proto-pollution'
+  await mkdir(dir, { recursive: true })
+  const path = `${dir}/gate.yaml`
+  try {
+    // A malicious (or just malformed) config entry keyed "__proto__",
+    // mapped to an array. On a plain `{}`-based accumulator, assigning to
+    // the "__proto__" key changes the OBJECT'S PROTOTYPE rather than
+    // creating an own property — every other property lookup on that
+    // object (e.g. resolving an unrelated, never-configured login) would
+    // then inherit from that array. Object.create(null) closes this.
+    await writeFile(path, 'repos: [r]\ngate:\n  trustedReviewers:\n    __proto__:\n      - codex\n    real-bot: gemini\n')
+    const config = await loadGateConfig(path, {})
+
+    // The "__proto__" entry became an ordinary own property (or was
+    // otherwise inert) — it must NOT have changed the object's actual
+    // prototype, which would make some unrelated key resolve through it.
+    expect(Object.getPrototypeOf(config.gate.trustedReviewers)).not.toEqual(['codex'])
+    expect(config.gate.trustedReviewers['some-unconfigured-login']).toBeUndefined()
+    expect(config.gate.trustedReviewers['real-bot']).toBe('gemini')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('gate.secondReviewer is parsed as a plain string, and is undefined when unset', async () => {
   const { mkdir, writeFile, rm } = await import('node:fs/promises')
   const dir = './data/test-gate-config-second-reviewer'

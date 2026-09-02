@@ -5,7 +5,7 @@
 // default) never calls GitAdapter.mergePR.
 
 import type { GitAdapter, PRDetails, Reviewer } from '@floor-agents/core'
-import { decideGate, isVerdictCurrentForHead, type GateDecision } from './decision.ts'
+import { decideGate, type GateDecision } from './decision.ts'
 import { parseVerdictComment } from './verdict.ts'
 import { attributeImplementerVendor } from './vendor.ts'
 import { buildReviewPrompt, extractChangedFiles } from './prompt.ts'
@@ -41,27 +41,32 @@ async function defaultLoadPromptTemplate(path: string): Promise<string> {
   return file.text()
 }
 
-/** Has `vendor` already posted a verdict comment that is current for this
- *  head? Used to avoid re-reviewing the same head twice, independent of
- *  whether that verdict was itself an approval — a "changes needed" review
- *  still counts as "already reviewed this head". Identity comes from
- *  `trustedReviewers[comment.author]`, the same rule decideGate() uses —
- *  an untrusted author's comment never counts, even if it claims to be
- *  from `vendor` in its header. */
-function hasVendorReviewedHead(
-  comments: readonly { author: string; body: string; createdAt: Date }[],
-  vendor: string,
+/** Adds `vendor` to the set of vendors that have reviewed `headSha`,
+ *  returning a new reviewedHeads map (never mutates the input). */
+function withReviewedHead(
+  reviewedHeads: Readonly<Record<string, readonly string[]>>,
   headSha: string,
-  headCommitDate: Date,
-  trustedReviewers: Readonly<Record<string, string>>,
+  vendor: string,
+): Record<string, readonly string[]> {
+  const existing = reviewedHeads[headSha] ?? []
+  if (existing.some(v => v.toLowerCase() === vendor.toLowerCase())) return { ...reviewedHeads }
+  return { ...reviewedHeads, [headSha]: [...existing, vendor] }
+}
+
+/** Has `vendor` already been asked to review `headSha`? This is deliberately
+ *  based on PERSISTED loop state (`reviewedHeads`, recorded the moment
+ *  Reviewer.review() was called), not on scanning live PR comments — a
+ *  live-comment scan would be fooled by a comment later deleted, a
+ *  reviewer response that failed to parse as a valid verdict, or a
+ *  trustedReviewers mapping that changed after the fact, any of which
+ *  would make the loop think "not yet reviewed" and call the reviewer
+ *  again every single pass. */
+function hasVendorReviewedHead(
+  reviewedHeads: Readonly<Record<string, readonly string[]>>,
+  headSha: string,
+  vendor: string,
 ): boolean {
-  return comments.some(c => {
-    const parsed = parseVerdictComment(c.body)
-    if (!parsed) return false
-    const trustedVendor = trustedReviewers[c.author.toLowerCase()]
-    if (!trustedVendor || trustedVendor.toLowerCase() !== vendor.toLowerCase()) return false
-    return isVerdictCurrentForHead(parsed.shas, c.createdAt, headSha, headCommitDate)
-  })
+  return (reviewedHeads[headSha] ?? []).some(v => v.toLowerCase() === vendor.toLowerCase())
 }
 
 async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promise<void> {
@@ -74,22 +79,20 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
   )
 
   // decideGate() checks the draft flag and the needs-human label before it
-  // ever looks at comments/checks/commit-date, so a PR we already know will
-  // just "hold" skips those GitHub API calls entirely.
+  // ever looks at comments/checks, so a PR we already know will just
+  // "hold" skips those GitHub API calls entirely.
   const skipFetch = pr.draft || pr.labels.includes(config.gate.needsHumanLabel)
 
-  const [comments, checkStatus, headCommitDate] = skipFetch
-    ? [[] as { body: string; author: string; id: string; createdAt: Date }[], 'pending' as const, new Date(0)]
+  const [comments, checkStatus] = skipFetch
+    ? [[] as { id: string; body: string; author: string; createdAt: Date }[], 'pending' as const]
     : await Promise.all([
         git.listComments(repo, pr.id),
         git.getCheckStatus(repo, pr.headSha),
-        git.getCommitDate(repo, pr.headSha),
       ])
 
   const decision = decideGate({
     pr: { labels: pr.labels, draft: pr.draft, headSha: pr.headSha, body: pr.body },
     implementerVendor,
-    headCommitDate,
     checkStatus,
     comments,
     config: config.gate,
@@ -105,12 +108,13 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
   )
 
   let merged = prevState?.headSha === pr.headSha ? prevState.merged : false
+  let reviewedHeads = prevState?.reviewedHeads ?? {}
 
   if (decision.kind === 'needs_review') {
     if (reviewer.vendor.toLowerCase() === implementerVendor.toLowerCase()) {
       log(`[gate] ${repo}#${pr.id}: skipping review — configured reviewer vendor "${reviewer.vendor}" matches the implementer`)
-    } else if (hasVendorReviewedHead(comments, reviewer.vendor, pr.headSha, headCommitDate, config.gate.trustedReviewers)) {
-      log(`[gate] ${repo}#${pr.id}: reviewer "${reviewer.vendor}" already reviewed head ${pr.headSha.slice(0, 7)}`)
+    } else if (hasVendorReviewedHead(reviewedHeads, pr.headSha, reviewer.vendor)) {
+      log(`[gate] ${repo}#${pr.id}: reviewer "${reviewer.vendor}" was already asked to review head ${pr.headSha.slice(0, 7)}`)
     } else {
       const diff = await git.getPRDiff(repo, pr.id)
       const template = deps.loadPromptTemplate
@@ -129,9 +133,19 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
       })
 
       const result = await reviewer.review({ repo, prNumber: pr.id, headSha: pr.headSha, prompt })
-      // Posted verbatim — never edited, summarized, or re-wrapped.
-      await git.addPRComment(repo, pr.id, result.text)
-      log(`[gate] ${repo}#${pr.id}: posted ${reviewer.vendor} review for head ${pr.headSha.slice(0, 7)}`)
+
+      // Record the attempt regardless of outcome — a malformed response, a
+      // comment later deleted, or a trustedReviewers mapping that changes
+      // must never cause this same head to be re-reviewed every pass.
+      reviewedHeads = withReviewedHead(reviewedHeads, pr.headSha, reviewer.vendor)
+
+      if (!parseVerdictComment(result.text)) {
+        log(`[gate] ${repo}#${pr.id}: reviewer "${reviewer.vendor}" returned malformed output for head ${pr.headSha.slice(0, 7)} (no valid header/verdict line) — not posted`)
+      } else {
+        // Posted verbatim — never edited, summarized, or re-wrapped.
+        await git.addPRComment(repo, pr.id, result.text)
+        log(`[gate] ${repo}#${pr.id}: posted ${reviewer.vendor} review for head ${pr.headSha.slice(0, 7)}`)
+      }
     }
   } else if (decision.kind === 'mergeable') {
     if (!config.mergeEnabled) {
@@ -156,6 +170,7 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
     decisionKind: decision.kind,
     reason: decisionReason(decision),
     merged,
+    reviewedHeads,
     updatedAt: new Date().toISOString(),
   })
 }
@@ -191,13 +206,19 @@ function isRateLimitError(err: unknown): boolean {
 }
 
 /** Runs `runGatePass` on `config.pollIntervalMs`, forever, until `stop()`
- *  is called. On a 403/429 from the GitAdapter, doubles the delay before
- *  the next pass (capped at 30 minutes) instead of hammering the API;
- *  a successful pass resets the delay back to the configured interval. */
+ *  is called. On a 403/429 from the GitAdapter, the delay before the next
+ *  pass compounds across CONSECUTIVE rate-limit failures — 2x, 4x, 8x, ...
+ *  up to a 30-minute cap — rather than a flat one-time doubling, so a
+ *  sustained rate limit actually backs off instead of retrying at the
+ *  same doubled interval forever. A successful pass resets the streak
+ *  (and the delay) back to the configured interval; a non-rate-limit
+ *  failure does not reset it, since it says nothing about whether the
+ *  rate limit has cleared. */
 export function startGateLoop(deps: GateLoopDeps): GateLoopHandle {
   const log = deps.log ?? console.log
   let stopped = false
   let timer: ReturnType<typeof setTimeout> | null = null
+  let consecutiveRateLimitFailures = 0
 
   async function tick(): Promise<void> {
     if (stopped) return
@@ -205,10 +226,12 @@ export function startGateLoop(deps: GateLoopDeps): GateLoopHandle {
     let delay = deps.config.pollIntervalMs
     try {
       await runGatePass(deps)
+      consecutiveRateLimitFailures = 0
     } catch (err) {
       if (isRateLimitError(err)) {
-        delay = Math.min(deps.config.pollIntervalMs * 2, MAX_BACKOFF_MS)
-        log(`[gate] rate limited, backing off to ${delay}ms: ${(err as Error).message}`)
+        consecutiveRateLimitFailures++
+        delay = Math.min(deps.config.pollIntervalMs * 2 ** consecutiveRateLimitFailures, MAX_BACKOFF_MS)
+        log(`[gate] rate limited (${consecutiveRateLimitFailures} in a row), backing off to ${delay}ms: ${(err as Error).message}`)
       } else {
         log(`[gate] pass failed: ${(err as Error).message}`)
       }

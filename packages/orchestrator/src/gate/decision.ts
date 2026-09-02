@@ -45,6 +45,11 @@ export type GateDecisionPR = {
 }
 
 export type GateDecisionComment = {
+  /** GitHub comment id, as returned by the API. Used only to break a
+   *  same-timestamp tie between two comments (GitHub ids are monotonically
+   *  increasing, so a larger id is strictly later even when createdAt
+   *  reads identical to the second). */
+  readonly id: string
   /** GitHub login of the comment's author, as returned by the API — not
    *  anything the comment body itself claims. */
   readonly author: string
@@ -55,9 +60,6 @@ export type GateDecisionComment = {
 export type GateDecisionInput = {
   readonly pr: GateDecisionPR
   readonly implementerVendor: string
-  /** The head commit's own date (author/committer date on GitHub) — used
-   *  to decide whether a sha-less verdict still covers the current head. */
-  readonly headCommitDate: Date
   readonly checkStatus: CheckStatus
   readonly comments: readonly GateDecisionComment[]
   readonly config?: GateConfig
@@ -68,46 +70,51 @@ const RUNTIME_SIGN_IN_CHECK_RE = /runtime sign-in check/i
 type ValidVerdict = {
   readonly vendor: string
   readonly decision: VerdictDecision
+  readonly id: string
   readonly createdAt: Date
 }
 
-/** A verdict is current for the given head if it either names the head sha
- *  (full or abbreviated) or names no sha at all and was posted after the
- *  head commit was made — the staleness check for a push that happened
- *  after the verdict but where the comment never mentioned a sha. Exported
- *  for the gate loop's own "has this vendor already reviewed the head?"
- *  dedup check, which needs the same currency rule but not the
+/** A verdict names the given head only if one of its extracted shas is a
+ *  prefix match (full or abbreviated) for that head's sha. A verdict that
+ *  names no sha, or names a different sha, does NOT count — there is no
+ *  date-based fallback: a force-push to an older commit can never inherit
+ *  an approval that never named a sha, however recently it was posted.
+ *  Exported for the gate loop's own "has this vendor already reviewed the
+ *  head?" dedup check, which needs the same rule but not the
  *  vendor-differs-from-implementer half of validity. */
-export function isVerdictCurrentForHead(
-  shas: readonly string[],
-  createdAt: Date,
-  headSha: string,
-  headCommitDate: Date,
-): boolean {
-  const namesHead = shas.some(sha => headSha.toLowerCase().startsWith(sha))
-  if (namesHead) return true
-  if (shas.length === 0 && createdAt.getTime() > headCommitDate.getTime()) return true
-  return false
+export function verdictNamesHead(shas: readonly string[], headSha: string): boolean {
+  return shas.some(sha => headSha.toLowerCase().startsWith(sha))
 }
 
 /** A verdict comment is valid for gating only if its vendor differs from
- *  the implementer, and it is current for the head (see above). */
+ *  the implementer, and it names the head (see above). */
 function isValidForHead(
   vendor: string,
   shas: readonly string[],
-  createdAt: Date,
   implementerVendor: string,
   headSha: string,
-  headCommitDate: Date,
 ): boolean {
   if (vendor.toLowerCase() === implementerVendor.toLowerCase()) return false
-  return isVerdictCurrentForHead(shas, createdAt, headSha, headCommitDate)
+  return verdictNamesHead(shas, headSha)
 }
 
-/** Latest valid verdict per vendor (by createdAt), keyed case-insensitively.
- *  The vendor identity comes from `config.trustedReviewers[comment.author]`
- *  — never from the comment's own header text — so an untrusted author's
- *  comment is skipped entirely, regardless of how well-formed it looks. */
+/** Orders two comments by createdAt, breaking a tie by numeric comment id
+ *  (GitHub ids are monotonically increasing, so this is a reliable
+ *  same-second tiebreaker). Positive when `a` is later than `b`. */
+function compareCommentOrder(a: { id: string; createdAt: Date }, b: { id: string; createdAt: Date }): number {
+  const byTime = a.createdAt.getTime() - b.createdAt.getTime()
+  if (byTime !== 0) return byTime
+  const an = Number(a.id)
+  const bn = Number(b.id)
+  if (!Number.isNaN(an) && !Number.isNaN(bn)) return an - bn
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
+/** Latest valid verdict per vendor (by createdAt, then comment id to break
+ *  a same-second tie), keyed case-insensitively. The vendor identity comes
+ *  from `config.trustedReviewers[comment.author]` — never from the
+ *  comment's own header text — so an untrusted author's comment is
+ *  skipped entirely, regardless of how well-formed it looks. */
 function latestValidVerdictsByVendor(input: GateDecisionInput, config: GateConfig): ValidVerdict[] {
   const byVendor = new Map<string, ValidVerdict>()
 
@@ -118,19 +125,12 @@ function latestValidVerdictsByVendor(input: GateDecisionInput, config: GateConfi
     const trustedVendor = config.trustedReviewers[comment.author.toLowerCase()]
     if (!trustedVendor) continue
 
-    if (!isValidForHead(
-      trustedVendor,
-      parsed.shas,
-      comment.createdAt,
-      input.implementerVendor,
-      input.pr.headSha,
-      input.headCommitDate,
-    )) continue
+    if (!isValidForHead(trustedVendor, parsed.shas, input.implementerVendor, input.pr.headSha)) continue
 
     const key = trustedVendor.toLowerCase()
     const existing = byVendor.get(key)
-    if (!existing || comment.createdAt.getTime() > existing.createdAt.getTime()) {
-      byVendor.set(key, { vendor: trustedVendor, decision: parsed.decision, createdAt: comment.createdAt })
+    if (!existing || compareCommentOrder(comment, existing) > 0) {
+      byVendor.set(key, { vendor: trustedVendor, decision: parsed.decision, id: comment.id, createdAt: comment.createdAt })
     }
   }
 

@@ -52,6 +52,21 @@ test('vendor is "codex"', () => {
   expect(reviewer.vendor).toBe('codex')
 })
 
+test('rejects an extraArgs entry that would override --sandbox', () => {
+  expect(() => createCodexReviewer({ binary: OK, extraArgs: ['--sandbox', 'danger-full-access'] })).toThrow(
+    /--sandbox/,
+  )
+  expect(() => createCodexReviewer({ binary: OK, extraArgs: ['--sandbox=danger-full-access'] })).toThrow(
+    /--sandbox/,
+  )
+})
+
+test('extraArgs without --sandbox in it still work', async () => {
+  const reviewer = createCodexReviewer({ binary: OK, extraArgs: ['--json'] })
+  const result = await reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
+  expect(result.text).toContain('Verdict: approve as-is')
+})
+
 test('throws MalformedReviewError, and never returns text, when the header is missing', async () => {
   const reviewer = createCodexReviewer({ binary: NO_HEADER })
 
@@ -189,34 +204,78 @@ test('creates a detached worktree from clonePath at headSha, runs there, and rem
   }
 }, 10_000)
 
-test('removes the worktree even when the run fails (non-zero exit)', async () => {
-  const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-root-'))
-  const reviewer = createCodexReviewer({ binary: FAIL, clonePath, worktreeRoot })
+test('removes the worktree directory (not just its git registration) even when the run fails', async () => {
+  const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
+  const prevEnv = process.env.CODEX_TEST_RECORD
+  process.env.CODEX_TEST_RECORD = recordFile
 
-  await expect(reviewer.review({ ...baseInput, headSha, worktreePath: undefined })).rejects.toBeInstanceOf(
-    CodexProcessError,
-  )
+  try {
+    const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-root-'))
+    const reviewer = createCodexReviewer({ binary: FAIL, clonePath, worktreeRoot })
 
-  const list = await Bun.$`git -C ${clonePath} worktree list`.quiet().text()
-  // Only the main worktree (clonePath itself) should remain registered.
-  expect(list.trim().split('\n')).toHaveLength(1)
+    await expect(reviewer.review({ ...baseInput, headSha, worktreePath: undefined })).rejects.toBeInstanceOf(
+      CodexProcessError,
+    )
 
-  await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+    const usedCwd = (await readFile(recordFile, 'utf-8')).slice('CWD:'.length)
+
+    // Only the main worktree (clonePath itself) should remain registered...
+    const list = await Bun.$`git -C ${clonePath} worktree list`.quiet().text()
+    expect(list.trim().split('\n')).toHaveLength(1)
+    // ...and the directory itself must be gone too, not just deregistered.
+    expect(await Bun.file(usedCwd).exists()).toBe(false)
+
+    await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+  } finally {
+    if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
+    else process.env.CODEX_TEST_RECORD = prevEnv
+    await rm(recordFile, { force: true }).catch(() => {})
+  }
 }, 10_000)
 
-test('removes the worktree even when the run times out', async () => {
-  const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-root-'))
-  const reviewer = createCodexReviewer({ binary: SLEEP, clonePath, worktreeRoot, timeoutMs: 100 })
+test('removes the worktree directory even when the run times out against a SIGTERM-ignoring process', async () => {
+  const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
+  const prevEnv = process.env.CODEX_TEST_RECORD
+  process.env.CODEX_TEST_RECORD = recordFile
 
-  await expect(reviewer.review({ ...baseInput, headSha, worktreePath: undefined })).rejects.toBeInstanceOf(
-    CodexTimeoutError,
-  )
+  try {
+    const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-root-'))
+    const reviewer = createCodexReviewer({ binary: SLEEP, clonePath, worktreeRoot, timeoutMs: 100 })
 
+    const start = performance.now()
+    await expect(reviewer.review({ ...baseInput, headSha, worktreePath: undefined })).rejects.toBeInstanceOf(
+      CodexTimeoutError,
+    )
+    // The fixture ignores SIGTERM and sleeps 30s; only a SIGKILL keeps this fast.
+    expect(performance.now() - start).toBeLessThan(5_000)
+
+    const usedCwd = (await readFile(recordFile, 'utf-8')).slice('CWD:'.length)
+
+    const list = await Bun.$`git -C ${clonePath} worktree list`.quiet().text()
+    expect(list.trim().split('\n')).toHaveLength(1)
+    expect(await Bun.file(usedCwd).exists()).toBe(false)
+
+    await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+  } finally {
+    if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
+    else process.env.CODEX_TEST_RECORD = prevEnv
+    await rm(recordFile, { force: true }).catch(() => {})
+  }
+}, 10_000)
+
+test('propagates a worktree-setup failure (unknown headSha) without leaking a worktree registration', async () => {
+  const reviewer = createCodexReviewer({ binary: OK, clonePath })
+  const bogusSha = '0'.repeat(40)
+
+  await expect(
+    reviewer.review({ ...baseInput, headSha: bogusSha, worktreePath: undefined }),
+  ).rejects.toThrow()
+
+  // Setup failed during `git fetch`/`worktree add`, before codex ever ran — confirm
+  // that failure didn't leave a half-registered worktree behind either.
   const list = await Bun.$`git -C ${clonePath} worktree list`.quiet().text()
   expect(list.trim().split('\n')).toHaveLength(1)
-
-  await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
-}, 10_000)
+})
 
 test('throws a clear error when neither worktreePath nor clonePath is given', async () => {
   const reviewer = createCodexReviewer({ binary: OK })

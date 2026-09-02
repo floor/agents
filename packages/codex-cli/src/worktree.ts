@@ -38,20 +38,29 @@ export async function resolveWorktree(input: {
   const root = input.worktreeRoot ?? tmpdir()
   const dir = join(root, `codex-review-${randomUUID()}`)
 
-  await Bun.$`git -C ${clonePath} fetch origin ${input.headSha}`.quiet()
-  await Bun.$`git -C ${clonePath} worktree add --detach ${dir} ${input.headSha}`.quiet()
-
-  return {
-    cwd: dir,
-    cleanup: async () => {
-      try {
-        await Bun.$`git -C ${clonePath} worktree remove --force ${dir}`.quiet()
-      } catch {
-        // The worktree may never have been fully registered (e.g. we failed right
-        // after `worktree add`), or git may refuse for other reasons. Fall back to
-        // removing the directory directly so we never leak a temp dir.
-        await rm(dir, { recursive: true, force: true }).catch(() => {})
-      }
-    },
+  const cleanup = async () => {
+    try {
+      await Bun.$`git -C ${clonePath} worktree remove --force ${dir}`.quiet()
+    } catch {
+      // The worktree may never have been fully registered (e.g. we failed right
+      // after `worktree add`), or git may refuse for other reasons. Fall back to
+      // removing the directory directly so we never leak a temp dir.
+      await rm(dir, { recursive: true, force: true }).catch(() => {})
+    }
   }
+
+  try {
+    await Bun.$`git -C ${clonePath} fetch origin ${input.headSha}`.quiet()
+    await Bun.$`git -C ${clonePath} worktree add --detach ${dir} ${input.headSha}`.quiet()
+  } catch (err) {
+    // `worktree add` can throw after partially creating/registering the worktree
+    // (e.g. interrupted mid-checkout). Best-effort clean up whatever exists before
+    // rethrowing, so a failed setup never leaks a directory or a dangling worktree
+    // registration — the caller never gets a chance to call `cleanup()` in this path,
+    // since `resolveWorktree()` never returned.
+    await cleanup().catch(() => {})
+    throw err
+  }
+
+  return { cwd: dir, cleanup }
 }

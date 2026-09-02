@@ -67,7 +67,7 @@ const { text } = await reviewer.review({
 | `binary` | `'codex'` | Path to the codex binary, or a fixture script in tests. |
 | `timeoutMs` | 15 minutes | The process is killed and `CodexTimeoutError` thrown past this. |
 | `sandbox` | `'read-only'` | `--sandbox` value. This reviewer never writes to the worktree. |
-| `extraArgs` | `[]` | Extra argv entries inserted between the sandbox flag and the prompt. |
+| `extraArgs` | `[]` | Extra argv entries inserted between the sandbox flag and the prompt. Must not contain a `--sandbox` flag (the constructor throws if it does) — that would let a later flag silently override the read-only guarantee. |
 | `clonePath` | — | Local clone used to create a detached worktree at `headSha` when `review()` is called without a `worktreePath`. Required in that case. |
 | `worktreeRoot` | OS temp dir | Directory under which detached worktrees are created. |
 
@@ -95,8 +95,12 @@ cd <worktree> && codex exec --sandbox read-only "<prompt>" > out.md 2>/dev/null 
   this package creates one itself: `git -C <clonePath> fetch origin <headSha>` then
   `git worktree add --detach <tmpdir> <headSha>`, and removes it afterwards
   (`git worktree remove --force`, or a direct directory removal if git refuses) — on
-  success, on a thrown error, and on timeout. It is never run directly in `clonePath`
-  itself.
+  success, on a thrown error, and on timeout, including a partial `worktree add`
+  failure (setup itself best-effort cleans up before rethrowing). It is never run
+  directly in `clonePath` itself.
+- **Timeouts escalate straight to `SIGKILL`, not `SIGTERM`.** A `SIGTERM` can be
+  ignored by codex or a wedged descendant process, which would leave `proc.exited`
+  unresolved and defeat the timeout entirely. `SIGKILL` cannot be caught or ignored.
 - **The read-only sandbox cannot run tests**, so its conclusions are analytical only —
   say so explicitly in review prompts (the default template in `prompts/review.md`
   does).

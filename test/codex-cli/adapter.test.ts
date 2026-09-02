@@ -52,20 +52,48 @@ test('vendor is "codex"', () => {
   expect(reviewer.vendor).toBe('codex')
 })
 
-test('rejects an extraArgs entry that would override --sandbox', () => {
+test('rejects an extraArgs entry that would override the sandbox, including the short alias and the bypass flag', () => {
   expect(() => createCodexReviewer({ binary: OK, extraArgs: ['--sandbox', 'danger-full-access'] })).toThrow(
-    /--sandbox/,
+    /sandbox/i,
   )
   expect(() => createCodexReviewer({ binary: OK, extraArgs: ['--sandbox=danger-full-access'] })).toThrow(
-    /--sandbox/,
+    /sandbox/i,
   )
+  expect(() => createCodexReviewer({ binary: OK, extraArgs: ['-s', 'danger-full-access'] })).toThrow(/sandbox/i)
+  expect(() =>
+    createCodexReviewer({ binary: OK, extraArgs: ['--dangerously-bypass-approvals-and-sandbox'] }),
+  ).toThrow(/sandbox/i)
 })
 
-test('extraArgs without --sandbox in it still work', async () => {
+test('extraArgs without a sandbox override in it still work', async () => {
   const reviewer = createCodexReviewer({ binary: OK, extraArgs: ['--json'] })
   const result = await reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
   expect(result.text).toContain('Verdict: approve as-is')
 })
+
+test('extraArgs is copied at construction — mutating the caller\'s array afterward cannot smuggle a sandbox override into argv', async () => {
+  const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
+  const prevEnv = process.env.CODEX_TEST_RECORD
+  process.env.CODEX_TEST_RECORD = recordFile
+
+  try {
+    const mutableExtraArgs = ['--json']
+    const reviewer = createCodexReviewer({ binary: RECORD, extraArgs: mutableExtraArgs })
+
+    // If extraArgs were stored by reference instead of copied, this would let a
+    // caller bypass the constructor-time guard entirely.
+    mutableExtraArgs.push('--sandbox=danger-full-access')
+
+    await reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
+
+    const record = await readFile(recordFile, 'utf-8')
+    expect(record).not.toContain('danger-full-access')
+  } finally {
+    if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
+    else process.env.CODEX_TEST_RECORD = prevEnv
+    await rm(recordFile, { force: true }).catch(() => {})
+  }
+}, 10_000)
 
 test('throws MalformedReviewError, and never returns text, when the header is missing', async () => {
   const reviewer = createCodexReviewer({ binary: NO_HEADER })
@@ -263,7 +291,7 @@ test('removes the worktree directory even when the run times out against a SIGTE
   }
 }, 10_000)
 
-test('propagates a worktree-setup failure (unknown headSha) without leaking a worktree registration', async () => {
+test('propagates a git-fetch failure (unknown headSha) without leaking a worktree registration', async () => {
   const reviewer = createCodexReviewer({ binary: OK, clonePath })
   const bogusSha = '0'.repeat(40)
 
@@ -271,11 +299,30 @@ test('propagates a worktree-setup failure (unknown headSha) without leaking a wo
     reviewer.review({ ...baseInput, headSha: bogusSha, worktreePath: undefined }),
   ).rejects.toThrow()
 
-  // Setup failed during `git fetch`/`worktree add`, before codex ever ran — confirm
-  // that failure didn't leave a half-registered worktree behind either.
+  // Setup failed during `git fetch` itself (this sha doesn't exist at origin), before
+  // `git worktree add` or codex ever ran — confirm that failure didn't leave a
+  // half-registered worktree behind either.
   const list = await Bun.$`git -C ${clonePath} worktree list`.quiet().text()
   expect(list.trim().split('\n')).toHaveLength(1)
 })
+
+test('propagates a git-worktree-add failure specifically (valid fetch, unusable target) and cleans up', async () => {
+  // Force `git worktree add` itself to fail, as distinct from a `git fetch` failure:
+  // point worktreeRoot at a path whose parent is a regular file, so git cannot create
+  // anything under it, even though the fetch (headSha is valid here) succeeds first.
+  const blockerDir = await mkdtemp(join(tmpdir(), 'codex-cli-test-blocker-'))
+  const blockerFile = join(blockerDir, 'not-a-directory')
+  await Bun.write(blockerFile, 'x')
+
+  const reviewer = createCodexReviewer({ binary: OK, clonePath, worktreeRoot: blockerFile })
+
+  await expect(reviewer.review({ ...baseInput, headSha, worktreePath: undefined })).rejects.toThrow()
+
+  const list = await Bun.$`git -C ${clonePath} worktree list`.quiet().text()
+  expect(list.trim().split('\n')).toHaveLength(1)
+
+  await rm(blockerDir, { recursive: true, force: true }).catch(() => {})
+}, 10_000)
 
 test('throws a clear error when neither worktreePath nor clonePath is given', async () => {
   const reviewer = createCodexReviewer({ binary: OK })

@@ -143,12 +143,21 @@ See [Configuration Reference](./docs/configuration.md) for the full spec.
 - **Review loop** — CTO agent reviews every PR before it's marked ready. Max 3 revision cycles, then `needs-human`
 - **Crash recovery** — execution state persisted to disk between every step. Idempotent operations (branch creation, PR creation)
 
+## Review & Gate Mode
+
+A second mode (`bun run gate`) for PRs this process didn't create: it
+watches open PRs on configured repos, drives an independent-vendor review
+through a pluggable `Reviewer`, posts the review verbatim, and squash-merges
+once a deterministic gate decides the PR is ready. Dry run by default. See
+[Review & Gate Mode](./docs/review-gate.md).
+
 ## Development
 
 ```bash
-bun test              # 116 tests across 22 files
+bun test              # 195 tests across 28 files
 bun run typecheck     # type check all packages
 bun run src/main.ts   # start the orchestrator
+bun run gate          # start the review & gate loop
 ```
 
 ## Documentation
@@ -157,6 +166,7 @@ bun run src/main.ts   # start the orchestrator
 - [Configuration](./docs/configuration.md)
 - [First Run Guide](./docs/guides/first-run.md)
 - [Architecture](./docs/architecture.md)
+- [Review & Gate Mode](./docs/review-gate.md)
 - [Package Docs](./docs/README.md)
 - [Adding an LLM Provider](./docs/guides/adding-llm-provider.md)
 - [Adding a Task Manager](./docs/guides/adding-task-manager.md)

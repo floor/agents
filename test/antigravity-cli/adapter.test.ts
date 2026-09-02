@@ -28,6 +28,7 @@ const SLEEP = join(FIXTURES, 'sleep.ts')
 const FAIL = join(FIXTURES, 'fail.ts')
 const RECORD = join(FIXTURES, 'record.ts')
 const DIRTY = join(FIXTURES, 'dirty.ts')
+const DIRTY_IGNORED = join(FIXTURES, 'dirty-ignored.ts')
 
 const baseInput = {
   repo: 'floor/agents',
@@ -58,6 +59,10 @@ beforeAll(async () => {
   await Bun.$`git -C ${clonePath} config user.email test@example.com`.quiet()
   await Bun.$`git -C ${clonePath} config user.name test`.quiet()
   await Bun.write(join(clonePath, 'file.txt'), 'hello\n')
+  // A .gitignore'd path, used to prove assertWorktreeUnchanged catches a
+  // write there too — plain `git status --porcelain` (without `--ignored`)
+  // would NOT show a write to this path at all.
+  await Bun.write(join(clonePath, '.gitignore'), 'ignored.txt\n')
   await Bun.$`git -C ${clonePath} add -A`.quiet()
   await Bun.$`git -C ${clonePath} commit -q -m init`.quiet()
   await Bun.$`git -C ${clonePath} push -q origin main`.quiet()
@@ -289,6 +294,25 @@ test('detects a worktree modified during the run and throws WorktreeModifiedErro
   await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
 })
 
+test('a write to a .gitignore\'d path is ALSO detected — plain "git status --porcelain" would miss it, so this pins that the check passes --ignored --untracked-files=all', async () => {
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'agy-cli-test-root-'))
+  const reviewer = createAntigravityReviewer({
+    binary: DIRTY_IGNORED,
+    settingsPath: validSettingsPath,
+    clonePath,
+    worktreeRoot,
+  })
+
+  const err = await reviewer
+    .review({ ...baseInput, headSha, worktreePath: undefined })
+    .catch((e) => e)
+
+  expect(err).toBeInstanceOf(WorktreeModifiedError)
+  expect((err as WorktreeModifiedError).gitStatusPorcelain).toContain('ignored.txt')
+
+  await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+})
+
 test('WorktreeModifiedError still results in the auto-created worktree being cleaned up', async () => {
   const worktreeRoot = await mkdtemp(join(tmpdir(), 'agy-cli-test-root-'))
   const reviewer = createAntigravityReviewer({
@@ -380,6 +404,29 @@ test('rejects an invalid effort value', () => {
 
 test('rejects binary: null outright, rather than silently falling back to the default', () => {
   expect(() => createAntigravityReviewer({ binary: null as unknown as string })).toThrow(/binary/i)
+})
+
+test('review() rejects a non-string ReviewInput.prompt outright, including an object with a malicious toString, before ever spawning', async () => {
+  const trickyObject = { toString: () => 'PONG', valueOf: () => 'PONG' }
+  const markerFile = join(tmpdir(), `agy-test-spawned-${crypto.randomUUID()}.marker`)
+  const prevEnv = process.env.AGY_TEST_RECORD
+  process.env.AGY_TEST_RECORD = markerFile
+
+  try {
+    const reviewer = createAntigravityReviewer({ binary: RECORD, settingsPath: validSettingsPath })
+
+    await expect(
+      reviewer.review({ ...baseInput, prompt: trickyObject as unknown as string, headSha, worktreePath: clonePath }),
+    ).rejects.toThrow(/prompt/i)
+
+    // Rejected before the worktree was even resolved / agy was spawned —
+    // the RECORD fixture would have written this marker had it run.
+    expect(await Bun.file(markerFile).exists()).toBe(false)
+  } finally {
+    if (prevEnv === undefined) delete process.env.AGY_TEST_RECORD
+    else process.env.AGY_TEST_RECORD = prevEnv
+    await rm(markerFile, { force: true }).catch(() => {})
+  }
 })
 
 test('emits exactly [binary, "-p", header+prompt, "--output-format", "text", "--print-timeout", "14m", "--model", <default model>] with the default config', async () => {
@@ -475,8 +522,14 @@ test('the prompt is passed as a single argv element with metacharacters inert, a
 
     const record = await readRecord(recordFile)
 
-    expect(record.argv).toContain('-p')
-    expect(record.argv.some((arg) => arg.includes(dangerousPrompt))).toBe(true)
+    // Exact position, not just "some argv element contains it" — proves
+    // the whole dangerous string arrived as ONE argv entry, verbatim
+    // (metacharacters inert, no shell involved), at the specific position
+    // this adapter's fixed argv shape puts the prompt, with nothing else
+    // appended after it.
+    expect(record.argv[0]).toBe('-p')
+    expect(record.argv[1]!.endsWith(dangerousPrompt)).toBe(true)
+    expect(record.argv[2]).toBe('--output-format')
     expect(record.cwd).toBe(realClonePath)
     expect(record.stdin).toBe('closed-eof')
   } finally {
@@ -586,18 +639,33 @@ test('creates a detached worktree from clonePath at headSha, runs there, and rem
   }
 }, 10_000)
 
-test('removes the worktree directory even when the run fails', async () => {
-  const worktreeRoot = await mkdtemp(join(tmpdir(), 'agy-cli-test-root-'))
-  const reviewer = createAntigravityReviewer({ binary: FAIL, settingsPath: validSettingsPath, clonePath, worktreeRoot })
+test('removes the worktree directory (not just its git registration) even when the run fails', async () => {
+  const recordFile = join(tmpdir(), `agy-test-record-${crypto.randomUUID()}.txt`)
+  const prevEnv = process.env.AGY_TEST_RECORD
+  process.env.AGY_TEST_RECORD = recordFile
 
-  await expect(reviewer.review({ ...baseInput, headSha, worktreePath: undefined })).rejects.toBeInstanceOf(
-    AntigravityProcessError,
-  )
+  try {
+    const worktreeRoot = await mkdtemp(join(tmpdir(), 'agy-cli-test-root-'))
+    const reviewer = createAntigravityReviewer({ binary: FAIL, settingsPath: validSettingsPath, clonePath, worktreeRoot })
 
-  const list = await Bun.$`git -C ${clonePath} worktree list`.quiet().text()
-  expect(list.trim().split('\n')).toHaveLength(1)
+    await expect(reviewer.review({ ...baseInput, headSha, worktreePath: undefined })).rejects.toBeInstanceOf(
+      AntigravityProcessError,
+    )
 
-  await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+    const usedCwd = (await readFile(recordFile, 'utf-8')).slice('CWD:'.length)
+
+    // Only the main worktree (clonePath itself) should remain registered...
+    const list = await Bun.$`git -C ${clonePath} worktree list`.quiet().text()
+    expect(list.trim().split('\n')).toHaveLength(1)
+    // ...and the directory itself must be gone too, not just deregistered.
+    expect(directoryExists(usedCwd)).toBe(false)
+
+    await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+  } finally {
+    if (prevEnv === undefined) delete process.env.AGY_TEST_RECORD
+    else process.env.AGY_TEST_RECORD = prevEnv
+    await rm(recordFile, { force: true }).catch(() => {})
+  }
 }, 10_000)
 
 test('removes the worktree directory even when the run times out against a SIGTERM-ignoring process', async () => {

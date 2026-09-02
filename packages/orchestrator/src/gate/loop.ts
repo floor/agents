@@ -6,7 +6,7 @@
 
 import type { GitAdapter, PRDetails, Reviewer } from '@floor-agents/core'
 import { decideGate, latestValidVerdictsByVendor, type GateDecision } from './decision.ts'
-import { parseVerdictComment } from './verdict.ts'
+import { parseVerdictComment, type Decision as VerdictDecision } from './verdict.ts'
 import { attributeImplementerVendor } from './vendor.ts'
 import { buildReviewPrompt, extractChangedFiles } from './prompt.ts'
 import type { GateStateStore } from './state-store.ts'
@@ -141,15 +141,19 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
   // `hasVendorReviewedHead`'s own doc comment). Shared by the default
   // gate's single-reviewer `needs_review` handling below and the
   // auth-labelled-PR scheduling further down, so both paths post/log/mark
-  // identically instead of drifting apart.
-  async function tryReview(rv: Reviewer): Promise<void> {
+  // identically instead of drifting apart. Returns the posted verdict's
+  // decision (or `null` when nothing was posted — skipped, or malformed
+  // output) so a caller scheduling more than one reviewer in the same pass
+  // can react to what this one just found, not just what was already on
+  // the PR before this pass started.
+  async function tryReview(rv: Reviewer): Promise<VerdictDecision | null> {
     if (rv.vendor.toLowerCase() === implementerVendor.toLowerCase()) {
       log(`[gate] ${repo}#${pr.id}: skipping review — configured reviewer vendor "${rv.vendor}" matches the implementer`)
-      return
+      return null
     }
     if (hasVendorReviewedHead(reviewedHeads, pr.headSha, rv.vendor)) {
       log(`[gate] ${repo}#${pr.id}: reviewer "${rv.vendor}" was already asked to review head ${pr.headSha.slice(0, 7)}`)
-      return
+      return null
     }
 
     const diff = await git.getPRDiff(repo, pr.id)
@@ -176,14 +180,17 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
     await persist()
 
     const result = await rv.review({ repo, prNumber: pr.id, headSha: pr.headSha, prompt })
+    const parsed = parseVerdictComment(result.text)
 
-    if (!parseVerdictComment(result.text)) {
+    if (!parsed) {
       log(`[gate] ${repo}#${pr.id}: reviewer "${rv.vendor}" returned malformed output for head ${pr.headSha.slice(0, 7)} (no valid header/verdict line) — not posted`)
-    } else {
-      // Posted verbatim — never edited, summarized, or re-wrapped.
-      await git.addPRComment(repo, pr.id, result.text)
-      log(`[gate] ${repo}#${pr.id}: posted ${rv.vendor} review for head ${pr.headSha.slice(0, 7)}`)
+      return null
     }
+
+    // Posted verbatim — never edited, summarized, or re-wrapped.
+    await git.addPRComment(repo, pr.id, result.text)
+    log(`[gate] ${repo}#${pr.id}: posted ${rv.vendor} review for head ${pr.headSha.slice(0, 7)}`)
+    return parsed.decision
   }
 
   if (decision.kind === 'needs_review') {
@@ -222,8 +229,18 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
     ).some(v => v.decision === 'changes needed' || v.decision === 'approve with nits')
 
     if (!hasBlockingVerdict) {
-      await tryReview(reviewer)
-      if (secondReviewer) await tryReview(secondReviewer)
+      // `hasBlockingVerdict` above only reflects comments fetched BEFORE
+      // this pass called anything — if the primary reviewer's OWN verdict,
+      // just posted, is itself blocking, that must stop the second
+      // reviewer from running in this SAME pass too (it would otherwise
+      // review a PR the primary just said needs changes, in the same
+      // breath as posting that verdict). `tryReview`'s return value is
+      // this pass's own knowledge of what the primary just found — more
+      // immediate than waiting for the next pass to re-fetch comments and
+      // recompute `hasBlockingVerdict` from them.
+      const primaryDecision = await tryReview(reviewer)
+      const primaryIsBlocking = primaryDecision === 'changes needed' || primaryDecision === 'approve with nits'
+      if (secondReviewer && !primaryIsBlocking) await tryReview(secondReviewer)
     }
   }
 

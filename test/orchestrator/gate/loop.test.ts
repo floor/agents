@@ -702,6 +702,64 @@ test('an auth PR that already has a blocking verdict does not get either reviewe
   expect(commentCalls.length).toBe(0) // needs a human/fix, not another review round
 })
 
+test('when the primary reviewer posts a FRESH blocking verdict, the secondReviewer is NOT also invoked in that same pass', async () => {
+  // The pre-pass `hasBlockingVerdict` check alone can't catch this: there
+  // is no blocking verdict yet when the pass starts, so it only appears
+  // once the primary reviewer itself posts one. The scheduler must react
+  // to what the primary just found, not just what was on the PR before
+  // the pass started (a bug this test pins after a real review found it:
+  // without the fix, the second reviewer would still run in the same
+  // pass as the primary's "changes needed").
+  const pr = makeAuthPR()
+  const { adapter, commentCalls } = makeFakeGitAdapter([pr])
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: (input) => `## Reviewer agent (codex)\n\nReviewed at ${input.headSha}.\n\nVerdict: changes needed`,
+  })
+  const secondReviewer = createFakeReviewer({ vendor: 'gemini' })
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    secondReviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ gate: MULTI_VENDOR_GATE_CONFIG }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'template',
+  })
+
+  // Only the primary's "changes needed" was posted — the second reviewer
+  // must not have been called at all this pass.
+  expect(commentCalls.length).toBe(1)
+  expect(commentCalls[0]!.body).toContain('## Reviewer agent (codex)')
+  expect(commentCalls[0]!.body).toContain('Verdict: changes needed')
+})
+
+test('when the primary reviewer posts a fresh "approve as-is" (not blocking), the secondReviewer IS still invoked in the same pass', async () => {
+  // Sanity check for the fix above: it must not become "never call the
+  // second reviewer in the same pass as the primary" — only a genuinely
+  // blocking verdict should stop it.
+  const pr = makeAuthPR()
+  const { adapter, commentCalls } = makeFakeGitAdapter([pr])
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: (input) => `## Reviewer agent (codex)\n\nReviewed at ${input.headSha}.\n\nVerdict: approve as-is`,
+  })
+  const secondReviewer = createFakeReviewer({ vendor: 'gemini' })
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    secondReviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ gate: MULTI_VENDOR_GATE_CONFIG }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'template',
+  })
+
+  expect(commentCalls.length).toBe(2)
+})
+
 test('once both reviewers have already been asked about a head, a later pass does not re-invoke either', async () => {
   const pr = makeAuthPR()
   const { adapter, commentCalls } = makeFakeGitAdapter([pr])

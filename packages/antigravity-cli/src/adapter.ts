@@ -40,7 +40,15 @@ export type AntigravityReviewerConfig = {
    * `review()` call to enforce the read-only deny policy described in
    * README.md (`permissions.deny` must contain both `write_file(*)` and
    * `command(*)`). Defaults to `~/.gemini/antigravity-cli/settings.json`.
-   * Override in tests so they never touch a real home directory.
+   *
+   * SECURITY: `agy` has no flag to point it at a specific settings file —
+   * this adapter cannot bind the file it checks to the one the spawned
+   * `agy` process will actually read. In production this MUST be left
+   * unset (or explicitly set to the exact real path `agy` uses) — pointing
+   * it at a different file checks that file's contents while `agy` itself
+   * still reads its own real settings, silently defeating this reviewer's
+   * only enforcement. Override in tests ONLY, so they never touch a real
+   * home directory.
    */
   readonly settingsPath?: string
 }
@@ -184,7 +192,13 @@ async function assertReadOnlyPolicy(settingsPath: string): Promise<void> {
  * return) the review rather than silently accept it.
  */
 async function assertWorktreeUnchanged(cwd: string): Promise<void> {
-  const result = await Bun.$`git -C ${cwd} status --porcelain`.quiet()
+  // Plain `git status --porcelain` does NOT report files matched by
+  // .gitignore — a write to a gitignored path would pass that check
+  // silently even though the deny policy was supposed to prevent it.
+  // `--ignored --untracked-files=all` reports every new/modified file
+  // individually (ignored or not, and without directories collapsed into a
+  // single line), which is what "byte-for-byte unchanged" actually needs.
+  const result = await Bun.$`git -C ${cwd} status --porcelain --ignored --untracked-files=all`.quiet()
   const status = result.stdout.toString()
 
   if (status.trim() !== '') {
@@ -247,6 +261,11 @@ export function createAntigravityReviewer(config: AntigravityReviewerConfig = {}
       // anyway, and there is no reason to do any other work first.
       await assertReadOnlyPolicy(resolvedOptions.settingsPath)
 
+      // Read and validated exactly once here, same discipline as every
+      // other value that reaches a spawn call — an object with a
+      // toString/valueOf must be rejected outright, not silently coerced by
+      // the `PROMPT_HEADER + prompt` concatenation `runAgy` does with it.
+      const prompt = requireStringPrimitive('prompt', input.prompt)
       const worktreePath = readOptionalPath('worktreePath', input.worktreePath)
 
       const worktree = await resolveWorktree({
@@ -261,7 +280,7 @@ export function createAntigravityReviewer(config: AntigravityReviewerConfig = {}
           binary: resolvedOptions.binary,
           typedFlags,
           timeoutMs,
-          prompt: input.prompt,
+          prompt,
           cwd: worktree.cwd,
         })
 

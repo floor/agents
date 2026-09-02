@@ -3,8 +3,21 @@
 // exercised end to end via a fixture binary — the same fixture-binary
 // approach used in test/codex-cli/adapter.test.ts. This proves the loop
 // posts the codex-cli adapter's returned `ReviewResult.text` as the PR
-// comment body byte-for-byte (no re-trimming, editing, or re-wrapping
-// anywhere in the gate/orchestrator path).
+// comment body byte-for-byte through the REAL adapter's wiring (worktree
+// setup, argv, extraction) rather than a hand-built stub.
+//
+// What this file does NOT prove: that loop.ts itself never re-trims or
+// re-wraps a Reviewer's text. @floor-agents/codex-cli's own extractReview()
+// (packages/codex-cli/src/extract.ts) always strips all trailing
+// whitespace before returning, so every fixture's text arriving here is
+// already boundary-clean by construction — a stray `.trim()` reintroduced
+// in loop.ts would be a mathematical no-op against it and this file would
+// not catch the regression. That specific claim — loop.ts never re-trims
+// what a Reviewer returns — is pinned by the hand-built-reviewer test in
+// test/orchestrator/gate/loop.test.ts ("posts a hand-built Reviewer's text
+// byte for byte, including leading/trailing whitespace a stray .trim()
+// would strip"), which bypasses extractReview() entirely and can carry
+// real boundary whitespace all the way to `result.text`.
 //
 // This file constructs the Reviewer directly (via createCodexReviewer), not
 // through src/gate.ts's own GATE_REVIEWER/GATE_CODEX_* env-var wiring — that
@@ -135,6 +148,7 @@ test('gate loop wired to a real codex-cli Reviewer (fixture binary) posts its Re
     headSha,
     headRef: 'feat/thing',
     baseRef: 'main',
+    baseSha: 'b'.repeat(40),
     authorLogin: 'some-human',
     labels: [],
     draft: false,
@@ -189,6 +203,7 @@ test('a real createGateStateStore + real codex-cli Reviewer round trip also post
     headSha,
     headRef: 'feat/other-thing',
     baseRef: 'main',
+    baseSha: 'b'.repeat(40),
     authorLogin: 'some-human',
     labels: [],
     draft: false,

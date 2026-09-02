@@ -49,7 +49,7 @@ const rawPR = {
   title: 'Add feature',
   body: 'Description\n\nMore detail',
   head: { sha: 'deadbeef00112233445566778899aabbccddeeff', ref: 'feat/thing' },
-  base: { ref: 'main' },
+  base: { ref: 'main', sha: 'cafebabe00112233445566778899aabbccddeeff' },
   user: { login: 'someone' },
   labels: [{ name: 'parity' }, { name: 'needs-human' }],
   draft: false,
@@ -70,6 +70,7 @@ test('getPR maps GitHub PR shape to PRDetails', async () => {
     expect(pr!.headSha).toBe('deadbeef00112233445566778899aabbccddeeff')
     expect(pr!.headRef).toBe('feat/thing')
     expect(pr!.baseRef).toBe('main')
+    expect(pr!.baseSha).toBe('cafebabe00112233445566778899aabbccddeeff')
     expect(pr!.authorLogin).toBe('someone')
     expect(pr!.labels).toEqual(['parity', 'needs-human'])
     expect(pr!.draft).toBe(false)
@@ -83,6 +84,18 @@ test('getPR returns null on 404', async () => {
   try {
     const adapter = createGitHubAdapter({ token: 't', owner: 'o' })
     expect(await adapter.getPR('r', '999')).toBeNull()
+  } finally {
+    restore()
+  }
+})
+
+test('getPR maps a base object with no sha field to baseSha: "" rather than throwing or using undefined', async () => {
+  const { base, ...withoutBaseSha } = rawPR
+  const restore = withMockFetch(() => new Response(JSON.stringify({ ...withoutBaseSha, base: { ref: 'main' } }), { status: 200 }))
+  try {
+    const adapter = createGitHubAdapter({ token: 't', owner: 'o' })
+    const pr = await adapter.getPR('r', '7')
+    expect(pr!.baseSha).toBe('')
   } finally {
     restore()
   }

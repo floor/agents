@@ -9,7 +9,7 @@ import { decideGate, latestValidVerdictsByVendor, type GateDecision } from './de
 import { parseVerdictComment, type Decision as VerdictDecision } from './verdict.ts'
 import { attributeImplementerVendor } from './vendor.ts'
 import { buildReviewPrompt, extractChangedFiles } from './prompt.ts'
-import { selectChecklistFiles, loadChecklists } from './checklists.ts'
+import { selectChecklistFiles, loadChecklists, NO_CHECKLIST_TEXT } from './checklists.ts'
 import type { GateStateStore } from './state-store.ts'
 import type { GateModeConfig } from './config.ts'
 
@@ -163,13 +163,24 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
       ? await deps.loadPromptTemplate()
       : await defaultLoadPromptTemplate(config.promptTemplatePath)
 
-    // Checklist files are selected from config (label/path rules) but
-    // their CONTENT is fetched from the target repo at this PR's own head
-    // sha — not this process's own repo, and not the target repo's
-    // default branch — so the checklist a reviewer sees is the one that
-    // shipped with the code under review. See gate/checklists.ts.
+    // Checklist files are selected from config (label/path rules); their
+    // CONTENT is fetched from the target repo at the PR's BASE branch head
+    // sha, resolved fresh right here via getPR() — never at the PR's own
+    // head. Loading from the head would let a PR edit the very checklist
+    // that reviews it; see gate/checklists.ts's header comment for the
+    // full rationale. Skip checklists (not merely "getFile returns
+    // null" — never even attempt a fetch) if the base sha can't be
+    // resolved; DO NOT fall back to pr.headSha as a substitute ref.
     const checklistFiles = selectChecklistFiles(config.checklists.rules, { labels: pr.labels, changedFiles })
-    const checklists = await loadChecklists(git, repo, pr.headSha, checklistFiles, log)
+    let checklists = NO_CHECKLIST_TEXT
+    if (checklistFiles.length > 0) {
+      const basePR = await git.getPR(repo, pr.id)
+      if (!basePR || !basePR.baseSha) {
+        log(`[gate] ${repo}#${pr.id}: could not resolve base sha for checklists (getPR returned ${basePR ? 'no baseSha' : 'null'}) — skipping checklists this pass, not falling back to head`)
+      } else {
+        checklists = await loadChecklists(git, repo, basePR.baseSha, checklistFiles, log)
+      }
+    }
 
     const prompt = buildReviewPrompt(template, {
       repo,

@@ -103,16 +103,18 @@ vendor:
 # of file(s) picked by a PR's label or touched paths — see
 # packages/orchestrator/src/gate/checklists.ts and docs/review-gate.md.
 # `file` is a path INSIDE THE TARGET REPO (the `repos:` entries above),
-# fetched at the PR's own head sha via GitAdapter.getFile, so the
-# checklist that lands in the prompt is the one checked into that
-# specific commit — not this repo, and not the target repo's default
-# branch. A rule matches on `label` OR `pathContains` (either alone is
-# enough); a PR can match more than one rule, and every matched file is
-# included. Missing entirely (or an empty `rules: []`) means every prompt
-# renders "no checklist matched" in that slot — same behavior as before
-# this key existed. This example mirrors floor/radiooooo's own
-# docs/review/ layout; adjust file paths to whatever your target repo
-# actually ships:
+# fetched at the PR's BASE BRANCH HEAD sha (resolved fresh via getPR() at
+# review time), NEVER the PR's own head — a PR editing this file on its
+# own branch must not be able to soften the checklist that reviews it.
+# If that base sha can't be resolved, checklists are skipped for that
+# pass rather than falling back to the head. A rule matches on `label` OR
+# `pathContains` (either alone is enough); a PR can match more than one
+# rule, and every matched file is included, each capped at 16KB and the
+# total at 48KB (truncated with a visible marker past either cap).
+# Missing entirely (or an empty `rules: []`) means every prompt renders
+# "no checklist matched" in that slot — same behavior as before this key
+# existed. This example mirrors a docs/review/ layout in your-org/your-repo;
+# adjust file paths to whatever your target repo actually ships:
 # checklists:
 #   rules:
 #     - label: auth

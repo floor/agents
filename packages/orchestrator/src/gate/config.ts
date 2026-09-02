@@ -7,6 +7,9 @@ import { DEFAULT_GATE_CONFIG, type GateConfig } from './decision.ts'
 import { DEFAULT_VENDOR_CONFIG, type VendorAttributionConfig } from './vendor.ts'
 
 export type GateModeConfig = {
+  /** Bare repo names (no owner prefix) — the gate mode's GitAdapter is
+   *  bound to a single owner (e.g. GITHUB_OWNER), matching the convention
+   *  used throughout this codebase (see src/main.ts, CompanyConfig.project.repo). */
   readonly repos: readonly string[]
   readonly pollIntervalMs: number
   readonly promptTemplatePath: string

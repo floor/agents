@@ -1,0 +1,42 @@
+# Review & gate mode config (src/gate.ts / GATE_CONFIG_PATH).
+#
+# Bare repo names — the owner comes from the GitHub adapter (GITHUB_OWNER),
+# same convention as the task-pipeline mode's project.repo.
+repos:
+  - radiooooo
+
+# How often to poll each repo's open PRs, in milliseconds.
+pollIntervalMs: 60000
+
+# Template file for the review prompt handed to the configured Reviewer.
+# Placeholders: {{repo}} {{prNumber}} {{title}} {{body}} {{baseRef}}
+# {{headRef}} {{headSha}} {{changedFiles}}
+promptTemplatePath: config/gate/review-prompt.md
+
+# Where per-PR gate state is persisted (last decision, merged flag).
+stateDir: ./data/gate
+
+# Merging is a separate opt-in from this file — see GATE_MERGE_ENABLED in
+# .env.example. Dry run (unset / false) is the default and safe to leave on.
+mergeEnabled: false
+
+gate:
+  # Labels that put a PR on the stronger two-vendor + runtime-sign-in-check
+  # gate (AGENTS.md "Review" section, auth/session/token-handling code).
+  authLabels:
+    - auth
+  # Label that unconditionally holds a PR for a human (DrJones/Jeremy's
+  # standing override).
+  needsHumanLabel: needs-human
+
+vendor:
+  # A `vendor:<name>` label on the PR wins over every other rule below.
+  labelPrefix: "vendor:"
+  # Branch-name prefix -> implementer vendor.
+  branchPrefixes:
+    - prefix: cursor/
+      vendor: grok
+  # A PR body line starting with this prefix -> implementer vendor.
+  bodyMarkers:
+    - prefix: "Claude-Session:"
+      vendor: claude

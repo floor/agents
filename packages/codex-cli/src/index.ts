@@ -1,6 +1,6 @@
 export { createCodexReviewer } from './adapter'
 export type { CodexReviewerConfig } from './adapter'
-export { CodexProcessError, CodexTimeoutError, MalformedReviewError } from './errors'
+export { CodexProcessError, CodexTimeoutError, MalformedReviewError, WorktreeMismatchError } from './errors'
 export { extractReview } from './extract'
 export { renderReviewPrompt } from './prompt'
 export type { ReviewPromptVars } from './prompt'

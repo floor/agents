@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { WorktreeMismatchError } from './errors'
 
 export type ResolvedWorktree = {
   readonly cwd: string
@@ -26,10 +27,13 @@ const NOOP_CLEANUP = async () => {}
 
 /**
  * Resolves the working directory to run Codex in. If `worktreePath` is given, it is
- * used as-is and never removed by this package (the caller owns its lifecycle).
- * Otherwise, a detached worktree is created at `headSha` from `clonePath` under
- * `worktreeRoot`, and `cleanup()` removes it. The clone at `clonePath` itself is never
- * run in directly and never mutated beyond `fetch` + `worktree add`.
+ * verified (`git rev-parse HEAD` there must equal `headSha`, throwing typed
+ * `WorktreeMismatchError` before anything spawns if it doesn't) and then used as-is —
+ * this package never removes a caller-supplied path, on any path through this
+ * function, since the caller owns its lifecycle. Otherwise, a detached worktree is
+ * created at `headSha` from `clonePath` under `worktreeRoot`, and `cleanup()` removes
+ * it. The clone at `clonePath` itself is never run in directly and never mutated
+ * beyond `fetch` + `worktree add`.
  */
 export async function resolveWorktree(
   input: {
@@ -41,6 +45,11 @@ export async function resolveWorktree(
   deps: { readonly runGit?: GitRunner } = {},
 ): Promise<ResolvedWorktree> {
   if (input.worktreePath) {
+    const runGit = deps.runGit ?? defaultGitRunner
+    // A caller-supplied worktree is just as capable of silently pointing at the wrong
+    // commit as one this package creates itself — verify it the same way, before
+    // spawning codex, rather than trusting the caller's claim.
+    await verifyWorktreeHead(runGit, input.worktreePath, input.headSha)
     return { cwd: input.worktreePath, cleanup: NOOP_CLEANUP }
   }
 
@@ -100,8 +109,11 @@ async function verifyWorktreeHead(runGit: GitRunner, dir: string, expectedSha: s
   const actualSha = output.trim()
 
   if (actualSha !== expectedSha) {
-    throw new Error(
+    throw new WorktreeMismatchError(
       `CodexReviewer: worktree at ${dir} checked out "${actualSha || '(empty)'}", expected "${expectedSha}" — refusing to review the wrong commit.`,
+      dir,
+      expectedSha,
+      actualSha,
     )
   }
 }

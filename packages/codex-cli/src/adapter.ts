@@ -19,9 +19,13 @@ export type CodexReviewerConfig = {
   readonly binary?: string
   /** Kill the process and throw `CodexTimeoutError` after this many ms. Default 15 min. */
   readonly timeoutMs?: number
-  /** Emitted as `--model <value>`. Must match `/^[A-Za-z0-9][A-Za-z0-9._-]*$/`, max 128 chars. */
+  /**
+   * Emitted as `--model <value>`. Must be an actual string primitive (the constructor
+   * throws for an object, even one with a custom `toString`/`valueOf`), matching
+   * `/^[A-Za-z0-9][A-Za-z0-9._-]*$/`, max 128 chars.
+   */
   readonly model?: string
-  /** Emitted as `--profile <value>`. Must match `/^[A-Za-z0-9][A-Za-z0-9._-]*$/`, max 128 chars. */
+  /** Emitted as `--profile <value>`. Same validation as `model`. */
   readonly profile?: string
   /**
    * Local clone of the repo to review, used to create a detached worktree at
@@ -44,13 +48,31 @@ const SANDBOX = 'read-only'
 const OPTION_VALUE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const OPTION_VALUE_MAX_LENGTH = 128
 
-function validateOptionValue(name: 'model' | 'profile', value: string | undefined): void {
-  if (value === undefined) return
-  if (value.length > OPTION_VALUE_MAX_LENGTH || !OPTION_VALUE_RE.test(value)) {
+/**
+ * Reads `raw` exactly once, checks it is an actual string primitive (not an object,
+ * not something with a `toString`/`valueOf` that coerces to a string, not a getter
+ * that could return something different on a second read), validates it, and returns
+ * that same primitive. The caller must build argv only from this return value — never
+ * by re-reading the original config property — so there is no window between
+ * validating a value and using it where it could have changed or where a coercion
+ * could sneak a disallowed value through.
+ */
+function readValidatedOption(name: 'model' | 'profile', raw: unknown): string | undefined {
+  if (raw === undefined) return undefined
+
+  if (typeof raw !== 'string') {
     throw new Error(
-      `CodexReviewer: ${name} must match ${OPTION_VALUE_RE} and be at most ${OPTION_VALUE_MAX_LENGTH} characters — got ${JSON.stringify(value)}. This is deliberately restrictive: it is translated straight into an argv element, so it must not be able to look like a flag or carry shell/argv metacharacters.`,
+      `CodexReviewer: ${name} must be a string — got ${typeof raw}. Objects (including ones with a custom toString/valueOf) are rejected outright, not coerced.`,
     )
   }
+
+  if (raw.length > OPTION_VALUE_MAX_LENGTH || !OPTION_VALUE_RE.test(raw)) {
+    throw new Error(
+      `CodexReviewer: ${name} must match ${OPTION_VALUE_RE} and be at most ${OPTION_VALUE_MAX_LENGTH} characters — got ${JSON.stringify(raw)}. This is deliberately restrictive: it is translated straight into an argv element, so it must not be able to look like a flag or carry shell/argv metacharacters.`,
+    )
+  }
+
+  return raw
 }
 
 /**
@@ -78,12 +100,16 @@ export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer 
   const binary = config.binary ?? DEFAULT_BINARY
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
-  validateOptionValue('model', config.model)
-  validateOptionValue('profile', config.profile)
+  // Each read exactly once into a frozen snapshot — argv below is built only from
+  // `resolvedOptions`, never by going back to `config.model`/`config.profile`.
+  const resolvedOptions = Object.freeze({
+    model: readValidatedOption('model', config.model),
+    profile: readValidatedOption('profile', config.profile),
+  })
 
   const typedFlags: string[] = []
-  if (config.model !== undefined) typedFlags.push('--model', config.model)
-  if (config.profile !== undefined) typedFlags.push('--profile', config.profile)
+  if (resolvedOptions.model !== undefined) typedFlags.push('--model', resolvedOptions.model)
+  if (resolvedOptions.profile !== undefined) typedFlags.push('--profile', resolvedOptions.profile)
   Object.freeze(typedFlags)
 
   return {

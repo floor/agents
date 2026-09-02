@@ -66,8 +66,8 @@ const { text } = await reviewer.review({
 |---|---|---|
 | `binary` | `'codex'` | Path to the codex binary, or a fixture script in tests. |
 | `timeoutMs` | 15 minutes | The process is killed and `CodexTimeoutError` thrown past this. |
-| `model` | — | Emitted as `--model <value>`. Must match `/^[A-Za-z0-9._-]+$/`; the constructor throws otherwise. |
-| `profile` | — | Emitted as `--profile <value>`. Must match `/^[A-Za-z0-9._-]+$/`; the constructor throws otherwise. |
+| `model` | — | Emitted as `--model <value>`. Must match `/^[A-Za-z0-9][A-Za-z0-9._-]*$/` (so it can never start with `-` and be mistaken for a flag) and be at most 128 characters; the constructor throws otherwise. |
+| `profile` | — | Emitted as `--profile <value>`. Same validation as `model`. |
 | `clonePath` | — | Local clone used to create a detached worktree at `headSha` when `review()` is called without a `worktreePath`. Required in that case. |
 | `worktreeRoot` | OS temp dir | Directory under which detached worktrees are created. |
 

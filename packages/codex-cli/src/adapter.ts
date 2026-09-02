@@ -19,9 +19,9 @@ export type CodexReviewerConfig = {
   readonly binary?: string
   /** Kill the process and throw `CodexTimeoutError` after this many ms. Default 15 min. */
   readonly timeoutMs?: number
-  /** Emitted as `--model <value>`. Must match `/^[A-Za-z0-9._-]+$/`. */
+  /** Emitted as `--model <value>`. Must match `/^[A-Za-z0-9][A-Za-z0-9._-]*$/`, max 128 chars. */
   readonly model?: string
-  /** Emitted as `--profile <value>`. Must match `/^[A-Za-z0-9._-]+$/`. */
+  /** Emitted as `--profile <value>`. Must match `/^[A-Za-z0-9][A-Za-z0-9._-]*$/`, max 128 chars. */
   readonly profile?: string
   /**
    * Local clone of the repo to review, used to create a detached worktree at
@@ -37,13 +37,18 @@ const DEFAULT_TIMEOUT_MS = 15 * 60_000 // 15 minutes
 // Fixed, not configurable: this reviewer never writes to the worktree, under any name.
 const SANDBOX = 'read-only'
 
-const OPTION_VALUE_RE = /^[A-Za-z0-9._-]+$/
+// The leading-character restriction (must start alphanumeric) means a value can never
+// itself start with `-`, so it can never be mistaken for a flag by codex's own argv
+// parser — "--sandbox" and "-x" both fail this, not just something with a shell
+// metacharacter in it.
+const OPTION_VALUE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const OPTION_VALUE_MAX_LENGTH = 128
 
 function validateOptionValue(name: 'model' | 'profile', value: string | undefined): void {
   if (value === undefined) return
-  if (!OPTION_VALUE_RE.test(value)) {
+  if (value.length > OPTION_VALUE_MAX_LENGTH || !OPTION_VALUE_RE.test(value)) {
     throw new Error(
-      `CodexReviewer: ${name} must match ${OPTION_VALUE_RE} — got ${JSON.stringify(value)}. This is deliberately restrictive: it is translated straight into an argv element, so it must not be able to look like a flag or carry shell/argv metacharacters.`,
+      `CodexReviewer: ${name} must match ${OPTION_VALUE_RE} and be at most ${OPTION_VALUE_MAX_LENGTH} characters — got ${JSON.stringify(value)}. This is deliberately restrictive: it is translated straight into an argv element, so it must not be able to look like a flag or carry shell/argv metacharacters.`,
     )
   }
 }

@@ -115,6 +115,19 @@ cd <worktree> && codex exec --sandbox read-only "<prompt>" > out.md 2>/dev/null 
   `clonePath` itself. The git invocation itself is injectable (`GitRunner`, exported
   from this package alongside `resolveWorktree`) for testing without a real git
   process.
+- **A caller-supplied `worktreePath` gets the same `rev-parse HEAD` verification**,
+  not just a package-created one — a caller-supplied path isn't trusted any more than
+  one this package built itself. On a mismatch it throws typed `WorktreeMismatchError`
+  before codex ever runs, and (unlike a package-created worktree) it is never removed
+  by this package on any path, success or failure — cleanup of a caller-supplied path
+  is always the caller's job.
+- **Every config/input value that reaches a git or spawn call — `binary`, `clonePath`,
+  `worktreeRoot`, `worktreePath`, `model`, `profile` — is read exactly once**, checked
+  with `typeof value === 'string'` (an object, even one with a custom
+  `toString`/`valueOf`, is rejected outright, never coerced), and stored as a frozen
+  snapshot before any git command or `Bun.spawn` call. Nothing re-reads the original
+  config or `review()` input afterward, so a value can't change out from under a
+  validation check via a getter or a mutable object.
 - **Timeouts escalate straight to `SIGKILL`, not `SIGTERM`.** A `SIGTERM` can be
   ignored by codex or a wedged descendant process, which would leave `proc.exited`
   unresolved and defeat the timeout entirely. `SIGKILL` cannot be caught or ignored.

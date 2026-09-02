@@ -60,19 +60,47 @@ const OPTION_VALUE_MAX_LENGTH = 128
 function readValidatedOption(name: 'model' | 'profile', raw: unknown): string | undefined {
   if (raw === undefined) return undefined
 
+  const value = requireStringPrimitive(name, raw)
+
+  if (value.length > OPTION_VALUE_MAX_LENGTH || !OPTION_VALUE_RE.test(value)) {
+    throw new Error(
+      `CodexReviewer: ${name} must match ${OPTION_VALUE_RE} and be at most ${OPTION_VALUE_MAX_LENGTH} characters — got ${JSON.stringify(value)}. This is deliberately restrictive: it is translated straight into an argv element, so it must not be able to look like a flag or carry shell/argv metacharacters.`,
+    )
+  }
+
+  return value
+}
+
+/**
+ * The same "read exactly once, reject anything that isn't an actual string
+ * primitive" discipline as `readValidatedOption`, applied to path-shaped values
+ * (`binary`, `clonePath`, `worktreeRoot`, `worktreePath`) instead of flag values: no
+ * charset restriction (paths legitimately contain `/`, spaces, etc.), just a type
+ * check and a non-empty check. Every later use of these values — the `git -C` calls,
+ * `Bun.spawn`'s `cwd`, the caller-supplied-path removal guard — reads the snapshot
+ * this returns, never the original config/input property, so a value can't change
+ * (via a getter or a coercing object) between being checked and being used.
+ */
+function requireStringPrimitive(name: string, raw: unknown): string {
   if (typeof raw !== 'string') {
     throw new Error(
       `CodexReviewer: ${name} must be a string — got ${typeof raw}. Objects (including ones with a custom toString/valueOf) are rejected outright, not coerced.`,
     )
   }
-
-  if (raw.length > OPTION_VALUE_MAX_LENGTH || !OPTION_VALUE_RE.test(raw)) {
-    throw new Error(
-      `CodexReviewer: ${name} must match ${OPTION_VALUE_RE} and be at most ${OPTION_VALUE_MAX_LENGTH} characters — got ${JSON.stringify(raw)}. This is deliberately restrictive: it is translated straight into an argv element, so it must not be able to look like a flag or carry shell/argv metacharacters.`,
-    )
-  }
-
   return raw
+}
+
+function readOptionalPath(name: string, raw: unknown): string | undefined {
+  if (raw === undefined) return undefined
+  return readRequiredPath(name, raw)
+}
+
+function readRequiredPath(name: string, raw: unknown): string {
+  const value = requireStringPrimitive(name, raw)
+  if (value.length === 0) {
+    throw new Error(`CodexReviewer: ${name} must be a non-empty string.`)
+  }
+  return value
 }
 
 /**
@@ -97,12 +125,17 @@ function readValidatedOption(name: 'model' | 'profile', raw: unknown): string | 
  * flag pair, never as something else.
  */
 export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer {
-  const binary = config.binary ?? DEFAULT_BINARY
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
-  // Each read exactly once into a frozen snapshot — argv below is built only from
-  // `resolvedOptions`, never by going back to `config.model`/`config.profile`.
+  // Every config value that ends up in a git/spawn call is read from `config` exactly
+  // once, right here, into this single frozen snapshot. Every later use — argv,
+  // `git -C`, `Bun.spawn`'s `cwd` — reads `resolvedOptions`, never `config` again, so
+  // none of these can change (via a getter or a coercing object) between being
+  // checked and being used.
   const resolvedOptions = Object.freeze({
+    binary: readRequiredPath('binary', config.binary ?? DEFAULT_BINARY),
+    clonePath: readOptionalPath('clonePath', config.clonePath),
+    worktreeRoot: readOptionalPath('worktreeRoot', config.worktreeRoot),
     model: readValidatedOption('model', config.model),
     profile: readValidatedOption('profile', config.profile),
   })
@@ -116,16 +149,21 @@ export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer 
     vendor: 'codex',
 
     async review(input: ReviewInput): Promise<ReviewResult> {
+      // `input.worktreePath` is per-call caller input, so it can only be snapshotted
+      // here, at the top of `review()`, rather than at construction — but the same
+      // rule applies: read once, validate, and use only this local from here on.
+      const worktreePath = readOptionalPath('worktreePath', input.worktreePath)
+
       const worktree = await resolveWorktree({
-        worktreePath: input.worktreePath,
+        worktreePath,
         headSha: input.headSha,
-        clonePath: config.clonePath,
-        worktreeRoot: config.worktreeRoot,
+        clonePath: resolvedOptions.clonePath,
+        worktreeRoot: resolvedOptions.worktreeRoot,
       })
 
       try {
         const rawOutput = await runCodex({
-          binary,
+          binary: resolvedOptions.binary,
           typedFlags,
           timeoutMs,
           prompt: input.prompt,

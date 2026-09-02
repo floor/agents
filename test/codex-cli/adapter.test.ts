@@ -130,6 +130,74 @@ test('never removes a caller-supplied worktreePath, even on a mismatch', async (
   expect(list.trim().split('\n')).toHaveLength(1)
 })
 
+// ── round 6: a config/input value can't shift under us between validation and use ──
+
+function makeShiftyPath(firstValue: string, laterValue: string) {
+  let calls = 0
+  return {
+    object: {
+      toString: () => {
+        calls++
+        return calls === 1 ? firstValue : laterValue
+      },
+    },
+    getCallCount: () => calls,
+  }
+}
+
+test('rejects a worktreePath that is an object (even one with a toString) outright, before it ever reaches git rev-parse', async () => {
+  const { object: shiftyPath, getCallCount } = makeShiftyPath(clonePath, '/definitely/does/not/exist')
+
+  const reviewer = createCodexReviewer({ binary: OK })
+
+  await expect(
+    reviewer.review({ ...baseInput, headSha, worktreePath: shiftyPath as unknown as string }),
+  ).rejects.toThrow(/worktreePath/i)
+
+  // The type check must reject the object outright — never even coerce it once
+  // (which a `` `${worktreePath}` `` or similar would do), let alone read it twice to
+  // reach a real path by the time `git rev-parse` runs.
+  expect(getCallCount()).toBe(0)
+})
+
+test('rejects a clonePath that is an object (even one with a toString) at construction, before any git call', () => {
+  const { object: shiftyPath, getCallCount } = makeShiftyPath(clonePath, '/definitely/does/not/exist')
+
+  expect(() => createCodexReviewer({ binary: OK, clonePath: shiftyPath as unknown as string })).toThrow(
+    /clonePath/i,
+  )
+  expect(getCallCount()).toBe(0)
+})
+
+test('rejects a non-string binary or worktreeRoot at construction, same as clonePath/model/profile', () => {
+  const { object: shiftyPath } = makeShiftyPath('a', 'b')
+
+  expect(() => createCodexReviewer({ binary: shiftyPath as unknown as string })).toThrow(/binary/i)
+  expect(() => createCodexReviewer({ binary: OK, worktreeRoot: shiftyPath as unknown as string })).toThrow(
+    /worktreeRoot/i,
+  )
+  expect(() => createCodexReviewer({ binary: OK, worktreeRoot: '' })).toThrow(/worktreeRoot/i)
+})
+
+test('Bun.spawn receives cwd equal to the given worktreePath in the caller-supplied case, not only the auto-created case', async () => {
+  const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
+  const prevEnv = process.env.CODEX_TEST_RECORD
+  process.env.CODEX_TEST_RECORD = recordFile
+
+  try {
+    const reviewer = createCodexReviewer({ binary: RECORD })
+    await reviewer.review({ ...baseInput, headSha, worktreePath: clonePath })
+
+    const record = await readFile(recordFile, 'utf-8')
+    const cwdLine = record.split('\n').find((l) => l.startsWith('CWD:'))!
+    expect(cwdLine).toBe(`CWD:${realClonePath}`)
+  } finally {
+    if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
+    else process.env.CODEX_TEST_RECORD = prevEnv
+    await rm(recordFile, { force: true }).catch(() => {})
+  }
+}, 10_000)
+
 // ── argv is fixed by design: no extraArgs, only two typed & validated options ──────
 //
 // After three rounds of a denylist chasing new bypass spellings (a second --sandbox,

@@ -18,12 +18,12 @@ function requireEnv(name: string): string {
   return value
 }
 
-/** Runs the exact command the review-and-gate protocol documents
- *  (floor/radiooooo AGENTS.md, "Review" section): `codex exec --sandbox
- *  read-only "<prompt>" < /dev/null`. A separate @floor-agents/codex-cli
- *  package (built independently against the Reviewer interface) is
- *  expected to supersede this inline glue once available — swap it in
- *  below rather than extending this function. */
+/** Runs Codex CLI the way an independent reviewer is meant to be invoked
+ *  under this mode's protocol: `codex exec --sandbox read-only "<prompt>"
+ *  < /dev/null`. A separate @floor-agents/codex-cli package (built
+ *  independently against the Reviewer interface) is expected to supersede
+ *  this inline glue once available — swap it in below rather than
+ *  extending this function. */
 function createInlineCodexReviewer(): Reviewer {
   return {
     vendor: 'codex',

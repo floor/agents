@@ -3,7 +3,7 @@
 # Bare repo names — the owner comes from the GitHub adapter (GITHUB_OWNER),
 # same convention as the task-pipeline mode's project.repo.
 repos:
-  - radiooooo
+  - your-repo
 
 # How often to poll each repo's open PRs, in milliseconds.
 pollIntervalMs: 60000
@@ -22,21 +22,23 @@ mergeEnabled: false
 
 gate:
   # Labels that put a PR on the stronger two-vendor + runtime-sign-in-check
-  # gate (AGENTS.md "Review" section, auth/session/token-handling code).
+  # gate — reserve this for auth/session/token-handling changes in your repo.
   authLabels:
     - auth
-  # Label that unconditionally holds a PR for a human (DrJones/Jeremy's
-  # standing override).
+  # Label that unconditionally holds a PR for a human, regardless of
+  # reviews or checks. Set this to whatever your repo already uses for
+  # "needs a human to look at this."
   needsHumanLabel: needs-human
 
 vendor:
   # A `vendor:<name>` label on the PR wins over every other rule below.
   labelPrefix: "vendor:"
-  # Branch-name prefix -> implementer vendor.
+  # Branch-name prefix -> implementer vendor. Adjust to your own naming.
   branchPrefixes:
     - prefix: cursor/
-      vendor: grok
-  # A PR body line starting with this prefix -> implementer vendor.
+      vendor: cursor
+  # A PR body line starting with this prefix -> implementer vendor. Useful
+  # for a tool that stamps its PRs with a session/run identifier trailer.
   bodyMarkers:
-    - prefix: "Claude-Session:"
-      vendor: claude
+    - prefix: "Generated-By:"
+      vendor: some-agent

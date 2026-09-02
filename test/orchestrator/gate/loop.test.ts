@@ -6,6 +6,8 @@ import {
   createGateStateStore,
   DEFAULT_GATE_CONFIG,
   DEFAULT_VENDOR_CONFIG,
+  DEFAULT_CHECKLISTS_CONFIG,
+  type ChecklistRule,
   type GateModeConfig,
   type GateStateStore,
 } from '@floor-agents/orchestrator'
@@ -40,13 +42,22 @@ type FakePR = { -readonly [K in keyof PRDetails]: PRDetails[K] } & {
   staleListRemaining?: number
 }
 
-function makeFakeGitAdapter(prs: FakePR[]) {
+function makeFakeGitAdapter(prs: FakePR[], files: Record<string, FileContent> = {}) {
   const mergeCalls: { repo: string; prId: string; options?: any }[] = []
   const commentCalls: { repo: string; prId: string; body: string }[] = []
+  const getFileCalls: { repo: string; path: string; ref: string | undefined }[] = []
   let nextCommentId = 1000
 
   const adapter: GitAdapter = {
-    async getFile(): Promise<FileContent | null> { return null },
+    // Backs both `docs/review/...`-style checklist lookups (see the
+    // checklists tests below) and any other getFile use — returns the
+    // configured fixture at `path`, or null (not found) otherwise. Every
+    // call is recorded so a test can assert WHICH ref a checklist was
+    // fetched at (the PR's own head sha, not the default branch).
+    async getFile(repo, path, ref): Promise<FileContent | null> {
+      getFileCalls.push({ repo, path, ref })
+      return files[path] ?? null
+    },
     async getTree(): Promise<FileEntry[]> { return [] },
     async createBranch() {},
     async commitFiles(): Promise<string> { return 'sha' },
@@ -99,7 +110,7 @@ function makeFakeGitAdapter(prs: FakePR[]) {
     },
   }
 
-  return { adapter, mergeCalls, commentCalls }
+  return { adapter, mergeCalls, commentCalls, getFileCalls }
 }
 
 function makePR(overrides: Partial<FakePR> = {}): FakePR {
@@ -150,6 +161,7 @@ function makeConfig(overrides: Partial<GateModeConfig> = {}): GateModeConfig {
     excludeAuthors: [],
     gate: DEFAULT_TEST_GATE_CONFIG,
     vendor: DEFAULT_VENDOR_CONFIG,
+    checklists: DEFAULT_CHECKLISTS_CONFIG,
     ...overrides,
   }
 }
@@ -861,4 +873,122 @@ test('real createGateStateStore integrates with the loop (smoke test)', async ()
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+// ── Checklists (gate/checklists.ts) wired into the built prompt ─────────
+
+test('a matching checklist rule is fetched at the PR\'s own head sha and included in the reviewer\'s prompt', async () => {
+  const pr = makePR({ labels: ['auth'] })
+  const { adapter, getFileCalls } = makeFakeGitAdapter([pr], {
+    'docs/review/concurrency.md': {
+      path: 'docs/review/concurrency.md',
+      content: '1. Check every await for an identity guard.',
+      encoding: 'utf-8',
+    },
+  })
+
+  let capturedPrompt = ''
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: input => {
+      capturedPrompt = input.prompt
+      return '## Reviewer agent (Codex)\n\nVerdict: approve as-is'
+    },
+  })
+
+  const rules: ChecklistRule[] = [{ label: 'auth', file: 'docs/review/concurrency.md' }]
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ checklists: { rules } }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'Checklists:\n{{checklists}}',
+  })
+
+  expect(capturedPrompt).toContain('1. Check every await for an identity guard.')
+  expect(getFileCalls).toContainEqual({
+    repo: 'acme/widgets',
+    path: 'docs/review/concurrency.md',
+    ref: pr.headSha,
+  })
+})
+
+test('no matching checklist rule renders the "no checklist matched" placeholder, and getFile is never called', async () => {
+  const pr = makePR({ labels: [] })
+  const { adapter, getFileCalls } = makeFakeGitAdapter([pr], {
+    'docs/review/concurrency.md': { path: 'docs/review/concurrency.md', content: 'irrelevant', encoding: 'utf-8' },
+  })
+
+  let capturedPrompt = ''
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: input => {
+      capturedPrompt = input.prompt
+      return '## Reviewer agent (Codex)\n\nVerdict: approve as-is'
+    },
+  })
+
+  const rules: ChecklistRule[] = [{ label: 'auth', file: 'docs/review/concurrency.md' }]
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ checklists: { rules } }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'Checklists:\n{{checklists}}',
+  })
+
+  expect(capturedPrompt).toBe("Checklists:\n(no checklist matched this PR's labels or changed paths)")
+  expect(getFileCalls.length).toBe(0)
+})
+
+test('a checklist file matched by rule but missing at the head sha does not fail the pass; review still posts', async () => {
+  const pr = makePR({ labels: ['auth'] })
+  const { adapter, commentCalls } = makeFakeGitAdapter([pr], {}) // no files configured, so getFile returns null
+  const reviewer = createFakeReviewer({ vendor: 'codex' })
+  const rules: ChecklistRule[] = [{ label: 'auth', file: 'docs/review/concurrency.md' }]
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ checklists: { rules } }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'Checklists:\n{{checklists}}',
+  })
+
+  expect(commentCalls.length).toBe(1)
+})
+
+test('a checklist rule matched by a changed file\'s path prefix pulls the diff-derived path, not the PR\'s label', async () => {
+  const pr = makePR({ labels: [] })
+  const { adapter } = makeFakeGitAdapter([pr], {
+    'docs/review/matrix.md': { path: 'docs/review/matrix.md', content: 'checkbox rules', encoding: 'utf-8' },
+  })
+  // makeFakeGitAdapter's getPRDiff() always returns a diff touching
+  // src/thing.ts (see its definition above), so a rule keyed on that
+  // prefix should match even with no labels on the PR at all.
+  let capturedPrompt = ''
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: input => {
+      capturedPrompt = input.prompt
+      return '## Reviewer agent (Codex)\n\nVerdict: approve as-is'
+    },
+  })
+  const rules: ChecklistRule[] = [{ pathContains: 'src/', file: 'docs/review/matrix.md' }]
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ checklists: { rules } }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => '{{checklists}}',
+  })
+
+  expect(capturedPrompt).toContain('checkbox rules')
 })

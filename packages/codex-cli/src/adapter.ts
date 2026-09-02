@@ -14,7 +14,12 @@ export type CodexReviewerConfig = {
   readonly timeoutMs?: number
   /** `--sandbox` value. Default `'read-only'` — this reviewer never writes to the worktree. */
   readonly sandbox?: string
-  /** Extra argv entries inserted between the sandbox flag and the prompt. */
+  /**
+   * Extra argv entries inserted between the sandbox flag and the prompt. Must not
+   * contain a `--sandbox` flag — that would let a second, later `--sandbox` value
+   * silently override the one set via the `sandbox` option above. Use `sandbox`
+   * instead if you need to change it.
+   */
   readonly extraArgs?: readonly string[]
   /**
    * Local clone of the repo to review, used to create a detached worktree at
@@ -49,6 +54,12 @@ export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer 
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const sandbox = config.sandbox ?? DEFAULT_SANDBOX
   const extraArgs = config.extraArgs ?? []
+
+  if (extraArgs.some((arg) => arg === '--sandbox' || arg.startsWith('--sandbox='))) {
+    throw new Error(
+      'CodexReviewer: extraArgs must not contain a --sandbox flag — set `sandbox` in CodexReviewerConfig instead, so a later flag can never silently override the read-only guarantee.',
+    )
+  }
 
   return {
     vendor: 'codex',
@@ -114,7 +125,11 @@ async function runCodex(opts: {
   let timedOut = false
   const timer = setTimeout(() => {
     timedOut = true
-    proc.kill()
+    // SIGKILL, not the default SIGTERM: codex (or a wedged descendant) may ignore a
+    // termination request, and a caught-but-ignored SIGTERM would leave `proc.exited`
+    // unresolved forever, so this timeout would never actually bound the wait below.
+    // SIGKILL cannot be caught or ignored.
+    proc.kill('SIGKILL')
   }, opts.timeoutMs)
 
   try {

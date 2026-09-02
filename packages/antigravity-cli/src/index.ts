@@ -1,6 +1,12 @@
-export { createCodexReviewer } from './adapter'
-export type { CodexReviewerConfig } from './adapter'
-export { CodexProcessError, CodexTimeoutError, MalformedReviewError } from './errors'
+export { createAntigravityReviewer } from './adapter'
+export type { AntigravityReviewerConfig } from './adapter'
+export {
+  AntigravityProcessError,
+  AntigravityTimeoutError,
+  MalformedReviewError,
+  PolicyError,
+  WorktreeModifiedError,
+} from './errors'
 export { WorktreeMismatchError } from '@floor-agents/core'
 export { extractReview } from './extract'
 export { renderReviewPrompt } from './prompt'

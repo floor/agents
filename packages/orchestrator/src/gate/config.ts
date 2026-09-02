@@ -40,10 +40,25 @@ function parseVendorConfig(raw: any): VendorAttributionConfig {
   }
 }
 
-function parseTrustedReviewers(raw: any): Record<string, string> {
-  const trusted: Record<string, string> = {}
-  for (const [login, vendor] of Object.entries(raw ?? {})) {
-    trusted[String(login).toLowerCase()] = String(vendor)
+/** A trustedReviewers value is either a single vendor name, or an array of
+ *  vendor names for a login that's trusted to post reviews for more than
+ *  one vendor (see GateConfig.trustedReviewers's doc comment in decision.ts
+ *  for why: e.g. the gate loop's own bot account posting both a primary and
+ *  a `secondReviewer` review under one GitHub identity).
+ *
+ *  `Object.create(null)`, not `{}` — a login key literally named
+ *  `"__proto__"` in the YAML config assigns a plain object's PROTOTYPE
+ *  rather than an own property (an array value would then be inherited by
+ *  every other lookup on this object, e.g. resolving login `"0"` to that
+ *  array's index-0 entry via prototype-chain lookup, without ever being
+ *  configured for it). A null-prototype object has no `__proto__` accessor
+ *  to trigger, so that key becomes an ordinary (and harmless, since no
+ *  comment author's login is ever literally `__proto__`) own property. */
+function parseTrustedReviewers(raw: any): Record<string, string | readonly string[]> {
+  const trusted: Record<string, string | readonly string[]> = Object.create(null)
+  for (const [login, value] of Object.entries(raw ?? {})) {
+    const key = String(login).toLowerCase()
+    trusted[key] = Array.isArray(value) ? value.map(v => String(v)) : String(value)
   }
   return trusted
 }
@@ -54,6 +69,7 @@ function parseGateConfig(raw: any): GateConfig {
     authLabels: raw.authLabels ?? DEFAULT_GATE_CONFIG.authLabels,
     needsHumanLabel: raw.needsHumanLabel ?? DEFAULT_GATE_CONFIG.needsHumanLabel,
     trustedReviewers: raw.trustedReviewers ? parseTrustedReviewers(raw.trustedReviewers) : DEFAULT_GATE_CONFIG.trustedReviewers,
+    secondReviewer: raw.secondReviewer !== undefined ? String(raw.secondReviewer) : undefined,
   }
 }
 

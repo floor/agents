@@ -48,8 +48,43 @@ gate:
   # (It will NOT be reviewed again and again: which heads have already
   # been attempted is tracked separately, in persisted per-PR state, not
   # by whether a trusted verdict is currently visible.)
+  #
+  # A value can also be an ARRAY of vendors, for a single login that
+  # legitimately posts reviews under more than one vendor — e.g. this same
+  # bot account posting both the primary reviewer's verdict and the
+  # `secondReviewer`'s verdict below, both under the one GITHUB_TOKEN this
+  # process uses to comment. In that case the vendor is taken from the
+  # comment's OWN header text ("## Reviewer agent (Codex)" vs.
+  # "## Reviewer agent (Gemini)"), but ONLY when it names one of the
+  # vendors listed here — a header naming anything else from this login is
+  # rejected outright, not attributed to either vendor. One login cannot
+  # be mapped to both vendors via two separate string entries; use one
+  # array entry instead:
+  #
+  #   trustedReviewers:
+  #     your-bot-account:
+  #       - codex
+  #       - gemini
+  #
+  # This example ships with the single-vendor form, since secondReviewer
+  # below is off by default:
   trustedReviewers:
     your-bot-account: codex
+  # Vendor name of a SECOND Reviewer to also run on any PR carrying an
+  # `authLabels` label, in addition to the primary GATE_REVIEWER — so an
+  # auth-labelled PR can collect the two independent-vendor
+  # `approve as-is` verdicts the auth gate above requires without a human
+  # triggering the second review by hand (see docs/review-gate.md). Uses
+  # the same vendor kinds as GATE_REVIEWER ("codex", "gemini", "fake") but
+  # is selected here, not by an env var — src/gate.ts builds it from this
+  # key's value using the same GATE_CODEX_*/GATE_AGY_* env vars regardless
+  # of which "slot" (primary or second) a vendor ends up in. Optional;
+  # unset (the default) means only the primary reviewer ever runs
+  # automatically. Uncomment to enable, and switch trustedReviewers above
+  # to the array form if your second reviewer posts under the SAME
+  # GitHub login as your primary reviewer (the common case: one
+  # GITHUB_TOKEN posting both):
+  # secondReviewer: gemini
 
 vendor:
   # A `vendor:<name>` label on the PR wins over every other rule below.

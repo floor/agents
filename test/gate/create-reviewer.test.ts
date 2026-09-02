@@ -1,6 +1,11 @@
 import { test, expect } from 'bun:test'
 import { createFakeReviewer } from '@floor-agents/core'
-import { codexReviewerConfigFromEnv, createReviewer } from '../../src/gate/create-reviewer.ts'
+import {
+  antigravityReviewerConfigFromEnv,
+  codexReviewerConfigFromEnv,
+  createReviewer,
+  createReviewerForKind,
+} from '../../src/gate/create-reviewer.ts'
 
 // These exercise src/gate.ts's own env-var -> Reviewer construction path
 // directly, complementing test/orchestrator/gate/codex-cli-integration.test.ts
@@ -76,4 +81,66 @@ test('createReviewer("codex") threads GATE_CODEX_MODEL/PROFILE validation errors
   // this wiring, not just when calling createCodexReviewer() directly.
   expect(() => createReviewer({ GATE_CODEX_MODEL: '--not-a-real-model' })).toThrow(/model/i)
   expect(() => createReviewer({ GATE_CODEX_PROFILE: 'has spaces' })).toThrow(/profile/i)
+})
+
+// ── GATE_REVIEWER=gemini / @floor-agents/antigravity-cli wiring ─────────
+
+test('antigravityReviewerConfigFromEnv returns an empty config when no GATE_AGY_* vars are set', () => {
+  expect(antigravityReviewerConfigFromEnv({})).toEqual({})
+})
+
+test('antigravityReviewerConfigFromEnv maps every GATE_AGY_* var to its AntigravityReviewerConfig key one-to-one', () => {
+  const config = antigravityReviewerConfigFromEnv({
+    GATE_AGY_BINARY: '/usr/local/bin/agy',
+    GATE_AGY_MODEL: 'gemini-3.8-flash-high',
+    GATE_AGY_EFFORT: 'high',
+    GATE_AGY_CLONE_PATH: '/var/floor-agents/clone',
+    GATE_AGY_WORKTREE_ROOT: '/var/floor-agents/worktrees',
+    GATE_AGY_SETTINGS_PATH: '/var/floor-agents/agy-settings.json',
+    GATE_AGY_TIMEOUT_MS: '900000',
+  })
+
+  expect(config).toEqual({
+    binary: '/usr/local/bin/agy',
+    model: 'gemini-3.8-flash-high',
+    effort: 'high',
+    clonePath: '/var/floor-agents/clone',
+    worktreeRoot: '/var/floor-agents/worktrees',
+    settingsPath: '/var/floor-agents/agy-settings.json',
+    timeoutMs: 900_000,
+  })
+})
+
+test('antigravityReviewerConfigFromEnv omits a key entirely when its env var is unset, rather than passing undefined', () => {
+  const config = antigravityReviewerConfigFromEnv({ GATE_AGY_MODEL: 'gemini-3.8-flash-high' })
+  expect(Object.keys(config)).toEqual(['model'])
+})
+
+test('antigravityReviewerConfigFromEnv: GATE_AGY_TIMEOUT_MS rejects anything that is not a plain decimal integer string', () => {
+  const rejects = ['0', '-1', '0.5', '1e3', '5ms']
+  for (const raw of rejects) {
+    expect(() => antigravityReviewerConfigFromEnv({ GATE_AGY_TIMEOUT_MS: raw })).toThrow(/GATE_AGY_TIMEOUT_MS/)
+  }
+})
+
+test('createReviewer returns the antigravity-cli reviewer for GATE_REVIEWER=gemini, with vendor "gemini"', () => {
+  const reviewer = createReviewer({ GATE_REVIEWER: 'gemini' })
+  expect(reviewer.vendor).toBe('gemini')
+})
+
+test('createReviewer("gemini") threads GATE_AGY_MODEL validation errors through, proving it is not silently swallowed', () => {
+  expect(() => createReviewer({ GATE_REVIEWER: 'gemini', GATE_AGY_MODEL: 'has spaces' })).toThrow(/model/i)
+  expect(() => createReviewer({ GATE_REVIEWER: 'gemini', GATE_AGY_EFFORT: 'extreme' })).toThrow(/effort/i)
+})
+
+// ── createReviewerForKind (used directly for the second reviewer) ───────
+
+test('createReviewerForKind builds each supported vendor kind regardless of GATE_REVIEWER', () => {
+  expect(createReviewerForKind('codex', {}).vendor).toBe('codex')
+  expect(createReviewerForKind('gemini', {}).vendor).toBe('gemini')
+  expect(createReviewerForKind('fake', {}).vendor).toBe('fake')
+})
+
+test('createReviewerForKind throws a clear error for an unknown kind, the same as createReviewer does for GATE_REVIEWER', () => {
+  expect(() => createReviewerForKind('some-unknown-vendor', {})).toThrow(/some-unknown-vendor/)
 })

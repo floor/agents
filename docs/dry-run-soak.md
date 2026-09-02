@@ -339,8 +339,10 @@ together with `--update-env`, is what makes PM2 re-resolve that app's `env`
 block from the file's current contents; deleting and re-starting the app
 sidesteps the cached-environment behavior entirely, which is why it's
 listed as the most certain option. See PM2's own "Environment variables"
-documentation (https://pm2.keymetrics.io/docs/usage/environment/) for this
-caching behavior and the `--update-env` flag.
+documentation (https://pm2.keymetrics.io/docs/usage/environment/) for the
+caching behavior, and the "Process management" documentation
+(https://pm2.keymetrics.io/docs/usage/process-management/) for the
+`--update-env` flag itself.
 
 Keep watching the logs and `scripts/gate-audit.ts` output closely for at
 least the first day after the flip — the switch to real merges is the one

@@ -174,6 +174,41 @@ test('needs_review: calls the reviewer once and posts its text verbatim', async 
   expect(commentCalls[0]!.body).toBe('## Reviewer agent (Codex)\n\nVerdict: approve as-is')
 })
 
+// codex-cli-integration.test.ts's fixture-driven verbatim proof can never
+// catch a stray `.trim()` reintroduced in loop.ts: @floor-agents/codex-cli's
+// extractReview() (packages/codex-cli/src/extract.ts) always slices starting
+// at the header's own "#" and always strips all trailing whitespace itself,
+// so ITS output is already boundary-clean by construction — a downstream
+// `.trim()` on it is a mathematical no-op regardless of fixture content.
+// createFakeReviewer bypasses extractReview entirely and returns exactly the
+// given `text`, so THIS test can carry boundary whitespace all the way to
+// `result.text` and is the one that actually pins "loop.ts never re-trims
+// what a Reviewer returns." Verified locally: temporarily changing loop.ts's
+// `addPRComment(repo, pr.id, result.text)` to
+// `addPRComment(repo, pr.id, result.text.trim())` makes this test fail
+// (posted body no longer matches REVIEW_TEXT_WITH_BOUNDARY_WHITESPACE); the
+// edit was reverted before committing.
+const REVIEW_TEXT_WITH_BOUNDARY_WHITESPACE =
+  ' ## Reviewer agent (Codex)\n\nVerdict: approve as-is \n\n'
+
+test('needs_review: posts a hand-built Reviewer\'s text byte for byte, including leading/trailing whitespace a stray .trim() would strip', async () => {
+  const pr = makePR()
+  const { adapter, commentCalls } = makeFakeGitAdapter([pr])
+  const reviewer = createFakeReviewer({ vendor: 'codex', text: REVIEW_TEXT_WITH_BOUNDARY_WHITESPACE })
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig(),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'Review {{repo}}#{{prNumber}}\nFiles:\n{{changedFiles}}',
+  })
+
+  expect(commentCalls.length).toBe(1)
+  expect(commentCalls[0]!.body).toBe(REVIEW_TEXT_WITH_BOUNDARY_WHITESPACE)
+})
+
 test('does not re-review the same head on a second pass', async () => {
   const pr = makePR()
   const { adapter, commentCalls } = makeFakeGitAdapter([pr])

@@ -5,6 +5,10 @@ import type {
   Commit,
   PullRequest,
   FileWrite,
+  PRDetails,
+  PRCommentEntry,
+  CheckStatus,
+  MergeOptions,
 } from '@floor-agents/core'
 
 export type GitHubAdapterConfig = {
@@ -100,6 +104,23 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
         403,
         `/repos/${owner}/${repo}/git/refs/heads/${branch}`,
       )
+    }
+  }
+
+  function toPRDetails(data: any): PRDetails {
+    return {
+      id: String(data.number),
+      url: data.html_url,
+      title: data.title,
+      body: data.body ?? '',
+      headSha: data.head.sha,
+      headRef: data.head.ref,
+      baseRef: data.base.ref,
+      authorLogin: data.user?.login ?? '',
+      labels: (data.labels as any[]).map((l: any) => (typeof l === 'string' ? l : l.name)),
+      draft: Boolean(data.draft),
+      createdAt: new Date(data.created_at),
+      updatedAt: new Date(data.updated_at),
     }
   }
 
@@ -264,10 +285,14 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
       })
     },
 
-    async mergePR(repo, prId) {
+    async mergePR(repo, prId, options?: MergeOptions) {
+      const body: Record<string, unknown> = { merge_method: 'squash' }
+      if (options?.commitTitle) body.commit_title = options.commitTitle
+      if (options?.commitMessage) body.commit_message = options.commitMessage
+
       await api(`/repos/${owner}/${repo}/pulls/${prId}/merge`, {
         method: 'PUT',
-        body: JSON.stringify({ merge_method: 'squash' }),
+        body: JSON.stringify(body),
       })
     },
 
@@ -281,6 +306,100 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
         author: c.commit.author.name,
         date: new Date(c.commit.author.date),
       }))
+    },
+
+    async listOpenPRs(repo) {
+      const results: PRDetails[] = []
+      let page = 1
+      // Paginate defensively: a busy repo can have more than one page of open PRs.
+      while (true) {
+        const data = await api(`/repos/${owner}/${repo}/pulls?state=open&per_page=100&page=${page}`)
+        const items = data as any[]
+        results.push(...items.map(toPRDetails))
+        if (items.length < 100) break
+        page++
+      }
+      return results
+    },
+
+    async getPR(repo, prId) {
+      try {
+        const data = await api(`/repos/${owner}/${repo}/pulls/${prId}`)
+        return toPRDetails(data)
+      } catch (err) {
+        if (err instanceof GitHubError && err.status === 404) return null
+        throw err
+      }
+    },
+
+    async getCheckStatus(repo, sha): Promise<CheckStatus> {
+      const [statusData, checksData] = await Promise.all([
+        api(`/repos/${owner}/${repo}/commits/${sha}/status`),
+        api(`/repos/${owner}/${repo}/commits/${sha}/check-runs`),
+      ])
+
+      const results: CheckStatus[] = []
+
+      // Legacy combined "status" API (statuses/status contexts, e.g. external CI)
+      if (Array.isArray(statusData?.statuses) && statusData.statuses.length > 0) {
+        if (statusData.state === 'failure' || statusData.state === 'error') results.push('failure')
+        else if (statusData.state === 'success') results.push('success')
+        else results.push('pending')
+      }
+
+      // Checks API (GitHub Actions and check-run-based integrations)
+      for (const run of (checksData?.check_runs as any[]) ?? []) {
+        if (run.status !== 'completed') {
+          results.push('pending')
+        } else if (run.conclusion === 'success' || run.conclusion === 'neutral' || run.conclusion === 'skipped') {
+          results.push('success')
+        } else {
+          // failure, cancelled, timed_out, action_required, stale
+          results.push('failure')
+        }
+      }
+
+      // No checks configured at all: treat as pending, never as an implicit pass.
+      if (results.length === 0) return 'pending'
+      if (results.some(r => r === 'failure')) return 'failure'
+      if (results.every(r => r === 'success')) return 'success'
+      return 'pending'
+    },
+
+    async listComments(repo, prId) {
+      const data = await api(`/repos/${owner}/${repo}/issues/${prId}/comments?per_page=100`)
+      return (data as any[]).map((c: any): PRCommentEntry => ({
+        id: String(c.id),
+        author: c.user?.login ?? '',
+        body: c.body ?? '',
+        createdAt: new Date(c.created_at),
+      }))
+    },
+
+    async addLabel(repo, prId, label) {
+      await api(`/repos/${owner}/${repo}/issues/${prId}/labels`, {
+        method: 'POST',
+        body: JSON.stringify({ labels: [label] }),
+      })
+    },
+
+    async removeLabel(repo, prId, label) {
+      try {
+        await api(`/repos/${owner}/${repo}/issues/${prId}/labels/${encodeURIComponent(label)}`, {
+          method: 'DELETE',
+        })
+      } catch (err) {
+        // Idempotent: 404 means the label wasn't present.
+        if (err instanceof GitHubError && err.status === 404) return
+        throw err
+      }
+    },
+
+    async getCommitDate(repo, sha) {
+      const data = await api(`/repos/${owner}/${repo}/commits/${sha}`)
+      // Committer date reflects when the commit entered the branch (survives
+      // rebases/amends), which is what "how stale is a verdict" cares about.
+      return new Date(data.commit.committer.date)
     },
   }
 }

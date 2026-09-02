@@ -80,6 +80,39 @@ export type FileWrite = {
   readonly content: string
 }
 
+// ── Review & Gate types (external PR polling/merge) ──────────────────
+
+/** Combined status of a commit's checks, per the review-and-gate protocol:
+ *  any failing check wins, all must succeed for 'success', otherwise 'pending'. */
+export type CheckStatus = 'success' | 'failure' | 'pending'
+
+export type PRDetails = {
+  readonly id: string
+  readonly url: string
+  readonly title: string
+  readonly body: string
+  readonly headSha: string
+  readonly headRef: string
+  readonly baseRef: string
+  readonly authorLogin: string
+  readonly labels: readonly string[]
+  readonly draft: boolean
+  readonly createdAt: Date
+  readonly updatedAt: Date
+}
+
+export type PRCommentEntry = {
+  readonly id: string
+  readonly author: string
+  readonly body: string
+  readonly createdAt: Date
+}
+
+export type MergeOptions = {
+  readonly commitTitle?: string
+  readonly commitMessage?: string
+}
+
 export type GitAdapter = {
   getFile(repo: string, path: string, ref?: string): Promise<FileContent | null>
   getTree(repo: string, path: string, ref?: string): Promise<FileEntry[]>
@@ -88,8 +121,19 @@ export type GitAdapter = {
   createPR(repo: string, branch: string, title: string, body: string): Promise<PullRequest>
   getPRDiff(repo: string, prId: string): Promise<string>
   addPRComment(repo: string, prId: string, body: string): Promise<void>
-  mergePR(repo: string, prId: string): Promise<void>
+  /** Optional `options` is additive: existing 2-arg callers merge with no
+   *  custom commit title/message (adapter default behavior unchanged). */
+  mergePR(repo: string, prId: string, options?: MergeOptions): Promise<void>
   getRecentCommits(repo: string, path: string, n?: number): Promise<Commit[]>
+
+  // Review & gate mode — polling and PR metadata for PRs this process did not create
+  listOpenPRs(repo: string): Promise<PRDetails[]>
+  getPR(repo: string, prId: string): Promise<PRDetails | null>
+  getCheckStatus(repo: string, sha: string): Promise<CheckStatus>
+  listComments(repo: string, prId: string): Promise<PRCommentEntry[]>
+  addLabel(repo: string, prId: string, label: string): Promise<void>
+  removeLabel(repo: string, prId: string, label: string): Promise<void>
+  getCommitDate(repo: string, sha: string): Promise<Date>
 }
 
 // ── LLM Provider Adapter ─────────────────────────────────────────────

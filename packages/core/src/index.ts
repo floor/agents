@@ -11,6 +11,10 @@ export type {
   PullRequest,
   FileWrite,
   GitAdapter,
+  CheckStatus,
+  PRDetails,
+  PRCommentEntry,
+  MergeOptions,
   ToolDefinition,
   ToolCall,
   ContentBlock,
@@ -36,6 +40,11 @@ export type { WorkflowDefinition, WorkflowStateDefinition, TransitionDefinition,
 export type { ChainOfCommand, ChainNode, WorkSource } from './types/chain.ts'
 export type { AutonomyConfig, AutonomyOverride, AutonomyMatch } from './types/autonomy.ts'
 export type { ExecutionStep, FileOutput, AgentOutput, ReviewVerdict, ExecutionState, StateStore } from './types/execution.ts'
+export type { ReviewInput, ReviewResult, Reviewer } from './types/reviewer.ts'
+
+// Testing
+export { createFakeReviewer } from './testing/fake-reviewer.ts'
+export type { FakeReviewerConfig } from './testing/fake-reviewer.ts'
 
 // Config
 export { loadCompanyConfig } from './config/loader.ts'

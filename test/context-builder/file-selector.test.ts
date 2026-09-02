@@ -54,6 +54,13 @@ function makeGitAdapter(files: Record<string, string>): GitAdapter {
     async addPRComment() {},
     async mergePR() {},
     async getRecentCommits() { return [] },
+    async listOpenPRs() { return [] },
+    async getPR() { return null },
+    async getCheckStatus() { return 'pending' },
+    async listComments() { return [] },
+    async addLabel() {},
+    async removeLabel() {},
+    async getCommitDate() { return new Date() },
   }
 }
 

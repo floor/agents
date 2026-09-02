@@ -103,15 +103,55 @@ test('only the LAST matching verdict line counts, even if an earlier one is quot
 test('extracts every distinct sha mentioned, deduplicated, lowercased', () => {
   const body = [
     '## Reviewer agent (Codex)',
-    'Reviewed commit ABC1234 (also known as abc1234).',
+    'Reviewed commit ABC123456789 (also known as abc123456789).',
     'Compared against deadbeef00112233445566778899aabbccddeeff.',
     'Verdict: approve as-is',
   ].join('\n')
 
   expect(parseVerdictComment(body)?.shas).toEqual([
-    'abc1234',
+    'abc123456789',
     'deadbeef00112233445566778899aabbccddeeff',
   ])
+})
+
+test('a sha shorter than 12 hex chars is not extracted', () => {
+  const body = [
+    '## Reviewer agent (Codex)',
+    'Reviewed at abc1234.',
+    'Verdict: approve as-is',
+  ].join('\n')
+
+  expect(parseVerdictComment(body)?.shas).toEqual([])
+})
+
+test('a hex token embedded in a URL path segment is not extracted as a sha', () => {
+  const body = [
+    '## Reviewer agent (Codex)',
+    'See the build at https://ci.example.com/build/deadbeef00112233445566778899aabbccddeeff/logs for details.',
+    'Verdict: approve as-is',
+  ].join('\n')
+
+  expect(parseVerdictComment(body)?.shas).toEqual([])
+})
+
+test('a hex token embedded in a shorter URL path segment (7 hex chars) is not extracted', () => {
+  const body = [
+    '## Reviewer agent (Codex)',
+    'CI status: /build/454cd4c passed.',
+    'Verdict: approve as-is',
+  ].join('\n')
+
+  expect(parseVerdictComment(body)?.shas).toEqual([])
+})
+
+test('a sha mentioned in plain prose (not URL-adjacent) is still extracted', () => {
+  const body = [
+    '## Reviewer agent (Codex)',
+    'Reviewed at deadbeef00112233445566778899aabbccddeeff, looks good.',
+    'Verdict: approve as-is',
+  ].join('\n')
+
+  expect(parseVerdictComment(body)?.shas).toEqual(['deadbeef00112233445566778899aabbccddeeff'])
 })
 
 test('returns null on an empty body', () => {

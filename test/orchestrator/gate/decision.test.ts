@@ -2,7 +2,7 @@ import { test, expect } from 'bun:test'
 import { decideGate, DEFAULT_GATE_CONFIG, type GateDecisionInput, type GateConfig } from '../../../packages/orchestrator/src/gate/decision.ts'
 
 const HEAD_SHA = 'deadbeef00112233445566778899aabbccddeeff'
-const HEAD_SHORT = HEAD_SHA.slice(0, 7)
+const HEAD_SHORT = HEAD_SHA.slice(0, 12) // the minimum accepted abbreviation length
 
 // Trusted comment-author logins used across these tests, mapped to the
 // vendor they're trusted for — the same shape a real GateConfig.trustedReviewers
@@ -72,11 +72,27 @@ test('a valid approve-as-is verdict naming the head sha, checks green: mergeable
   expect(result).toEqual({ kind: 'mergeable' })
 })
 
-test('a valid approve-as-is verdict naming an abbreviated head sha still counts', () => {
+test('a valid approve-as-is verdict naming an abbreviated (12-char) head sha still counts', () => {
   const result = decideGate(baseInput({
     comments: [approveComment('codex', { sha: HEAD_SHORT, createdAt: new Date() })],
   }))
   expect(result).toEqual({ kind: 'mergeable' })
+})
+
+test('a sha shorter than 12 hex chars is never extracted, so it does not count even if it IS a prefix of the head', () => {
+  const result = decideGate(baseInput({
+    comments: [approveComment('codex', { sha: HEAD_SHA.slice(0, 7), createdAt: new Date() })],
+  }))
+  expect(result.kind).toBe('needs_review')
+})
+
+test('a 12-hex prefix of a DIFFERENT commit does not match the head', () => {
+  // Same length as a valid abbreviation, but not a prefix of HEAD_SHA.
+  const otherCommitPrefix = 'ffffffffffff'
+  const result = decideGate(baseInput({
+    comments: [approveComment('codex', { sha: otherCommitPrefix, createdAt: new Date() })],
+  }))
+  expect(result.kind).toBe('needs_review')
 })
 
 test('approved but checks still pending: hold', () => {

@@ -24,15 +24,24 @@ export type ParsedVerdict = {
   readonly vendor: string
   readonly round: number | null
   readonly decision: Decision
-  /** Every 7-40 hex-char sha-looking token mentioned anywhere in the
-   *  comment, lowercased, de-duplicated, in first-seen order. */
+  /** Every 12-40 hex-char sha-looking token mentioned anywhere in the
+   *  comment as a deliberate "I reviewed this commit" statement, lowercased,
+   *  de-duplicated, in first-seen order. A shorter (7-11 char) token is
+   *  excluded — too short to rule out an unrelated commit sharing the same
+   *  prefix once a repo has more than a few thousand commits — and a token
+   *  immediately adjacent to a `/` is excluded as a URL or file-path
+   *  segment (e.g. a permalink's `/commit/<sha>/...` or a build path like
+   *  `/build/<sha>`), not a reviewer naming the commit they reviewed. */
   readonly shas: readonly string[]
 }
 
 // Exactly "## Reviewer agent (" — a missing space (e.g. "##Reviewer agent")
 // does not match the documented header format and is not a verdict.
 const HEADER_RE = /^## Reviewer agent \(([^,)]+?)(?:,\s*round\s*(\d+))?\)\s*$/
-const SHA_RE = /\b[0-9a-fA-F]{7,40}\b/g
+// 12-40 hex chars: long enough that a prefix collision with an unrelated
+// commit is not a realistic risk (git itself treats 12 chars as safely
+// unambiguous for most repos), short enough to allow an abbreviated sha.
+const SHA_RE = /\b[0-9a-fA-F]{12,40}\b/g
 
 const VERDICT_LINES: Record<string, Decision> = {
   'Verdict: approve as-is': 'approve as-is',
@@ -67,8 +76,15 @@ export function parseVerdictComment(body: string): ParsedVerdict | null {
 
   const seen = new Set<string>()
   const shas: string[] = []
-  for (const match of body.match(SHA_RE) ?? []) {
-    const sha = match.toLowerCase()
+  for (const match of body.matchAll(SHA_RE)) {
+    const token = match[0]
+    const start = match.index
+    const end = start + token.length
+    // A token immediately touching a "/" is a URL or file-path segment,
+    // not a reviewer naming the commit — exclude it (see ParsedVerdict.shas).
+    if (body[start - 1] === '/' || body[end] === '/') continue
+
+    const sha = token.toLowerCase()
     if (!seen.has(sha)) {
       seen.add(sha)
       shas.push(sha)

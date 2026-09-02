@@ -28,26 +28,30 @@ Every `pollIntervalMs` (default 60s), for each configured repo:
      already been asked to review this exact head (and isn't the same
      vendor as the PR's implementer), build a prompt from
      `promptTemplatePath` plus the PR's title/body/base/head/changed-file
-     list, call `Reviewer.review()`, and post the returned text **as-is**
-     as a PR comment — unless it's malformed (no valid header/verdict
-     line), in which case nothing is posted, but the attempt is still
-     recorded so a broken reviewer response doesn't get retried every
-     pass. Either way, it's never edited, summarized, or re-wrapped.
-     "Already asked" is tracked in persisted per-PR state
-     (`reviewedHeads`), not by re-scanning live comments — a comment
-     later deleted, a malformed response, or a `trustedReviewers` mapping
+     list, **durably mark the attempt** (`reviewedHeads`, saved to
+     `stateDir` immediately — before the call below, not after), then call
+     `Reviewer.review()` and post the returned text **as-is** as a PR
+     comment — unless it's malformed (no valid header/verdict line), in
+     which case nothing is posted, but the mark already made means it
+     isn't retried every pass either way. It's never edited, summarized,
+     or re-wrapped. "Already asked" is checked against that persisted
+     mark, not by re-scanning live comments — a comment later deleted, a
+     malformed response, a crash mid-call, or a `trustedReviewers` mapping
      that changes afterward can't cause the same head to be re-reviewed
      forever.
    - **`mergeable`** — squash-merge (`GitAdapter.mergePR`) if
-     `mergeEnabled` is true; otherwise log `DRY RUN would merge #<n> at
+     `mergeEnabled` is true, then immediately persist `merged: true` (not
+     at the end of the pass); otherwise log `DRY RUN would merge #<n> at
      <sha>` and do nothing. **Dry run is the default.**
    - **`hold`** / **`blocked`** — no action beyond logging. (A `blocked`
      PR needs a human or another reviewer to change something; a `hold`ing
      PR is waiting on CI, on being marked ready for review, or on the
      `needs-human` label being lifted.)
 4. Log one line per PR: repo, head sha, implementer vendor, decision kind,
-   and reason. Persist the decision (and `reviewedHeads`) to `stateDir` so
-   a restart doesn't double-merge or double-review.
+   and reason. Persist the decision (and `reviewedHeads`/`merged`) to
+   `stateDir` so a restart doesn't double-merge or double-review. (A
+   narrow, self-healing crash window between `mergePR()` succeeding and
+   that save completing is documented in `docs/known-issues.md`.)
 
 On a 403/429 from GitHub, the outer poll loop backs off the delay before
 its next pass — compounding across consecutive rate-limit failures (2x,
@@ -114,11 +118,17 @@ never counts toward merging.) See `config/gate/gate.example.yaml`.
 ## Verdict validity ("is this verdict for the *current* head?")
 
 A verdict from a trusted author only counts toward a decision if it
-**names the head sha** — full or abbreviated (7-40 hex chars extracted
-from anywhere in the comment), matched as a prefix of the actual head
-sha. **Naming the head sha is mandatory: there is no fallback for a
-verdict that names no sha at all.** The shipped review prompt template
-(`config/gate/review-prompt.md`) tells the reviewer this explicitly.
+**names the head sha** — full or abbreviated (12-40 hex chars extracted
+from anywhere in the comment, excluding a token that's part of a URL or
+file-path segment, e.g. a permalink's `/commit/<sha>/...`), matched as a
+prefix of the actual head sha. Below 12 characters a token isn't
+extracted at all — a 7-char prefix is too short to rule out an unrelated
+commit sharing it, and a short token embedded in incidental URLs (build
+links, CI status links) is common enough that treating it as a deliberate
+"I reviewed this commit" statement would be unsafe. **Naming the head sha
+is mandatory: there is no fallback for a verdict that names no sha at
+all.** The shipped review prompt template (`config/gate/review-prompt.md`)
+tells the reviewer to write out the full sha explicitly.
 
 This is deliberate, not an oversight: an earlier version of this rule let
 a sha-less verdict count if it was merely posted after the head commit's

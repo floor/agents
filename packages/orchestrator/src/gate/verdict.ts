@@ -1,15 +1,15 @@
-// Parses a PR comment into a reviewer verdict, per the review-and-gate
-// protocol (floor/radiooooo's AGENTS.md, "Review" section):
+// Parses a PR comment into a reviewer verdict, per this mode's
+// independent-review protocol (see docs/review-gate.md):
 //
 //   ## Reviewer agent (Codex)
 //   ...review body...
 //   Verdict: approve as-is
 //
 // A comment only counts as a verdict if it STARTS WITH the header line
-// (protocol: "post review.md's contents verbatim ... as a PR comment
-// starting with `## Reviewer agent (Codex)`") and contains at least one
-// exact verdict line. Everything else — a comment quoting/reproducing an
-// older verdict inline, chatter, questions — is not a verdict.
+// (a reviewer posts its findings verbatim as a PR comment starting with
+// `## Reviewer agent (<Vendor>)`) and contains at least one exact verdict
+// line. Everything else — a comment quoting/reproducing an older verdict
+// inline, chatter, questions — is not a verdict.
 
 export type Decision = 'approve as-is' | 'approve with nits' | 'changes needed'
 

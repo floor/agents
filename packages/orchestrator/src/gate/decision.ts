@@ -1,7 +1,6 @@
 // Pure gate decision function for the review-and-gate loop. No I/O: every
 // input is data the loop already fetched. See docs/review-gate.md for the
-// full rule table and the protocol it implements
-// (floor/radiooooo AGENTS.md, "Review" section).
+// full rule table and the independent-review protocol it implements.
 
 import type { CheckStatus } from '@floor-agents/core'
 import { parseVerdictComment, type Decision as VerdictDecision } from './verdict.ts'

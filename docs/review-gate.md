@@ -4,8 +4,12 @@ A second orchestrator mode, alongside the task-pipeline mode (`src/main.ts`):
 instead of an issue driving an agent to open a PR, this mode watches PRs
 that **this process did not create**, drives an independent-vendor review
 through a pluggable `Reviewer`, posts the review verbatim, and merges once
-a deterministic gate says the PR is ready. It implements the "Review"
-section of floor/radiooooo's `AGENTS.md` protocol.
+a deterministic gate says the PR is ready. It implements a common
+"independent reviewer + explicit verdict + deterministic merge gate"
+pattern for repos that want AI-authored (or human-authored) PRs reviewed
+by a different vendor than whoever wrote them before anything merges —
+the kind of rule a repo would otherwise state in its own contributor
+guide (an `AGENTS.md`/`CONTRIBUTING.md`) and have to enforce by hand.
 
 Entry point: `bun run gate` (`src/gate.ts`). Implementation:
 `packages/orchestrator/src/gate/`.
@@ -118,9 +122,9 @@ tested. In order:
 
 A `structural`-labeled PR (new dependency, architecture change,
 security-sensitive code, spec deviation) that isn't also `auth`-labeled
-uses the **same rule as the default gate** — the protocol states
-structural PRs merge the same way as any other once reviewed and green,
-autonomy being the point.
+uses the **same rule as the default gate** — a structural PR merges the
+same way as any other once reviewed and green; only auth-sensitive code
+gets the stronger gate.
 
 Check status (`GitAdapter.getCheckStatus`) combines the legacy combined-
 status API and the checks API: any failing check wins, all must succeed
@@ -135,10 +139,9 @@ when a PR has **zero** verdicts yet — the decision is `blocked`, not
 `needs_review` decision, an `auth`-labeled PR never gets its first (or
 second) review triggered automatically by this loop; the two required
 independent-vendor reviews have to come from elsewhere (a human, another
-lane, or another agent running `codex exec` directly per the protocol —
-see AGENTS.md's "Invoking a reviewer yourself"). This loop's job for such
-PRs is to hold the merge gate correctly, not to solicit the extra
-scrutiny auth-sensitive code is meant to get. Tracked in
+lane, or another agent running a reviewer directly against the PR). This
+loop's job for such PRs is to hold the merge gate correctly, not to
+solicit the extra scrutiny auth-sensitive code is meant to get. Tracked in
 [Known Issues](./known-issues.md).
 
 ## Config
@@ -147,7 +150,7 @@ scrutiny auth-sensitive code is meant to get. Tracked in
 YAML file — see that file for every key with inline comments:
 
 ```yaml
-repos: [radiooooo]        # bare names; owner comes from GITHUB_OWNER
+repos: [your-repo]        # bare names; owner comes from GITHUB_OWNER
 pollIntervalMs: 60000
 promptTemplatePath: config/gate/review-prompt.md
 stateDir: ./data/gate
@@ -157,20 +160,22 @@ gate:
   needsHumanLabel: needs-human
 vendor:
   labelPrefix: "vendor:"
-  branchPrefixes: [{ prefix: cursor/, vendor: grok }]
-  bodyMarkers: [{ prefix: "Claude-Session:", vendor: claude }]
+  branchPrefixes: [{ prefix: cursor/, vendor: cursor }]
+  bodyMarkers: [{ prefix: "Generated-By:", vendor: some-agent }]
 ```
 
 `GATE_MERGE_ENABLED` (env) overrides the file's `mergeEnabled`. `GATE_REVIEWER`
 selects the Reviewer `src/gate.ts` wires: `codex` (default — shells out to
-`codex exec --sandbox read-only "<prompt>" < /dev/null`, per the protocol's
-documented invocation) or `fake` (no shell-out, for smoke-testing the loop).
+`codex exec --sandbox read-only "<prompt>" < /dev/null`) or `fake` (no
+shell-out, for smoke-testing the loop).
 
-## Running it against floor/radiooooo
+## Running it against your own repo
 
 ```bash
 cp .env.example .env
-# Edit .env: GITHUB_TOKEN, GITHUB_OWNER=floor
+# Edit .env: GITHUB_TOKEN, GITHUB_OWNER=<your org>, and point
+# GATE_CONFIG_PATH at a copy of config/gate/gate.example.yaml with your
+# own repos/labels/vendor rules filled in.
 bun run gate
 ```
 

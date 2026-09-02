@@ -91,7 +91,7 @@ function makeFakeGitAdapter(prs: FakePR[]) {
 function makePR(overrides: Partial<FakePR> = {}): FakePR {
   return {
     id: '1',
-    url: 'https://github.com/floor/radiooooo/pull/1',
+    url: 'https://github.com/acme/widgets/pull/1',
     title: 'Add a feature',
     body: 'Implements the feature.\n\nSecond paragraph.',
     headSha: 'a'.repeat(40),
@@ -111,7 +111,7 @@ function makePR(overrides: Partial<FakePR> = {}): FakePR {
 
 function makeConfig(overrides: Partial<GateModeConfig> = {}): GateModeConfig {
   return {
-    repos: ['floor/radiooooo'],
+    repos: ['acme/widgets'],
     pollIntervalMs: 60_000,
     promptTemplatePath: 'unused-in-tests.md',
     stateDir: 'unused-in-tests',
@@ -299,7 +299,7 @@ test('persists gate state per PR across a pass', async () => {
     loadPromptTemplate: async () => 'template',
   })
 
-  const state = await gateStateStore.get('floor/radiooooo', '1')
+  const state = await gateStateStore.get('acme/widgets', '1')
   expect(state).not.toBeNull()
   expect(state!.headSha).toBe(pr.headSha)
   expect(state!.decisionKind).toBe('needs_review')

@@ -1,0 +1,55 @@
+import { test, expect } from 'bun:test'
+import { loadGateConfig } from '@floor-agents/orchestrator'
+
+test('loads the shipped example config', async () => {
+  const config = await loadGateConfig('config/gate/gate.example.yaml', {})
+
+  expect(config.repos).toEqual(['your-repo'])
+  expect(config.pollIntervalMs).toBe(60000)
+  expect(config.promptTemplatePath).toBe('config/gate/review-prompt.md')
+  expect(config.mergeEnabled).toBe(false)
+  expect(config.gate.authLabels).toEqual(['auth'])
+  expect(config.gate.needsHumanLabel).toBe('needs-human')
+  expect(config.excludeAuthors).toEqual(['your-bot-account'])
+  expect(config.gate.trustedReviewers).toEqual({ 'your-bot-account': 'codex' })
+  expect(config.vendor.branchPrefixes).toEqual([{ prefix: 'cursor/', vendor: 'cursor' }])
+  expect(config.vendor.bodyMarkers).toEqual([{ prefix: 'Generated-By:', vendor: 'some-agent' }])
+})
+
+test('GATE_MERGE_ENABLED env var overrides the file default', async () => {
+  const config = await loadGateConfig('config/gate/gate.example.yaml', { GATE_MERGE_ENABLED: 'true' })
+  expect(config.mergeEnabled).toBe(true)
+})
+
+test('throws a clear error when the config file does not exist', async () => {
+  await expect(loadGateConfig('config/gate/does-not-exist.yaml', {})).rejects.toThrow('not found')
+})
+
+test('trustedReviewers keys are lowercased on load, regardless of file casing', async () => {
+  const { mkdir, writeFile, rm } = await import('node:fs/promises')
+  const dir = './data/test-gate-config-case'
+  await mkdir(dir, { recursive: true })
+  const path = `${dir}/gate.yaml`
+  try {
+    await writeFile(path, 'repos: [r]\ngate:\n  trustedReviewers:\n    Some-Bot: Codex\n')
+    const config = await loadGateConfig(path, {})
+    expect(config.gate.trustedReviewers).toEqual({ 'some-bot': 'Codex' })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a gate config with no trustedReviewers at all defaults to empty (fail-closed)', async () => {
+  const { mkdir, writeFile, rm } = await import('node:fs/promises')
+  const dir = './data/test-gate-config-notrust'
+  await mkdir(dir, { recursive: true })
+  const path = `${dir}/gate.yaml`
+  try {
+    await writeFile(path, 'repos: [r]\n')
+    const config = await loadGateConfig(path, {})
+    expect(config.gate.trustedReviewers).toEqual({})
+    expect(config.excludeAuthors).toEqual([])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

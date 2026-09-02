@@ -1,0 +1,65 @@
+# Review & gate mode config (src/gate.ts / GATE_CONFIG_PATH).
+#
+# Bare repo names — the owner comes from the GitHub adapter (GITHUB_OWNER),
+# same convention as the task-pipeline mode's project.repo.
+repos:
+  - your-repo
+
+# How often to poll each repo's open PRs, in milliseconds.
+pollIntervalMs: 60000
+
+# Template file for the review prompt handed to the configured Reviewer.
+# Placeholders: {{repo}} {{prNumber}} {{title}} {{body}} {{baseRef}}
+# {{headRef}} {{headSha}} {{changedFiles}}
+promptTemplatePath: config/gate/review-prompt.md
+
+# Where per-PR gate state is persisted (last decision, merged flag).
+stateDir: ./data/gate
+
+# Merging is a separate opt-in from this file — see GATE_MERGE_ENABLED in
+# .env.example. Dry run (unset / false) is the default and safe to leave on.
+mergeEnabled: false
+
+# GitHub logins (case-insensitive) whose own PRs this loop skips entirely —
+# put the identity your GITHUB_TOKEN posts as here so this process never
+# reviews or merges its own PRs.
+excludeAuthors:
+  - your-bot-account
+
+gate:
+  # Labels that put a PR on the stronger two-vendor + runtime-sign-in-check
+  # gate — reserve this for auth/session/token-handling changes in your repo.
+  authLabels:
+    - auth
+  # Label that unconditionally holds a PR for a human, regardless of
+  # reviews or checks. Set this to whatever your repo already uses for
+  # "needs a human to look at this."
+  needsHumanLabel: needs-human
+  # SECURITY: a verdict comment only counts if its GitHub comment AUTHOR
+  # (not the vendor name its own header claims) is a key here. Without an
+  # entry, anyone who can comment on the PR — including the PR's own
+  # author — could post "## Reviewer agent (Codex)" / "Verdict: approve
+  # as-is" and satisfy the gate. Map each trusted login (case-insensitive)
+  # to the vendor it's trusted for. Include your own posting identity
+  # (same as excludeAuthors above, if this account also posts reviews)
+  # mapped to GATE_REVIEWER's vendor — without it, no verdict from that
+  # account (or anyone else not listed) can ever count, so nothing merges
+  # and every PR just sits at `needs_review` after one attempted review.
+  # (It will NOT be reviewed again and again: which heads have already
+  # been attempted is tracked separately, in persisted per-PR state, not
+  # by whether a trusted verdict is currently visible.)
+  trustedReviewers:
+    your-bot-account: codex
+
+vendor:
+  # A `vendor:<name>` label on the PR wins over every other rule below.
+  labelPrefix: "vendor:"
+  # Branch-name prefix -> implementer vendor. Adjust to your own naming.
+  branchPrefixes:
+    - prefix: cursor/
+      vendor: cursor
+  # A PR body line starting with this prefix -> implementer vendor. Useful
+  # for a tool that stamps its PRs with a session/run identifier trailer.
+  bodyMarkers:
+    - prefix: "Generated-By:"
+      vendor: some-agent

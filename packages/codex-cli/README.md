@@ -64,7 +64,7 @@ const { text } = await reviewer.review({
 
 | Option | Default | Notes |
 |---|---|---|
-| `binary` | `'codex'` | Path to the codex binary, or a fixture script in tests. |
+| `binary` | `'codex'` | Path to the codex binary, or a fixture script in tests. An explicit `null` is rejected the same as any other non-string — it does not silently fall back to the default. |
 | `timeoutMs` | 15 minutes | The process is killed and `CodexTimeoutError` thrown past this. |
 | `model` | — | Emitted as `--model <value>`. Must match `/^[A-Za-z0-9][A-Za-z0-9._-]*$/` (so it can never start with `-` and be mistaken for a flag) and be at most 128 characters; the constructor throws otherwise. |
 | `profile` | — | Emitted as `--profile <value>`. Same validation as `model`. |
@@ -78,17 +78,18 @@ like a sandbox override, and each review round found a new spelling the denylist
 missed (a second `--sandbox`, a short alias, a compact `-s<mode>` form, `-c`/`--config`
 keys, `--add-dir`, `--cd`/`-C`...). Rather than keep extending that list, the adapter
 now always emits exactly `[binary, 'exec', '--sandbox', 'read-only', ...flags from
-model/profile, prompt]` — `model` and `profile` are the only configurable values, each
-validated against a strict charset, and each can only ever render as its own
-`--model`/`--profile` flag pair. There is no argv position a config value can reach
-other than its own flag's value.
+model/profile, '--', prompt]` — `model` and `profile` are the only configurable
+values, each validated against a strict charset, and each can only ever render as its
+own `--model`/`--profile` flag pair; the prompt can only ever land after the `--`
+terminator (see below). There is no argv position a config value can reach other than
+its own flag's value.
 
 ## Invocation, and the pitfalls it exists to avoid
 
 The real invocation, learned the hard way running this in the Radiooooo v4 program:
 
 ```bash
-cd <worktree> && codex exec --sandbox read-only "<prompt>" > out.md 2>/dev/null < /dev/null
+cd <worktree> && codex exec --sandbox read-only -- "<prompt>" > out.md 2>/dev/null < /dev/null
 ```
 
 - **`< /dev/null` (stdin closed) is mandatory.** With stdin open, `codex exec` prints
@@ -140,6 +141,18 @@ cd <worktree> && codex exec --sandbox read-only "<prompt>" > out.md 2>/dev/null 
 - **The prompt is passed as a single argv element** via `Bun.spawn`'s array form (no
   shell is invoked), so quotes, backticks, and `$(...)` inside a review prompt are
   inert rather than being interpreted.
+- **`--` always immediately precedes the prompt in argv.** The prompt is
+  caller-influenced (a PR's title and body flow into it), and `Bun.spawn`'s array form
+  only stops a *shell* from reinterpreting the prompt — it does nothing to stop
+  *codex's own argv parser* from treating a prompt that starts with `-`/`--` as a flag
+  (e.g. `--dangerously-bypass-approvals-and-sandbox`, or `--cd=/`). `--` terminates
+  option parsing, so everything after it is unconditionally positional. Verified
+  against **codex-cli 0.151.0** (`codex --version`):
+  `codex exec --sandbox read-only -- --this-is-not-a-real-flag < /dev/null` runs with
+  that exact string as the prompt — no parse error — while the same invocation without
+  `--` fails fast with `error: unexpected argument '--this-is-not-a-real-flag' found`
+  and clap's own tip: `to pass '--this-is-not-a-real-flag' as a value, use
+  '-- --this-is-not-a-real-flag'`.
 
 ## Prompt template
 

@@ -9,6 +9,7 @@ import { decideGate, latestValidVerdictsByVendor, type GateDecision } from './de
 import { parseVerdictComment, type Decision as VerdictDecision } from './verdict.ts'
 import { attributeImplementerVendor } from './vendor.ts'
 import { buildReviewPrompt, extractChangedFiles } from './prompt.ts'
+import { selectChecklistFiles, loadChecklists } from './checklists.ts'
 import type { GateStateStore } from './state-store.ts'
 import type { GateModeConfig } from './config.ts'
 
@@ -157,9 +158,18 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
     }
 
     const diff = await git.getPRDiff(repo, pr.id)
+    const changedFiles = extractChangedFiles(diff)
     const template = deps.loadPromptTemplate
       ? await deps.loadPromptTemplate()
       : await defaultLoadPromptTemplate(config.promptTemplatePath)
+
+    // Checklist files are selected from config (label/path rules) but
+    // their CONTENT is fetched from the target repo at this PR's own head
+    // sha — not this process's own repo, and not the target repo's
+    // default branch — so the checklist a reviewer sees is the one that
+    // shipped with the code under review. See gate/checklists.ts.
+    const checklistFiles = selectChecklistFiles(config.checklists.rules, { labels: pr.labels, changedFiles })
+    const checklists = await loadChecklists(git, repo, pr.headSha, checklistFiles, log)
 
     const prompt = buildReviewPrompt(template, {
       repo,
@@ -169,7 +179,8 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
       baseRef: pr.baseRef,
       headRef: pr.headRef,
       headSha: pr.headSha,
-      changedFiles: extractChangedFiles(diff),
+      changedFiles,
+      checklists,
     })
 
     // Mark (and durably persist) the attempt BEFORE calling the

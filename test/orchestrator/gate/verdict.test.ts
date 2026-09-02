@@ -134,10 +134,42 @@ test('a hex token embedded in a URL path segment is not extracted as a sha', () 
   expect(parseVerdictComment(body)?.shas).toEqual([])
 })
 
-test('a hex token embedded in a shorter URL path segment (7 hex chars) is not extracted', () => {
+test('a 12+ char hex token immediately preceded by "/" is not extracted (left adjacency)', () => {
+  // Long enough to pass the length rule on its own — this isolates the
+  // slash-adjacency exclusion specifically, rather than the length floor.
+  const body = [
+    '## Reviewer agent (Codex)',
+    'CI status: /build/deadbeef00112233445566778899aabbccddeeff passed.',
+    'Verdict: approve as-is',
+  ].join('\n')
+
+  expect(parseVerdictComment(body)?.shas).toEqual([])
+})
+
+test('a 12+ char hex token immediately followed by "/" is not extracted (right adjacency)', () => {
+  const body = [
+    '## Reviewer agent (Codex)',
+    'See https://ci.example.com/deadbeef00112233445566778899aabbccddeeff/logs for details.',
+    'Verdict: approve as-is',
+  ].join('\n')
+
+  expect(parseVerdictComment(body)?.shas).toEqual([])
+})
+
+test('a hex token embedded in a shorter URL path segment (7 hex chars) is excluded by length alone', () => {
   const body = [
     '## Reviewer agent (Codex)',
     'CI status: /build/454cd4c passed.',
+    'Verdict: approve as-is',
+  ].join('\n')
+
+  expect(parseVerdictComment(body)?.shas).toEqual([])
+})
+
+test('a 41-char hex token is not extracted (exceeds the 40-char sha length)', () => {
+  const body = [
+    '## Reviewer agent (Codex)',
+    'Reviewed at deadbeef00112233445566778899aabbccddeeff0.',
     'Verdict: approve as-is',
   ].join('\n')
 

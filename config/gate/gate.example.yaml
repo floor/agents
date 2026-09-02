@@ -42,8 +42,12 @@ gate:
   # as-is" and satisfy the gate. Map each trusted login (case-insensitive)
   # to the vendor it's trusted for. Include your own posting identity
   # (same as excludeAuthors above, if this account also posts reviews)
-  # mapped to GATE_REVIEWER's vendor, or the loop will never recognize
-  # its own posted review and will re-review every pass.
+  # mapped to GATE_REVIEWER's vendor — without it, no verdict from that
+  # account (or anyone else not listed) can ever count, so nothing merges
+  # and every PR just sits at `needs_review` after one attempted review.
+  # (It will NOT be reviewed again and again: which heads have already
+  # been attempted is tracked separately, in persisted per-PR state, not
+  # by whether a trusted verdict is currently visible.)
   trustedReviewers:
     your-bot-account: codex
 

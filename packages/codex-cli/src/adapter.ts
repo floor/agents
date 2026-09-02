@@ -109,7 +109,7 @@ function readRequiredPath(name: string, raw: unknown): string {
  *
  * Invocation (learned the hard way running this in the Radiooooo v4 program):
  *
- *   cd <worktree> && codex exec --sandbox read-only "<prompt>" > out 2>/dev/null < /dev/null
+ *   cd <worktree> && codex exec --sandbox read-only -- "<prompt>" > out 2>/dev/null < /dev/null
  *
  * - stdin is always closed: with stdin open, `codex exec` prints "Reading additional
  *   input from stdin..." and never returns.
@@ -117,12 +117,17 @@ function readRequiredPath(name: string, raw: unknown): string {
  * - The read-only sandbox cannot run tests, so its conclusions are analytical only.
  * - It bills a ChatGPT subscription (`~/.codex/auth.json`), not an API key — nothing in
  *   this adapter reads or sets an API key env var.
+ * - The prompt is caller-influenced (a PR's title/body flow into it), so it is never
+ *   trusted to be inert against codex's own argv parser: `--` always precedes it,
+ *   terminating option parsing, so a prompt starting with `-`/`--` (e.g.
+ *   `--dangerously-bypass-approvals-and-sandbox`) can only ever be positional text.
  *
  * argv is fixed by design: `[binary, 'exec', '--sandbox', 'read-only', ...typed flags
- * from `model`/`profile`, prompt]`. There is no `extraArgs` and no way for a caller to
- * add, remove, or reorder an argv element — `model` and `profile` are validated
- * against a strict charset and can only ever render as their own `--model`/`--profile`
- * flag pair, never as something else.
+ * from `model`/`profile`, '--', prompt]`. There is no `extraArgs` and no way for a
+ * caller to add, remove, or reorder an argv element — `model` and `profile` are
+ * validated against a strict charset and can only ever render as their own
+ * `--model`/`--profile` flag pair, never as something else, and the prompt can only
+ * ever land after the `--` terminator.
  */
 export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer {
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -133,7 +138,10 @@ export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer 
   // none of these can change (via a getter or a coercing object) between being
   // checked and being used.
   const resolvedOptions = Object.freeze({
-    binary: readRequiredPath('binary', config.binary ?? DEFAULT_BINARY),
+    // Only a genuinely absent `binary` (`undefined`) falls back to the default —
+    // `?? DEFAULT_BINARY` would also silently swallow an explicit `null`, which must
+    // instead be rejected the same as any other non-string.
+    binary: readRequiredPath('binary', config.binary === undefined ? DEFAULT_BINARY : config.binary),
     clonePath: readOptionalPath('clonePath', config.clonePath),
     worktreeRoot: readOptionalPath('worktreeRoot', config.worktreeRoot),
     model: readValidatedOption('model', config.model),
@@ -188,11 +196,15 @@ async function runCodex(opts: {
   readonly prompt: string
   readonly cwd: string
 }): Promise<string> {
-  // Fixed shape, no caller-extensible piece except the two typed, validated flags —
-  // and the prompt is always the last argv element via Bun.spawn's array form (no
-  // shell involved), so quotes, `$(...)`, backticks, or a leading `-` inside the
-  // prompt are inert rather than being interpreted as another flag.
-  const args = [opts.binary, 'exec', '--sandbox', SANDBOX, ...opts.typedFlags, opts.prompt]
+  // Fixed shape, no caller-extensible piece except the two typed, validated flags.
+  // The prompt is caller-influenced (PR titles/bodies flow into it) and Bun.spawn's
+  // array form only protects against a shell reinterpreting it — it does NOT stop
+  // codex's own argv parser from treating a prompt that starts with `-`/`--` as
+  // another flag. `--` terminates option parsing (verified against codex-cli 0.151.0:
+  // `codex exec --sandbox read-only -- --this-is-not-a-real-flag` runs with that
+  // string as the prompt, not a parse error — see packages/codex-cli/README.md), so
+  // everything after it, including the prompt, is unconditionally positional.
+  const args = [opts.binary, 'exec', '--sandbox', SANDBOX, ...opts.typedFlags, '--', opts.prompt]
 
   const stdoutPath = join(tmpdir(), `codex-review-stdout-${randomUUID()}.log`)
   const stdoutFile = Bun.file(stdoutPath)

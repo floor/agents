@@ -1,4 +1,5 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test'
+import { existsSync, statSync } from 'node:fs'
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +10,13 @@ import {
   MalformedReviewError,
   WorktreeMismatchError,
 } from '@floor-agents/codex-cli'
+
+// `Bun.file(dir).exists()` is for regular files and returns `false` for an existing
+// directory — using it to check whether a worktree directory was cleaned up would
+// make the assertion pass even if cleanup never ran. Use this instead.
+function directoryExists(path: string): boolean {
+  return existsSync(path) && statSync(path).isDirectory()
+}
 
 // A child process's `process.cwd()` reports the OS-resolved path (e.g. `/private/tmp`
 // on macOS, where `/tmp` is a symlink), so paths built here must be resolved the same
@@ -179,6 +187,13 @@ test('rejects a non-string binary or worktreeRoot at construction, same as clone
   expect(() => createCodexReviewer({ binary: OK, worktreeRoot: '' })).toThrow(/worktreeRoot/i)
 })
 
+test('rejects binary: null outright, rather than letting ?? DEFAULT_BINARY silently swallow it', () => {
+  // A plain `config.binary ?? DEFAULT_BINARY` would treat an explicit `null` the same
+  // as `undefined` and silently fall back to the default binary — this must instead
+  // be rejected the same as any other non-string value.
+  expect(() => createCodexReviewer({ binary: null as unknown as string })).toThrow(/binary/i)
+})
+
 test('Bun.spawn receives cwd equal to the given worktreePath in the caller-supplied case, not only the auto-created case', async () => {
   const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
   const prevEnv = process.env.CODEX_TEST_RECORD
@@ -264,7 +279,7 @@ test('rejects a non-string model/profile value outright, including an object wit
   expect(() => createCodexReviewer({ binary: OK, model: null as unknown as string })).toThrow(/model/i)
 })
 
-test('emits exactly [binary, "exec", "--sandbox", "read-only", prompt] when neither model nor profile is set', async () => {
+test('emits exactly [binary, "exec", "--sandbox", "read-only", "--", prompt] when neither model nor profile is set', async () => {
   const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
   const prevEnv = process.env.CODEX_TEST_RECORD
   process.env.CODEX_TEST_RECORD = recordFile
@@ -273,7 +288,13 @@ test('emits exactly [binary, "exec", "--sandbox", "read-only", prompt] when neit
     const reviewer = createCodexReviewer({ binary: RECORD })
     await reviewer.review({ ...baseInput, headSha, worktreePath: clonePath })
 
-    expect(await recordArgLines(recordFile)).toEqual(['exec', '--sandbox', 'read-only', baseInput.prompt])
+    expect(await recordArgLines(recordFile)).toEqual([
+      'exec',
+      '--sandbox',
+      'read-only',
+      '--',
+      baseInput.prompt,
+    ])
   } finally {
     if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
     else process.env.CODEX_TEST_RECORD = prevEnv
@@ -281,7 +302,7 @@ test('emits exactly [binary, "exec", "--sandbox", "read-only", prompt] when neit
   }
 }, 10_000)
 
-test('emits exactly [..., "--model", <model>, prompt] when only model is set', async () => {
+test('emits exactly [..., "--model", <model>, "--", prompt] when only model is set', async () => {
   const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
   const prevEnv = process.env.CODEX_TEST_RECORD
   process.env.CODEX_TEST_RECORD = recordFile
@@ -296,6 +317,7 @@ test('emits exactly [..., "--model", <model>, prompt] when only model is set', a
       'read-only',
       '--model',
       'gpt-5.1-codex',
+      '--',
       baseInput.prompt,
     ])
   } finally {
@@ -305,7 +327,7 @@ test('emits exactly [..., "--model", <model>, prompt] when only model is set', a
   }
 }, 10_000)
 
-test('emits exactly [..., "--model", <model>, "--profile", <profile>, prompt] when both are set', async () => {
+test('emits exactly [..., "--model", <model>, "--profile", <profile>, "--", prompt] when both are set', async () => {
   const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
   const prevEnv = process.env.CODEX_TEST_RECORD
   process.env.CODEX_TEST_RECORD = recordFile
@@ -322,6 +344,7 @@ test('emits exactly [..., "--model", <model>, "--profile", <profile>, prompt] wh
       'gpt-5.1-codex',
       '--profile',
       'ci-reviewer_v1',
+      '--',
       baseInput.prompt,
     ])
   } finally {
@@ -342,11 +365,38 @@ test('the prompt is always the final argv element, even when it starts with a da
     await reviewer.review({ ...baseInput, prompt: dashPrompt, headSha, worktreePath: clonePath })
 
     const argLines = await recordArgLines(recordFile)
-    expect(argLines).toEqual(['exec', '--sandbox', 'read-only', '--model', 'gpt-5.1-codex', dashPrompt])
-    // The prompt arrives as ONE argv entry, last, verbatim — not split into separate
-    // flags, and not capable of injecting an earlier argv element.
-    expect(argLines).toHaveLength(6)
+    expect(argLines).toEqual(['exec', '--sandbox', 'read-only', '--model', 'gpt-5.1-codex', '--', dashPrompt])
+    // The prompt arrives as ONE argv entry, last, verbatim, immediately after the `--`
+    // terminator — not split into separate flags, and not capable of injecting an
+    // earlier argv element or being parsed as a flag itself.
+    expect(argLines).toHaveLength(7)
+    expect(argLines.at(-2)).toBe('--')
     expect(argLines.at(-1)).toBe(dashPrompt)
+  } finally {
+    if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
+    else process.env.CODEX_TEST_RECORD = prevEnv
+    await rm(recordFile, { force: true }).catch(() => {})
+  }
+}, 10_000)
+
+test('the prompt is treated as positional text even when it starts with "--cd=/" (a real codex flag), because "--" precedes it', async () => {
+  const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
+  const prevEnv = process.env.CODEX_TEST_RECORD
+  process.env.CODEX_TEST_RECORD = recordFile
+  const cdPrompt = '--cd=/ do something dangerous-sounding'
+
+  try {
+    const reviewer = createCodexReviewer({ binary: RECORD })
+    await reviewer.review({ ...baseInput, prompt: cdPrompt, headSha, worktreePath: clonePath })
+
+    const argLines = await recordArgLines(recordFile)
+    expect(argLines).toEqual(['exec', '--sandbox', 'read-only', '--', cdPrompt])
+
+    const dashDashIndex = argLines.indexOf('--')
+    expect(dashDashIndex).toBeGreaterThanOrEqual(0)
+    // The `--` terminator must be the element immediately before the prompt, so
+    // nothing between them could be mistaken for another flag.
+    expect(argLines[dashDashIndex + 1]).toBe(cdPrompt)
   } finally {
     if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
     else process.env.CODEX_TEST_RECORD = prevEnv
@@ -444,8 +494,7 @@ test('creates a detached worktree from clonePath at headSha, runs there, and rem
     expect(usedCwd.startsWith(realWorktreeRoot)).toBe(true)
 
     // The worktree directory must be gone after a successful review.
-    const worktreeGone = await Bun.file(usedCwd).exists()
-    expect(worktreeGone).toBe(false)
+    expect(directoryExists(usedCwd)).toBe(false)
 
     const list = await Bun.$`git -C ${clonePath} worktree list`.quiet().text()
     expect(list).not.toContain(usedCwd)
@@ -477,7 +526,7 @@ test('removes the worktree directory (not just its git registration) even when t
     const list = await Bun.$`git -C ${clonePath} worktree list`.quiet().text()
     expect(list.trim().split('\n')).toHaveLength(1)
     // ...and the directory itself must be gone too, not just deregistered.
-    expect(await Bun.file(usedCwd).exists()).toBe(false)
+    expect(directoryExists(usedCwd)).toBe(false)
 
     await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
   } finally {
@@ -507,7 +556,7 @@ test('removes the worktree directory even when the run times out against a SIGTE
 
     const list = await Bun.$`git -C ${clonePath} worktree list`.quiet().text()
     expect(list.trim().split('\n')).toHaveLength(1)
-    expect(await Bun.file(usedCwd).exists()).toBe(false)
+    expect(directoryExists(usedCwd)).toBe(false)
 
     await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
   } finally {

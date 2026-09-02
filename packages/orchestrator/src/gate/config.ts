@@ -5,6 +5,7 @@
 import { parse } from 'yaml'
 import { DEFAULT_GATE_CONFIG, type GateConfig } from './decision.ts'
 import { DEFAULT_VENDOR_CONFIG, type VendorAttributionConfig } from './vendor.ts'
+import { DEFAULT_CHECKLISTS_CONFIG, type ChecklistsConfig } from './checklists.ts'
 
 export type GateModeConfig = {
   /** Bare repo names (no owner prefix) — the gate mode's GitAdapter is
@@ -21,6 +22,12 @@ export type GateModeConfig = {
   readonly excludeAuthors: readonly string[]
   readonly gate: GateConfig
   readonly vendor: VendorAttributionConfig
+  /** Rules selecting which checklist file(s) — read from the TARGET
+   *  repo's own checked-out head, not from this repo — go into the
+   *  `{{checklists}}` prompt placeholder. Defaults to no rules, in which
+   *  case every reviewer prompt renders the "no checklist matched" line
+   *  in that slot, same as before this config key existed. */
+  readonly checklists: ChecklistsConfig
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000
@@ -63,6 +70,17 @@ function parseTrustedReviewers(raw: any): Record<string, string | readonly strin
   return trusted
 }
 
+function parseChecklistsConfig(raw: any): ChecklistsConfig {
+  if (!raw || !Array.isArray(raw.rules)) return DEFAULT_CHECKLISTS_CONFIG
+  return {
+    rules: raw.rules.map((r: any) => ({
+      label: r.label !== undefined ? String(r.label) : undefined,
+      pathContains: r.pathContains !== undefined ? String(r.pathContains) : undefined,
+      file: String(r.file),
+    })),
+  }
+}
+
 function parseGateConfig(raw: any): GateConfig {
   if (!raw) return DEFAULT_GATE_CONFIG
   return {
@@ -98,5 +116,6 @@ export async function loadGateConfig(
     excludeAuthors: raw.excludeAuthors ?? [],
     gate: parseGateConfig(raw.gate),
     vendor: parseVendorConfig(raw.vendor),
+    checklists: parseChecklistsConfig(raw.checklists),
   }
 }

@@ -94,6 +94,15 @@ export type PRDetails = {
   readonly headSha: string
   readonly headRef: string
   readonly baseRef: string
+  /** The base branch's head commit sha AT THE TIME THIS PRDetails WAS
+   *  FETCHED (GitHub's PR API returns this alongside `base.ref`) — not
+   *  merge-base with the head, and not stable across a re-fetch if the
+   *  base branch has since moved. Empty string if the platform adapter
+   *  could not resolve it. Used by the gate's checklist loader
+   *  (gate/checklists.ts) to read a checklist file from the base branch
+   *  rather than the PR's own head, so a PR cannot edit the checklist
+   *  that reviews it. */
+  readonly baseSha: string
   readonly authorLogin: string
   readonly labels: readonly string[]
   readonly draft: boolean

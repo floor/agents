@@ -1,4 +1,4 @@
-// Builds the Reviewer `src/gate.ts` wires into the gate loop, from
+// Builds the Reviewer(s) `src/gate.ts` wires into the gate loop, from
 // environment variables. Split out from src/gate.ts (which has top-level
 // side effects — loading config, requiring GITHUB_TOKEN/GITHUB_OWNER — that
 // run on import) so this piece stays a plain, side-effect-free module unit
@@ -6,6 +6,7 @@
 
 import { createFakeReviewer, type Reviewer } from '@floor-agents/core'
 import { createCodexReviewer, type CodexReviewerConfig } from '@floor-agents/codex-cli'
+import { createAntigravityReviewer, type AntigravityReviewerConfig } from '@floor-agents/antigravity-cli'
 
 const TIMEOUT_MS_RE = /^\d+$/
 
@@ -58,23 +59,74 @@ export function codexReviewerConfigFromEnv(
   return config
 }
 
-/** Selects and constructs the Reviewer for `GATE_REVIEWER` (default `codex`).
- *  `codex` is wired directly to `@floor-agents/codex-cli`'s `createCodexReviewer`
- *  — see packages/codex-cli/README.md for its exact invocation contract (fixed
- *  argv, worktree lifecycle, the "## Reviewer agent (Codex)" header extraction,
- *  and why there is no caller-extensible argv). `fake` smoke-tests the loop
- *  end-to-end without shelling out to a real reviewer. */
-export function createReviewer(env: Record<string, string | undefined> = process.env): Reviewer {
-  const kind = env.GATE_REVIEWER ?? 'codex'
+/** Builds `@floor-agents/antigravity-cli`'s `AntigravityReviewerConfig` from
+ *  environment variables — same one-to-one, "unset leaves the package's own
+ *  default in place, empty string is an explicit (often invalid) value"
+ *  convention as `codexReviewerConfigFromEnv` above (see
+ *  packages/antigravity-cli/README.md's Options table).
+ *
+ *  Like `GATE_CODEX_CLONE_PATH`, `GATE_AGY_CLONE_PATH` is optional only in
+ *  the sense that the package doesn't require it at construction — the
+ *  gate loop always calls `reviewer.review()` without a `worktreePath`, so
+ *  it must be set for `gemini` review to actually run. `GATE_AGY_SETTINGS_PATH`
+ *  overrides the package's default `~/.gemini/antigravity-cli/settings.json`
+ *  read-only-policy check location; see that package's README for why this
+ *  check exists (the CLI has no read-only sandbox flag of its own). */
+export function antigravityReviewerConfigFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): AntigravityReviewerConfig {
+  const config: { -readonly [K in keyof AntigravityReviewerConfig]?: AntigravityReviewerConfig[K] } = {}
+
+  if (env.GATE_AGY_BINARY !== undefined) config.binary = env.GATE_AGY_BINARY
+  if (env.GATE_AGY_MODEL !== undefined) config.model = env.GATE_AGY_MODEL
+  if (env.GATE_AGY_EFFORT !== undefined) config.effort = env.GATE_AGY_EFFORT as AntigravityReviewerConfig['effort']
+  if (env.GATE_AGY_CLONE_PATH !== undefined) config.clonePath = env.GATE_AGY_CLONE_PATH
+  if (env.GATE_AGY_WORKTREE_ROOT !== undefined) config.worktreeRoot = env.GATE_AGY_WORKTREE_ROOT
+  if (env.GATE_AGY_SETTINGS_PATH !== undefined) config.settingsPath = env.GATE_AGY_SETTINGS_PATH
+  if (env.GATE_AGY_TIMEOUT_MS !== undefined) {
+    config.timeoutMs = parsePositiveIntegerMs('GATE_AGY_TIMEOUT_MS', env.GATE_AGY_TIMEOUT_MS)
+  }
+
+  return config
+}
+
+/** Constructs a `Reviewer` for a given vendor "kind" from environment
+ *  variables. Shared by `createReviewer` (which reads the primary kind from
+ *  `GATE_REVIEWER`) and `src/gate.ts` (which uses this directly, with
+ *  `config.gate.secondReviewer`'s vendor name, to build an optional second
+ *  reviewer — see docs/review-gate.md's "second reviewer" section). Both
+ *  reviewers are built from the SAME env vars regardless of which "slot"
+ *  they end up in — there's no separate env-var namespace for "the second
+ *  one"; a `codex` primary + `gemini` second reviewer, for instance, reads
+ *  `GATE_CODEX_*` for the former and `GATE_AGY_*` for the latter either way. */
+export function createReviewerForKind(
+  kind: string,
+  env: Record<string, string | undefined> = process.env,
+): Reviewer {
   switch (kind) {
     case 'codex':
       return createCodexReviewer(codexReviewerConfigFromEnv(env))
+    case 'gemini':
+      return createAntigravityReviewer(antigravityReviewerConfigFromEnv(env))
     case 'fake':
       return createFakeReviewer({ vendor: 'fake' })
     default:
       throw new Error(
-        `Unknown GATE_REVIEWER "${kind}". Supported: codex, fake. ` +
+        `Unknown reviewer vendor "${kind}". Supported: codex, gemini, fake. ` +
         `Wire in another Reviewer implementation here once available.`,
       )
   }
+}
+
+/** Selects and constructs the PRIMARY Reviewer for `GATE_REVIEWER` (default
+ *  `codex`). `codex` is wired directly to `@floor-agents/codex-cli`'s
+ *  `createCodexReviewer` (see packages/codex-cli/README.md for its exact
+ *  invocation contract); `gemini` to `@floor-agents/antigravity-cli`'s
+ *  `createAntigravityReviewer` (see that package's README). `fake`
+ *  smoke-tests the loop end-to-end without shelling out to a real
+ *  reviewer. See `createReviewerForKind` for the second-reviewer path,
+ *  which uses the same vendor kinds but is selected by
+ *  `config.gate.secondReviewer`, not this env var. */
+export function createReviewer(env: Record<string, string | undefined> = process.env): Reviewer {
+  return createReviewerForKind(env.GATE_REVIEWER ?? 'codex', env)
 }

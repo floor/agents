@@ -18,6 +18,13 @@
         "@floor-agents/core": "workspace:*",
       },
     },
+    "packages/antigravity-cli": {
+      "name": "@floor-agents/antigravity-cli",
+      "version": "0.0.1",
+      "dependencies": {
+        "@floor-agents/core": "workspace:*",
+      },
+    },
     "packages/claude-code": {
       "name": "@floor-agents/claude-code",
       "version": "0.0.1",
@@ -97,6 +104,8 @@
   },
   "packages": {
     "@floor-agents/anthropic": ["@floor-agents/anthropic@workspace:packages/anthropic"],
+
+    "@floor-agents/antigravity-cli": ["@floor-agents/antigravity-cli@workspace:packages/antigravity-cli"],
 
     "@floor-agents/claude-code": ["@floor-agents/claude-code@workspace:packages/claude-code"],
 

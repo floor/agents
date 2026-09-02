@@ -53,3 +53,40 @@ test('a gate config with no trustedReviewers at all defaults to empty (fail-clos
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('trustedReviewers accepts an array value for a login trusted for multiple vendors, lowercasing the login but not the vendor names', async () => {
+  const { mkdir, writeFile, rm } = await import('node:fs/promises')
+  const dir = './data/test-gate-config-multivendor'
+  await mkdir(dir, { recursive: true })
+  const path = `${dir}/gate.yaml`
+  try {
+    await writeFile(
+      path,
+      'repos: [r]\ngate:\n  trustedReviewers:\n    Gate-Bot:\n      - Codex\n      - Gemini\n    solo-bot: codex\n',
+    )
+    const config = await loadGateConfig(path, {})
+    expect(config.gate.trustedReviewers).toEqual({
+      'gate-bot': ['Codex', 'Gemini'],
+      'solo-bot': 'codex',
+    })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('gate.secondReviewer is parsed as a plain string, and is undefined when unset', async () => {
+  const { mkdir, writeFile, rm } = await import('node:fs/promises')
+  const dir = './data/test-gate-config-second-reviewer'
+  await mkdir(dir, { recursive: true })
+  try {
+    await writeFile(`${dir}/with.yaml`, 'repos: [r]\ngate:\n  secondReviewer: gemini\n')
+    const withIt = await loadGateConfig(`${dir}/with.yaml`, {})
+    expect(withIt.gate.secondReviewer).toBe('gemini')
+
+    await writeFile(`${dir}/without.yaml`, 'repos: [r]\ngate:\n  authLabels: [auth]\n')
+    const withoutIt = await loadGateConfig(`${dir}/without.yaml`, {})
+    expect(withoutIt.gate.secondReviewer).toBeUndefined()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

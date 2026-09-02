@@ -600,6 +600,165 @@ test('draft PRs short-circuit before fetching comments or checks', async () => {
   })
 })
 
+// ── secondReviewer scheduling on auth-labelled PRs ──────────────────────
+//
+// decideGate()'s auth gate always returns `blocked` (never `needs_review`),
+// even with zero verdicts yet (see decision.ts and docs/review-gate.md's
+// "Known limitation") — so these exercise loop.ts's OWN scheduling branch,
+// which triggers the primary reviewer and, if configured, secondReviewer
+// on an auth-labelled PR regardless of that `blocked` decision.
+
+const RUNTIME_CHECK_BODY = 'Implements the feature.\n\n## Runtime Sign-In Check\n\nVerified manually.'
+
+function makeAuthPR(overrides: Partial<FakePR> = {}): FakePR {
+  return makePR({ labels: ['auth'], body: RUNTIME_CHECK_BODY, ...overrides })
+}
+
+// The fake adapter's addPRComment always attributes newly-posted reviews to
+// author 'reviewer-bot' (see makeFakeGitAdapter above) regardless of which
+// Reviewer posted them — so a config exercising BOTH a primary and a
+// secondReviewer needs 'reviewer-bot' trusted for both vendors (the header
+// each fake reviewer's own text carries is what then tells them apart —
+// see decision.ts's multi-vendor trustedReviewers rule).
+const MULTI_VENDOR_GATE_CONFIG = { ...DEFAULT_GATE_CONFIG, trustedReviewers: { 'reviewer-bot': ['codex', 'gemini'] } }
+
+test('an auth-labelled PR triggers both the primary and secondReviewer, even though the decision is "blocked", not "needs_review"', async () => {
+  const pr = makeAuthPR()
+  const { adapter, commentCalls } = makeFakeGitAdapter([pr])
+  const reviewer = createFakeReviewer({ vendor: 'codex' })
+  const secondReviewer = createFakeReviewer({ vendor: 'gemini' })
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    secondReviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ gate: MULTI_VENDOR_GATE_CONFIG }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'template',
+  })
+
+  expect(commentCalls.length).toBe(2)
+  expect(commentCalls.some(c => c.body.includes('## Reviewer agent (codex)'))).toBe(true)
+  expect(commentCalls.some(c => c.body.includes('## Reviewer agent (gemini)'))).toBe(true)
+})
+
+test('an auth-labelled PR with no secondReviewer configured only gets the primary review', async () => {
+  const pr = makeAuthPR()
+  const { adapter, commentCalls } = makeFakeGitAdapter([pr])
+  const reviewer = createFakeReviewer({ vendor: 'codex' })
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    // no secondReviewer
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ gate: MULTI_VENDOR_GATE_CONFIG }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'template',
+  })
+
+  expect(commentCalls.length).toBe(1)
+  expect(commentCalls[0]!.body).toContain('## Reviewer agent (codex)')
+})
+
+test('a non-auth-labelled PR never invokes secondReviewer, even when one is configured', async () => {
+  const pr = makePR() // no 'auth' label
+  const { adapter, commentCalls } = makeFakeGitAdapter([pr])
+  const reviewer = createFakeReviewer({ vendor: 'codex' })
+  const secondReviewer = createFakeReviewer({ vendor: 'gemini' })
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    secondReviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ gate: MULTI_VENDOR_GATE_CONFIG }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'template',
+  })
+
+  expect(commentCalls.length).toBe(1)
+  expect(commentCalls[0]!.body).toContain('## Reviewer agent (codex)')
+})
+
+test('an auth PR that already has a blocking verdict does not get either reviewer invoked again', async () => {
+  const pr = makeAuthPR()
+  pr.comments = [{ id: 'c1', author: 'reviewer-bot', body: `## Reviewer agent (codex)\n\nReviewed at ${pr.headSha}.\n\nVerdict: changes needed`, createdAt: new Date('2026-01-02') }]
+  const { adapter, commentCalls } = makeFakeGitAdapter([pr])
+  const reviewer = createFakeReviewer({ vendor: 'codex' })
+  const secondReviewer = createFakeReviewer({ vendor: 'gemini' })
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    secondReviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ gate: MULTI_VENDOR_GATE_CONFIG }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'template',
+  })
+
+  expect(commentCalls.length).toBe(0) // needs a human/fix, not another review round
+})
+
+test('once both reviewers have already been asked about a head, a later pass does not re-invoke either', async () => {
+  const pr = makeAuthPR()
+  const { adapter, commentCalls } = makeFakeGitAdapter([pr])
+  const reviewer = createFakeReviewer({ vendor: 'codex' })
+  const secondReviewer = createFakeReviewer({ vendor: 'gemini' })
+  const deps = {
+    git: adapter,
+    reviewer,
+    secondReviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ gate: MULTI_VENDOR_GATE_CONFIG }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'template',
+  }
+
+  await runGatePass(deps)
+  expect(commentCalls.length).toBe(2)
+
+  await runGatePass(deps)
+  expect(commentCalls.length).toBe(2) // still 2 — reviewedHeads already covers this head for both vendors
+})
+
+test('an auth PR with both independent-vendor approvals, the runtime-check section, and green checks becomes mergeable end to end', async () => {
+  const pr = makeAuthPR()
+  const { adapter, mergeCalls } = makeFakeGitAdapter([pr])
+  // A verdict must name the head sha to count at all (see decision.ts) —
+  // createFakeReviewer's own default text doesn't, so both fakes here
+  // build text that does, the same way verdictComment() does elsewhere in
+  // this file.
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: (input) => `## Reviewer agent (codex)\n\nReviewed at ${input.headSha}.\n\nVerdict: approve as-is`,
+  })
+  const secondReviewer = createFakeReviewer({
+    vendor: 'gemini',
+    text: (input) => `## Reviewer agent (gemini)\n\nReviewed at ${input.headSha}.\n\nVerdict: approve as-is`,
+  })
+  const deps = {
+    git: adapter,
+    reviewer,
+    secondReviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ gate: MULTI_VENDOR_GATE_CONFIG, mergeEnabled: true }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'template',
+  }
+
+  // First pass: both reviewers post their approve-as-is verdicts.
+  await runGatePass(deps)
+  expect(mergeCalls.length).toBe(0)
+
+  // Second pass: decideGate now sees both distinct-vendor approvals, the
+  // runtime-check section, and green checks -> mergeable.
+  await runGatePass(deps)
+  expect(mergeCalls.length).toBe(1)
+})
+
 test('persists gate state per PR across a pass', async () => {
   const pr = makePR()
   const { adapter } = makeFakeGitAdapter([pr])

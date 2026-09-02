@@ -42,7 +42,14 @@ type FakePR = { -readonly [K in keyof PRDetails]: PRDetails[K] } & {
   staleListRemaining?: number
 }
 
-function makeFakeGitAdapter(prs: FakePR[], files: Record<string, FileContent> = {}) {
+// A fixture entry is either a fixed FileContent (same content regardless of
+// which ref it's fetched at) or a function of the ref, so a checklist test
+// can pin DIFFERENT content at the base sha vs. the head sha for the same
+// path — the only way to prove the loader reads from the base, not the
+// head, for a single file path.
+type FileFixture = FileContent | ((ref: string | undefined) => FileContent | null)
+
+function makeFakeGitAdapter(prs: FakePR[], files: Record<string, FileFixture> = {}) {
   const mergeCalls: { repo: string; prId: string; options?: any }[] = []
   const commentCalls: { repo: string; prId: string; body: string }[] = []
   const getFileCalls: { repo: string; path: string; ref: string | undefined }[] = []
@@ -51,12 +58,14 @@ function makeFakeGitAdapter(prs: FakePR[], files: Record<string, FileContent> = 
   const adapter: GitAdapter = {
     // Backs both `docs/review/...`-style checklist lookups (see the
     // checklists tests below) and any other getFile use — returns the
-    // configured fixture at `path`, or null (not found) otherwise. Every
-    // call is recorded so a test can assert WHICH ref a checklist was
-    // fetched at (the PR's own head sha, not the default branch).
+    // configured fixture at `path` (optionally ref-aware), or null (not
+    // found) otherwise. Every call is recorded so a test can assert WHICH
+    // ref a checklist was fetched at (the PR's base sha, never its head).
     async getFile(repo, path, ref): Promise<FileContent | null> {
       getFileCalls.push({ repo, path, ref })
-      return files[path] ?? null
+      const fixture = files[path]
+      if (typeof fixture === 'function') return fixture(ref)
+      return fixture ?? null
     },
     async getTree(): Promise<FileEntry[]> { return [] },
     async createBranch() {},
@@ -122,6 +131,7 @@ function makePR(overrides: Partial<FakePR> = {}): FakePR {
     headSha: 'a'.repeat(40),
     headRef: 'feat/thing',
     baseRef: 'main',
+    baseSha: 'b'.repeat(40),
     authorLogin: 'implementer-bot',
     labels: [],
     draft: false,
@@ -877,7 +887,7 @@ test('real createGateStateStore integrates with the loop (smoke test)', async ()
 
 // ── Checklists (gate/checklists.ts) wired into the built prompt ─────────
 
-test('a matching checklist rule is fetched at the PR\'s own head sha and included in the reviewer\'s prompt', async () => {
+test('a matching checklist rule is fetched at the PR\'s BASE sha (resolved fresh via getPR) and included in the reviewer\'s prompt', async () => {
   const pr = makePR({ labels: ['auth'] })
   const { adapter, getFileCalls } = makeFakeGitAdapter([pr], {
     'docs/review/concurrency.md': {
@@ -911,15 +921,57 @@ test('a matching checklist rule is fetched at the PR\'s own head sha and include
   expect(getFileCalls).toContainEqual({
     repo: 'acme/widgets',
     path: 'docs/review/concurrency.md',
-    ref: pr.headSha,
+    ref: pr.baseSha,
   })
+  // Never the head — this is the whole point of loading from base.
+  expect(getFileCalls.some(c => c.ref === pr.headSha)).toBe(false)
 })
 
-test('no matching checklist rule renders the "no checklist matched" placeholder, and getFile is never called', async () => {
+test('a checklist edited on the PR\'s own head is NOT used — only the version at the base sha is', async () => {
+  const pr = makePR({ labels: ['auth'] })
+  // Ref-aware fixture: the base sha sees the real checklist; the PR's own
+  // head sha sees a "malicious" edit (as if the PR weakened the very item
+  // that's about to review it). If the loader ever reads from the head,
+  // this content — which it must NOT — would leak into the prompt.
+  const { adapter } = makeFakeGitAdapter([pr], {
+    'docs/review/concurrency.md': ref => {
+      if (ref === pr.baseSha) return { path: 'docs/review/concurrency.md', content: 'BASE VERSION: real checklist item', encoding: 'utf-8' }
+      if (ref === pr.headSha) return { path: 'docs/review/concurrency.md', content: 'HEAD VERSION: PR-edited, softened item', encoding: 'utf-8' }
+      return null
+    },
+  })
+
+  let capturedPrompt = ''
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: input => {
+      capturedPrompt = input.prompt
+      return '## Reviewer agent (Codex)\n\nVerdict: approve as-is'
+    },
+  })
+  const rules: ChecklistRule[] = [{ label: 'auth', file: 'docs/review/concurrency.md' }]
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ checklists: { rules } }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => '{{checklists}}',
+  })
+
+  expect(capturedPrompt).toContain('BASE VERSION: real checklist item')
+  expect(capturedPrompt).not.toContain('HEAD VERSION')
+})
+
+test('no matching checklist rule renders the "no checklist matched" placeholder; neither getFile nor getPR-for-checklists runs', async () => {
   const pr = makePR({ labels: [] })
   const { adapter, getFileCalls } = makeFakeGitAdapter([pr], {
     'docs/review/concurrency.md': { path: 'docs/review/concurrency.md', content: 'irrelevant', encoding: 'utf-8' },
   })
+  let getPRCalls = 0
+  const originalGetPR = adapter.getPR.bind(adapter)
+  adapter.getPR = async (...args) => { getPRCalls++; return originalGetPR(...args) }
 
   let capturedPrompt = ''
   const reviewer = createFakeReviewer({
@@ -943,9 +995,10 @@ test('no matching checklist rule renders the "no checklist matched" placeholder,
 
   expect(capturedPrompt).toBe("Checklists:\n(no checklist matched this PR's labels or changed paths)")
   expect(getFileCalls.length).toBe(0)
+  expect(getPRCalls).toBe(0) // no point resolving a base sha nothing will use
 })
 
-test('a checklist file matched by rule but missing at the head sha does not fail the pass; review still posts', async () => {
+test('a checklist file matched by rule but missing at the resolved base sha does not fail the pass; review still posts', async () => {
   const pr = makePR({ labels: ['auth'] })
   const { adapter, commentCalls } = makeFakeGitAdapter([pr], {}) // no files configured, so getFile returns null
   const reviewer = createFakeReviewer({ vendor: 'codex' })
@@ -961,6 +1014,73 @@ test('a checklist file matched by rule but missing at the head sha does not fail
   })
 
   expect(commentCalls.length).toBe(1)
+})
+
+test('base sha cannot be resolved (getPR returns null): checklists are skipped, logged, and NEVER fall back to the head sha', async () => {
+  const pr = makePR({ labels: ['auth'] })
+  const { adapter, getFileCalls } = makeFakeGitAdapter([pr], {
+    'docs/review/concurrency.md': {
+      path: 'docs/review/concurrency.md',
+      content: 'should never be reached',
+      encoding: 'utf-8',
+    },
+  })
+  adapter.getPR = async () => null // simulates an unresolvable base (e.g. the PR vanished mid-pass)
+
+  let capturedPrompt = ''
+  const logs: string[] = []
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: input => {
+      capturedPrompt = input.prompt
+      return '## Reviewer agent (Codex)\n\nVerdict: approve as-is'
+    },
+  })
+  const rules: ChecklistRule[] = [{ label: 'auth', file: 'docs/review/concurrency.md' }]
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ checklists: { rules } }),
+    log: line => logs.push(line),
+    loadPromptTemplate: async () => '{{checklists}}',
+  })
+
+  expect(capturedPrompt).toBe("(no checklist matched this PR's labels or changed paths)")
+  expect(getFileCalls.length).toBe(0) // never even attempted a fetch, let alone at the head
+  expect(logs.some(l => l.includes('could not resolve base sha'))).toBe(true)
+})
+
+test('base sha cannot be resolved (getPR returns a PR with an empty baseSha): same skip-and-log, never falls back to head', async () => {
+  const pr = makePR({ labels: ['auth'], baseSha: '' })
+  const { adapter, getFileCalls } = makeFakeGitAdapter([pr], {
+    'docs/review/concurrency.md': { path: 'docs/review/concurrency.md', content: 'should never be reached', encoding: 'utf-8' },
+  })
+
+  let capturedPrompt = ''
+  const logs: string[] = []
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: input => {
+      capturedPrompt = input.prompt
+      return '## Reviewer agent (Codex)\n\nVerdict: approve as-is'
+    },
+  })
+  const rules: ChecklistRule[] = [{ label: 'auth', file: 'docs/review/concurrency.md' }]
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ checklists: { rules } }),
+    log: line => logs.push(line),
+    loadPromptTemplate: async () => '{{checklists}}',
+  })
+
+  expect(capturedPrompt).toBe("(no checklist matched this PR's labels or changed paths)")
+  expect(getFileCalls.length).toBe(0)
+  expect(logs.some(l => l.includes('could not resolve base sha'))).toBe(true)
 })
 
 test('a checklist rule matched by a changed file\'s path prefix pulls the diff-derived path, not the PR\'s label', async () => {

@@ -21,6 +21,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .env.test.local
 .env.production.local
 .env.local
+.env.gate
 
 # caches
 .eslintcache
@@ -35,6 +36,14 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Runtime state
 data/executions/
+
+# Review & gate mode: per-PR decision state (GateModeConfig.stateDir,
+# default ./data/gate — see docs/review-gate.md, docs/dry-run-soak.md)
+data/gate/
+
+# Review & gate mode: a locally-filled-in copy of a gate config, with real
+# repo names/labels/vendor rules — never commit target-specific config.
+config/gate/local.*
 
 # Agent worktrees
 .worktrees/

@@ -44,7 +44,7 @@ test('codexReviewerConfigFromEnv: GATE_CODEX_TIMEOUT_MS accepts a plain positive
 })
 
 test('codexReviewerConfigFromEnv: GATE_CODEX_TIMEOUT_MS rejects anything that is not a plain decimal integer string', () => {
-  const rejects = ['0', '-5', '0.5', '1e3', '0x10', '', ' ', '5ms', '5 ', ' 5', 'NaN', 'Infinity']
+  const rejects = ['0', '-1', '-5', '0.5', '1e3', '0x10', '', ' ', '5ms', '5 ', ' 5', 'NaN', 'Infinity']
   for (const raw of rejects) {
     expect(() => codexReviewerConfigFromEnv({ GATE_CODEX_TIMEOUT_MS: raw })).toThrow(/GATE_CODEX_TIMEOUT_MS/)
   }

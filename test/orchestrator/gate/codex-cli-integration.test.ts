@@ -31,14 +31,32 @@ import { runGatePass, createGateStateStore, DEFAULT_GATE_CONFIG, DEFAULT_VENDOR_
 
 // Same fixture directory the codex-cli package's own tests use.
 const FIXTURES = join(import.meta.dir, '..', '..', 'codex-cli', 'fixtures')
-const OK = join(FIXTURES, 'ok.ts')
+// Deliberately NOT test/codex-cli/fixtures/ok.ts: that fixture's review body
+// is already boundary-clean and single-blank-line-separated, so comparing
+// against it byte-for-byte would still pass even if something re-trimmed or
+// reformatted result.text before posting — the assertion wouldn't actually
+// be exercising anything. This fixture's body carries a two-space indent on
+// the line right after the header and extra blank lines after the verdict
+// line, so the comparison below is checking real whitespace fidelity, not
+// just that some text arrived. See the fixture file's own comment for what
+// this can and can't prove given extractReview()'s guarantees.
+const VERBATIM_WHITESPACE = join(FIXTURES, 'verbatim-whitespace.ts')
 
-// The exact text test/codex-cli/fixtures/ok.ts produces after the adapter's
-// extractReview() strips the preceding progress log and trailing whitespace
-// (see packages/codex-cli/src/extract.ts) — this is "the adapter's returned
-// text" the loop must post unchanged.
+// The exact text test/codex-cli/fixtures/verbatim-whitespace.ts produces
+// after the adapter's extractReview() strips the preceding progress log and
+// ALL trailing whitespace (see packages/codex-cli/src/extract.ts) — this is
+// "the adapter's returned text" the loop must post unchanged. Note the
+// two-space indent on the second line is internal, not boundary, whitespace
+// — it is NOT touched by extractReview()'s trailing strip, and (unlike
+// boundary whitespace) it also would NOT be removed by a stray `.trim()`
+// call... except trim() only touches the string's own start/end, and this
+// string's start/end are already clean (starts with "#", ends with "s"), so
+// there is nothing left for such a call to strip either way. What the
+// indent actually protects against is a reformat that touches internal
+// content (e.g. a naive "clean up each line" pass) — not a plain
+// String.prototype.trim().
 const EXPECTED_REVIEW_TEXT =
-  '## Reviewer agent (Codex)\n\nReviewed commit abc1234.\n\nVerdict: approve as-is'
+  '## Reviewer agent (Codex)\n  Reviewed commit abc1234.\n\nVerdict: approve as-is'
 
 function makeFakeGateStateStore(): GateStateStore {
   const store = new Map<string, any>()
@@ -130,8 +148,8 @@ test('gate loop wired to a real codex-cli Reviewer (fixture binary) posts its Re
   // The real package's Reviewer — no worktreePath given to review(), so this
   // exercises the same auto-created-worktree path the gate loop always uses
   // (loop.ts calls reviewer.review() without a worktreePath), driven by the
-  // `ok.ts` fixture in place of a real codex binary.
-  const reviewer = createCodexReviewer({ binary: OK, clonePath, worktreeRoot })
+  // `verbatim-whitespace.ts` fixture in place of a real codex binary.
+  const reviewer = createCodexReviewer({ binary: VERBATIM_WHITESPACE, clonePath, worktreeRoot })
 
   const config: GateModeConfig = {
     repos: ['acme/widgets'],
@@ -179,7 +197,7 @@ test('a real createGateStateStore + real codex-cli Reviewer round trip also post
 
   const commentCalls: { repo: string; prId: string; body: string }[] = []
   const git = makeGitAdapter(pr, commentCalls)
-  const reviewer = createCodexReviewer({ binary: OK, clonePath, worktreeRoot })
+  const reviewer = createCodexReviewer({ binary: VERBATIM_WHITESPACE, clonePath, worktreeRoot })
 
   const stateDir = await mkdtemp(join(tmpdir(), 'gate-codex-integration-state-'))
   try {

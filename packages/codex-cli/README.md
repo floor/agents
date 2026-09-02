@@ -67,7 +67,7 @@ const { text } = await reviewer.review({
 | `binary` | `'codex'` | Path to the codex binary, or a fixture script in tests. |
 | `timeoutMs` | 15 minutes | The process is killed and `CodexTimeoutError` thrown past this. |
 | `sandbox` | `'read-only'` | `--sandbox` value. This reviewer never writes to the worktree. |
-| `extraArgs` | `[]` | Extra argv entries inserted between the sandbox flag and the prompt. Must not contain a `--sandbox` flag (the constructor throws if it does) — that would let a later flag silently override the read-only guarantee. |
+| `extraArgs` | `[]` | Extra argv entries inserted between the sandbox flag and the prompt. Must not contain a sandbox-overriding flag (`--sandbox`, `-s`, or `--dangerously-bypass-approvals-and-sandbox` — the constructor throws if it does) — that would let a later flag silently override the read-only guarantee. Copied at construction, so mutating the array afterward has no effect. |
 | `clonePath` | — | Local clone used to create a detached worktree at `headSha` when `review()` is called without a `worktreePath`. Required in that case. |
 | `worktreeRoot` | OS temp dir | Directory under which detached worktrees are created. |
 

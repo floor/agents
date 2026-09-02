@@ -16,9 +16,11 @@ export type CodexReviewerConfig = {
   readonly sandbox?: string
   /**
    * Extra argv entries inserted between the sandbox flag and the prompt. Must not
-   * contain a `--sandbox` flag — that would let a second, later `--sandbox` value
+   * contain a sandbox-overriding flag (`--sandbox`/`-s`, or
+   * `--dangerously-bypass-approvals-and-sandbox`) — that would let a later flag
    * silently override the one set via the `sandbox` option above. Use `sandbox`
-   * instead if you need to change it.
+   * instead if you need to change it. Copied at construction time, so mutating an
+   * array passed here afterward has no effect on an already-created reviewer.
    */
   readonly extraArgs?: readonly string[]
   /**
@@ -33,6 +35,21 @@ export type CodexReviewerConfig = {
 const DEFAULT_BINARY = 'codex'
 const DEFAULT_TIMEOUT_MS = 15 * 60_000 // 15 minutes
 const DEFAULT_SANDBOX = 'read-only'
+
+// Flags that select or bypass the sandbox mode. `-s`/`--sandbox` take a separate
+// value argv entry (not `=`-joined) in the real CLI, but `=`-joined forms are
+// rejected too, defensively.
+const SANDBOX_SELECT_FLAGS = ['-s', '--sandbox']
+const SANDBOX_BYPASS_FLAGS = ['--dangerously-bypass-approvals-and-sandbox']
+
+function containsSandboxOverride(args: readonly string[]): boolean {
+  return args.some(
+    (arg) =>
+      SANDBOX_BYPASS_FLAGS.includes(arg) ||
+      SANDBOX_SELECT_FLAGS.includes(arg) ||
+      SANDBOX_SELECT_FLAGS.some((flag) => arg.startsWith(`${flag}=`)),
+  )
+}
 
 /**
  * Creates a `Reviewer` that runs the Codex CLI in read-only mode against a PR's head
@@ -53,11 +70,15 @@ export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer 
   const binary = config.binary ?? DEFAULT_BINARY
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const sandbox = config.sandbox ?? DEFAULT_SANDBOX
-  const extraArgs = config.extraArgs ?? []
+  // Copied (not just referenced) so a caller mutating their own array after
+  // construction can never retroactively smuggle a sandbox override past the check
+  // below or into the spawned argv, and frozen so this package's own code can't
+  // accidentally mutate it either.
+  const extraArgs = Object.freeze([...(config.extraArgs ?? [])])
 
-  if (extraArgs.some((arg) => arg === '--sandbox' || arg.startsWith('--sandbox='))) {
+  if (containsSandboxOverride(extraArgs)) {
     throw new Error(
-      'CodexReviewer: extraArgs must not contain a --sandbox flag — set `sandbox` in CodexReviewerConfig instead, so a later flag can never silently override the read-only guarantee.',
+      'CodexReviewer: extraArgs must not override the sandbox — no --sandbox/-s flag and no --dangerously-bypass-approvals-and-sandbox. Set `sandbox` in CodexReviewerConfig instead, so a later flag can never silently override the read-only guarantee.',
     )
   }
 

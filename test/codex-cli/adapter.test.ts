@@ -7,12 +7,13 @@ import {
   CodexProcessError,
   CodexTimeoutError,
   MalformedReviewError,
+  WorktreeMismatchError,
 } from '@floor-agents/codex-cli'
 
 // A child process's `process.cwd()` reports the OS-resolved path (e.g. `/private/tmp`
 // on macOS, where `/tmp` is a symlink), so paths built here must be resolved the same
-// way before comparing against what a fixture recorded.
-const REAL_TMP = await realpath(tmpdir())
+// way (see `realClonePath`/`realpath()` calls below) before comparing against what a
+// fixture recorded.
 
 const FIXTURES = join(import.meta.dir, 'fixtures')
 const OK = join(FIXTURES, 'ok.ts')
@@ -25,15 +26,53 @@ const RECORD = join(FIXTURES, 'record.ts')
 const baseInput = {
   repo: 'floor/agents',
   prNumber: 1,
-  headSha: 'deadbeef',
+  headSha: 'deadbeef', // placeholder — every test overrides this with the real `headSha` below
   prompt: 'review this please',
 }
 
+// A real local git repo + commit, used two ways below: (a) as `clonePath`, for tests
+// exercising the auto-created-worktree path, and (b) directly as a caller-supplied
+// `worktreePath`, since round 5 requires `resolveWorktree` to verify ANY worktreePath
+// (caller-supplied or created by this package) actually has `headSha` checked out
+// before spawning — a bogus placeholder path no longer works for those tests either.
+let originPath: string
+let clonePath: string
+let realClonePath: string
+let headSha: string
+
+beforeAll(async () => {
+  // `resolveWorktree` always does `git fetch origin <sha>`, mirroring a real clone of
+  // a remote repo — so the test fixture needs a real `origin` remote, not just a bare
+  // local repo with a commit in it.
+  originPath = await mkdtemp(join(tmpdir(), 'codex-cli-test-origin-'))
+  await Bun.$`git -C ${originPath} init -q --bare -b main`.quiet()
+
+  clonePath = await mkdtemp(join(tmpdir(), 'codex-cli-test-clone-'))
+  await Bun.$`git clone -q ${originPath} ${clonePath}`.quiet()
+  await Bun.$`git -C ${clonePath} config user.email test@example.com`.quiet()
+  await Bun.$`git -C ${clonePath} config user.name test`.quiet()
+  await Bun.write(join(clonePath, 'file.txt'), 'hello\n')
+  await Bun.$`git -C ${clonePath} add -A`.quiet()
+  await Bun.$`git -C ${clonePath} commit -q -m init`.quiet()
+  await Bun.$`git -C ${clonePath} push -q origin main`.quiet()
+  const sha = await Bun.$`git -C ${clonePath} rev-parse HEAD`.quiet().text()
+  headSha = sha.trim()
+  realClonePath = await realpath(clonePath)
+})
+
+afterAll(async () => {
+  await rm(clonePath, { recursive: true, force: true }).catch(() => {})
+  await rm(originPath, { recursive: true, force: true }).catch(() => {})
+})
+
 // ── Given an explicit worktreePath, no git worktree is created or touched ──────────
+// (clonePath itself, at headSha, stands in for "a caller-supplied worktree" in these
+// tests — it's a real checkout at a known commit, which is what the verification
+// added in round 5 requires.)
 
 test('runs in the given worktreePath and returns the extracted review', async () => {
   const reviewer = createCodexReviewer({ binary: OK })
-  const result = await reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
+  const result = await reviewer.review({ ...baseInput, headSha, worktreePath: clonePath })
 
   expect(result.text).toContain('## Reviewer agent (Codex)')
   expect(result.text).toContain('Verdict: approve as-is')
@@ -42,7 +81,7 @@ test('runs in the given worktreePath and returns the extracted review', async ()
 
 test('accepts the round-N header variant end to end', async () => {
   const reviewer = createCodexReviewer({ binary: ROUND })
-  const result = await reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
+  const result = await reviewer.review({ ...baseInput, headSha, worktreePath: clonePath })
 
   expect(result.text).toBe('## Reviewer agent (Codex), round 2\n\nVerdict: changes needed')
 })
@@ -50,6 +89,45 @@ test('accepts the round-N header variant end to end', async () => {
 test('vendor is "codex"', () => {
   const reviewer = createCodexReviewer({ binary: OK })
   expect(reviewer.vendor).toBe('codex')
+})
+
+test('a caller-supplied worktreePath at the wrong commit throws WorktreeMismatchError before spawning, and codex never runs', async () => {
+  // A binary that would prove itself if spawned: it writes a marker file the moment
+  // it starts, so a mismatch check that (bug!) spawned anyway would be caught here.
+  const markerFile = join(tmpdir(), `codex-test-spawned-${crypto.randomUUID()}.marker`)
+  const prevEnv = process.env.CODEX_TEST_RECORD
+  process.env.CODEX_TEST_RECORD = markerFile
+
+  try {
+    const reviewer = createCodexReviewer({ binary: RECORD })
+    const wrongSha = '1'.repeat(40) // clonePath's real HEAD is `headSha`, not this
+
+    await expect(
+      reviewer.review({ ...baseInput, headSha: wrongSha, worktreePath: clonePath }),
+    ).rejects.toBeInstanceOf(WorktreeMismatchError)
+
+    expect(await Bun.file(markerFile).exists()).toBe(false)
+  } finally {
+    if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
+    else process.env.CODEX_TEST_RECORD = prevEnv
+    await rm(markerFile, { force: true }).catch(() => {})
+  }
+})
+
+test('never removes a caller-supplied worktreePath, even on a mismatch', async () => {
+  const reviewer = createCodexReviewer({ binary: OK })
+  const wrongSha = '2'.repeat(40)
+
+  await expect(
+    reviewer.review({ ...baseInput, headSha: wrongSha, worktreePath: clonePath }),
+  ).rejects.toBeInstanceOf(WorktreeMismatchError)
+
+  // clonePath is the shared fixture other tests still depend on — it must survive.
+  // (`Bun.file(dir).exists()` is for regular files; check a file inside it instead,
+  // and that it's still a registered, intact git working directory.)
+  expect(await Bun.file(join(clonePath, 'file.txt')).exists()).toBe(true)
+  const list = await Bun.$`git -C ${clonePath} worktree list`.quiet().text()
+  expect(list.trim().split('\n')).toHaveLength(1)
 })
 
 // ── argv is fixed by design: no extraArgs, only two typed & validated options ──────
@@ -88,12 +166,34 @@ test('rejects a model/profile value that starts with a dash, so it can never be 
   expect(() => createCodexReviewer({ binary: OK, profile: '-x' })).toThrow(/profile/i)
 })
 
-test('rejects a model/profile value over the 128-character length cap', () => {
+test('rejects a model value over the 128-character length cap', () => {
   const tooLong = 'a'.repeat(129)
   const atLimit = 'a'.repeat(128)
 
   expect(() => createCodexReviewer({ binary: OK, model: tooLong })).toThrow(/model/i)
   expect(() => createCodexReviewer({ binary: OK, model: atLimit })).not.toThrow()
+})
+
+test('rejects a profile value over the 128-character length cap', () => {
+  const tooLong = 'a'.repeat(129)
+  const atLimit = 'a'.repeat(128)
+
+  expect(() => createCodexReviewer({ binary: OK, profile: tooLong })).toThrow(/profile/i)
+  expect(() => createCodexReviewer({ binary: OK, profile: atLimit })).not.toThrow()
+})
+
+test('rejects a non-string model/profile value outright, including an object with a malicious toString', () => {
+  const trickyObject = {
+    toString: () => '--sandbox',
+    valueOf: () => '--sandbox',
+  }
+
+  expect(() => createCodexReviewer({ binary: OK, model: trickyObject as unknown as string })).toThrow(/model/i)
+  expect(() => createCodexReviewer({ binary: OK, profile: trickyObject as unknown as string })).toThrow(
+    /profile/i,
+  )
+  expect(() => createCodexReviewer({ binary: OK, model: 42 as unknown as string })).toThrow(/model/i)
+  expect(() => createCodexReviewer({ binary: OK, model: null as unknown as string })).toThrow(/model/i)
 })
 
 test('emits exactly [binary, "exec", "--sandbox", "read-only", prompt] when neither model nor profile is set', async () => {
@@ -103,7 +203,7 @@ test('emits exactly [binary, "exec", "--sandbox", "read-only", prompt] when neit
 
   try {
     const reviewer = createCodexReviewer({ binary: RECORD })
-    await reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
+    await reviewer.review({ ...baseInput, headSha, worktreePath: clonePath })
 
     expect(await recordArgLines(recordFile)).toEqual(['exec', '--sandbox', 'read-only', baseInput.prompt])
   } finally {
@@ -120,7 +220,7 @@ test('emits exactly [..., "--model", <model>, prompt] when only model is set', a
 
   try {
     const reviewer = createCodexReviewer({ binary: RECORD, model: 'gpt-5.1-codex' })
-    await reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
+    await reviewer.review({ ...baseInput, headSha, worktreePath: clonePath })
 
     expect(await recordArgLines(recordFile)).toEqual([
       'exec',
@@ -144,7 +244,7 @@ test('emits exactly [..., "--model", <model>, "--profile", <profile>, prompt] wh
 
   try {
     const reviewer = createCodexReviewer({ binary: RECORD, model: 'gpt-5.1-codex', profile: 'ci-reviewer_v1' })
-    await reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
+    await reviewer.review({ ...baseInput, headSha, worktreePath: clonePath })
 
     expect(await recordArgLines(recordFile)).toEqual([
       'exec',
@@ -171,7 +271,7 @@ test('the prompt is always the final argv element, even when it starts with a da
 
   try {
     const reviewer = createCodexReviewer({ binary: RECORD, model: 'gpt-5.1-codex' })
-    await reviewer.review({ ...baseInput, prompt: dashPrompt, worktreePath: REAL_TMP })
+    await reviewer.review({ ...baseInput, prompt: dashPrompt, headSha, worktreePath: clonePath })
 
     const argLines = await recordArgLines(recordFile)
     expect(argLines).toEqual(['exec', '--sandbox', 'read-only', '--model', 'gpt-5.1-codex', dashPrompt])
@@ -189,7 +289,7 @@ test('the prompt is always the final argv element, even when it starts with a da
 test('throws MalformedReviewError, and never returns text, when the header is missing', async () => {
   const reviewer = createCodexReviewer({ binary: NO_HEADER })
 
-  await expect(reviewer.review({ ...baseInput, worktreePath: REAL_TMP })).rejects.toBeInstanceOf(
+  await expect(reviewer.review({ ...baseInput, headSha, worktreePath: clonePath })).rejects.toBeInstanceOf(
     MalformedReviewError,
   )
 })
@@ -197,7 +297,7 @@ test('throws MalformedReviewError, and never returns text, when the header is mi
 test('surfaces a non-zero exit as CodexProcessError with exit code and stderr', async () => {
   const reviewer = createCodexReviewer({ binary: FAIL })
 
-  const failure = reviewer.review({ ...baseInput, worktreePath: REAL_TMP })
+  const failure = reviewer.review({ ...baseInput, headSha, worktreePath: clonePath })
   await expect(failure).rejects.toBeInstanceOf(CodexProcessError)
 
   try {
@@ -214,7 +314,7 @@ test('kills the process and throws CodexTimeoutError when it runs past timeoutMs
   const reviewer = createCodexReviewer({ binary: SLEEP, timeoutMs: 100 })
 
   const start = performance.now()
-  await expect(reviewer.review({ ...baseInput, worktreePath: REAL_TMP })).rejects.toBeInstanceOf(
+  await expect(reviewer.review({ ...baseInput, headSha, worktreePath: clonePath })).rejects.toBeInstanceOf(
     CodexTimeoutError,
   )
   // The fixture sleeps 30s; if this took anywhere near that long, the kill didn't work.
@@ -232,7 +332,7 @@ test('passes the prompt as a single argv element, with metacharacters inert, and
   try {
     const reviewer = createCodexReviewer({ binary: RECORD })
 
-    await reviewer.review({ ...baseInput, prompt: dangerousPrompt, worktreePath: REAL_TMP })
+    await reviewer.review({ ...baseInput, prompt: dangerousPrompt, headSha, worktreePath: clonePath })
 
     const record = await readFile(recordFile, 'utf-8')
     const lines = record.split('\n')
@@ -245,7 +345,7 @@ test('passes the prompt as a single argv element, with metacharacters inert, and
     expect(lines).toContain(`ARG:${dangerousPrompt}`)
     expect(lines.some((l) => l.startsWith('ARG:') && l.includes('rm -rf'))).toBe(true)
 
-    expect(lines).toContain(`CWD:${REAL_TMP}`)
+    expect(lines).toContain(`CWD:${realClonePath}`)
     expect(lines.find((l) => l.startsWith('STDIN:'))).toBe('STDIN:closed-eof')
   } finally {
     if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
@@ -254,35 +354,7 @@ test('passes the prompt as a single argv element, with metacharacters inert, and
   }
 }, 10_000)
 
-// ── worktree lifecycle ──────────────────────────────────────────────────────────────
-
-let originPath: string
-let clonePath: string
-let headSha: string
-
-beforeAll(async () => {
-  // `resolveWorktree` always does `git fetch origin <sha>`, mirroring a real clone of
-  // a remote repo — so the test fixture needs a real `origin` remote, not just a bare
-  // local repo with a commit in it.
-  originPath = await mkdtemp(join(tmpdir(), 'codex-cli-test-origin-'))
-  await Bun.$`git -C ${originPath} init -q --bare -b main`.quiet()
-
-  clonePath = await mkdtemp(join(tmpdir(), 'codex-cli-test-clone-'))
-  await Bun.$`git clone -q ${originPath} ${clonePath}`.quiet()
-  await Bun.$`git -C ${clonePath} config user.email test@example.com`.quiet()
-  await Bun.$`git -C ${clonePath} config user.name test`.quiet()
-  await Bun.write(join(clonePath, 'file.txt'), 'hello\n')
-  await Bun.$`git -C ${clonePath} add -A`.quiet()
-  await Bun.$`git -C ${clonePath} commit -q -m init`.quiet()
-  await Bun.$`git -C ${clonePath} push -q origin main`.quiet()
-  const sha = await Bun.$`git -C ${clonePath} rev-parse HEAD`.quiet().text()
-  headSha = sha.trim()
-})
-
-afterAll(async () => {
-  await rm(clonePath, { recursive: true, force: true }).catch(() => {})
-  await rm(originPath, { recursive: true, force: true }).catch(() => {})
-})
+// ── worktree lifecycle (auto-created worktree, review() called without a worktreePath) ─
 
 test('creates a detached worktree from clonePath at headSha, runs there, and removes it after success', async () => {
   const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)

@@ -15,9 +15,12 @@
 // provably a no-op no matter what a fixture puts after the verdict line.
 // The two-space indent on the line below the header is genuinely internal
 // (not at either boundary of the extracted string), so it survives both
-// extractReview() and any hypothetical `.trim()` — it's what actually
-// proves this test wouldn't pass if something re-trimmed or reformatted
-// `result.text` before posting it.
+// extractReview() and any hypothetical `.trim()`. This fixture therefore
+// proves mid-string fidelity only: a reformat or re-indent of
+// `result.text` before posting would fail the test, a boundary-only
+// `.trim()` would not. The trim regression is pinned separately by the
+// loop-level test in test/orchestrator/gate/loop.test.ts, whose
+// hand-built Reviewer bypasses extractReview().
 console.log('Reading repository state...')
 console.log('Cross-referencing changed files against the diff...')
 console.log('## Reviewer agent (Codex)')

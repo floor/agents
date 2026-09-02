@@ -15,8 +15,9 @@ export type ReviewPromptContext = {
   readonly headSha: string
   readonly changedFiles: readonly string[]
   /** Pre-rendered checklist text (see gate/checklists.ts), already
-   *  resolved for this PR's labels/changed paths and fetched at its head
-   *  commit. Optional — a caller that never wires up checklists (or an
+   *  resolved for this PR's labels/changed paths and fetched at the PR's
+   *  base branch head sha (never the PR head, so a PR cannot edit the
+   *  checklist that reviews it). Optional — a caller that never wires up checklists (or an
    *  older caller predating this field) simply gets the "no checklist
    *  matched" placeholder text rendered in its place, not a literal
    *  `{{checklists}}` left in the prompt. */

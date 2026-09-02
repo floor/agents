@@ -100,8 +100,8 @@ test('fetches each file at the given ref and concatenates their content', async 
   expect(result).toContain('1. Check races.')
   expect(result).toContain('### docs/review/matrix.md')
   expect(result).toContain('1. Check checkboxes.')
-  // Order preserved, and content fetched at the given ref (the PR's head
-  // sha), not the target repo's default branch.
+  // Order preserved, and content fetched at the given ref (the PR's base
+  // sha, as the loop resolves it), not the target repo's default branch.
   expect(calls).toEqual([
     { repo: 'acme/widgets', path: 'docs/review/concurrency.md', ref: 'deadbeefcafe' },
     { repo: 'acme/widgets', path: 'docs/review/matrix.md', ref: 'deadbeefcafe' },

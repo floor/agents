@@ -10,6 +10,13 @@
 // `## Reviewer agent (<Vendor>)`) and contains at least one exact verdict
 // line. Everything else — a comment quoting/reproducing an older verdict
 // inline, chatter, questions — is not a verdict.
+//
+// This module only parses TEXT. The vendor name in the header is
+// whatever the comment claims, not a verified identity — anyone who can
+// comment on the PR can write it. Identity (is this comment actually from
+// a trusted reviewer?) is enforced separately, by comment AUTHOR, in
+// decision.ts's `trustedReviewers` — never trust `ParsedVerdict.vendor`
+// on its own for a gating decision.
 
 export type Decision = 'approve as-is' | 'approve with nits' | 'changes needed'
 
@@ -22,7 +29,9 @@ export type ParsedVerdict = {
   readonly shas: readonly string[]
 }
 
-const HEADER_RE = /^##\s*Reviewer agent \(([^,)]+?)(?:,\s*round\s*(\d+))?\)\s*$/
+// Exactly "## Reviewer agent (" — a missing space (e.g. "##Reviewer agent")
+// does not match the documented header format and is not a verdict.
+const HEADER_RE = /^## Reviewer agent \(([^,)]+?)(?:,\s*round\s*(\d+))?\)\s*$/
 const SHA_RE = /\b[0-9a-fA-F]{7,40}\b/g
 
 const VERDICT_LINES: Record<string, Decision> = {

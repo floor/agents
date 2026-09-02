@@ -16,11 +16,25 @@ export type GateConfig = {
   readonly authLabels: readonly string[]
   /** Label that unconditionally holds a PR for a human. Default: 'needs-human'. */
   readonly needsHumanLabel: string
+  /** GitHub comment-author login (lowercased) -> vendor. A verdict comment
+   *  only counts if its AUTHOR is a key here — the vendor used for every
+   *  gating rule (differs-from-implementer, latest-per-vendor, the auth
+   *  gate's two-distinct-vendor count) is this mapped vendor, never the
+   *  free-text vendor name the comment's own header claims. The header is
+   *  formatting, not an identity: without this check, anyone who can
+   *  comment on the PR (including its own author) could post
+   *  `## Reviewer agent (Codex)` / `Verdict: approve as-is` and satisfy
+   *  the gate. Include the gate loop's own posting identity here, mapped
+   *  to its configured Reviewer's vendor — otherwise the loop can never
+   *  recognize its own posted review and will re-review every pass.
+   *  Default `{}` is fail-closed: no comment is trusted until configured. */
+  readonly trustedReviewers: Readonly<Record<string, string>>
 }
 
 export const DEFAULT_GATE_CONFIG: GateConfig = {
   authLabels: ['auth'],
   needsHumanLabel: 'needs-human',
+  trustedReviewers: {},
 }
 
 export type GateDecisionPR = {
@@ -31,6 +45,9 @@ export type GateDecisionPR = {
 }
 
 export type GateDecisionComment = {
+  /** GitHub login of the comment's author, as returned by the API — not
+   *  anything the comment body itself claims. */
+  readonly author: string
   readonly body: string
   readonly createdAt: Date
 }
@@ -87,17 +104,22 @@ function isValidForHead(
   return isVerdictCurrentForHead(shas, createdAt, headSha, headCommitDate)
 }
 
-/** Latest valid verdict per vendor (by createdAt), keyed case-insensitively
- *  but reported with the vendor's own casing from its most recent verdict. */
-function latestValidVerdictsByVendor(input: GateDecisionInput): ValidVerdict[] {
+/** Latest valid verdict per vendor (by createdAt), keyed case-insensitively.
+ *  The vendor identity comes from `config.trustedReviewers[comment.author]`
+ *  — never from the comment's own header text — so an untrusted author's
+ *  comment is skipped entirely, regardless of how well-formed it looks. */
+function latestValidVerdictsByVendor(input: GateDecisionInput, config: GateConfig): ValidVerdict[] {
   const byVendor = new Map<string, ValidVerdict>()
 
   for (const comment of input.comments) {
     const parsed = parseVerdictComment(comment.body)
     if (!parsed) continue
 
+    const trustedVendor = config.trustedReviewers[comment.author.toLowerCase()]
+    if (!trustedVendor) continue
+
     if (!isValidForHead(
-      parsed.vendor,
+      trustedVendor,
       parsed.shas,
       comment.createdAt,
       input.implementerVendor,
@@ -105,10 +127,10 @@ function latestValidVerdictsByVendor(input: GateDecisionInput): ValidVerdict[] {
       input.headCommitDate,
     )) continue
 
-    const key = parsed.vendor.toLowerCase()
+    const key = trustedVendor.toLowerCase()
     const existing = byVendor.get(key)
     if (!existing || comment.createdAt.getTime() > existing.createdAt.getTime()) {
-      byVendor.set(key, { vendor: parsed.vendor, decision: parsed.decision, createdAt: comment.createdAt })
+      byVendor.set(key, { vendor: trustedVendor, decision: parsed.decision, createdAt: comment.createdAt })
     }
   }
 
@@ -126,7 +148,7 @@ export function decideGate(input: GateDecisionInput): GateDecision {
     return { kind: 'hold', reason: 'PR is a draft' }
   }
 
-  const verdicts = latestValidVerdictsByVendor(input)
+  const verdicts = latestValidVerdictsByVendor(input, config)
 
   const blocking = verdicts.find(v => v.decision === 'changes needed' || v.decision === 'approve with nits')
   if (blocking) {

@@ -16,11 +16,13 @@ export type CodexReviewerConfig = {
   readonly sandbox?: string
   /**
    * Extra argv entries inserted between the sandbox flag and the prompt. Must not
-   * contain a sandbox-overriding flag (`--sandbox`/`-s`, or
-   * `--dangerously-bypass-approvals-and-sandbox`) — that would let a later flag
-   * silently override the one set via the `sandbox` option above. Use `sandbox`
-   * instead if you need to change it. Copied at construction time, so mutating an
-   * array passed here afterward has no effect on an already-created reviewer.
+   * override the sandbox or approval policy — no `--sandbox`/`-s`, `--add-dir`, a
+   * bypass flag (`--yolo`, `--approve-for-me`, `--not-so-yolo`, `--full-auto`,
+   * `--dangerously-bypass-approvals-and-sandbox`), or a `-c`/`--config` setting
+   * `sandbox_mode`/`approval_policy` (the constructor throws if any are present,
+   * case-insensitively). Use `sandbox` instead if you need to change it. Copied and
+   * frozen at construction time, so mutating an array passed here afterward has no
+   * effect on an already-created reviewer.
    */
   readonly extraArgs?: readonly string[]
   /**
@@ -36,19 +38,59 @@ const DEFAULT_BINARY = 'codex'
 const DEFAULT_TIMEOUT_MS = 15 * 60_000 // 15 minutes
 const DEFAULT_SANDBOX = 'read-only'
 
-// Flags that select or bypass the sandbox mode. `-s`/`--sandbox` take a separate
-// value argv entry (not `=`-joined) in the real CLI, but `=`-joined forms are
-// rejected too, defensively.
-const SANDBOX_SELECT_FLAGS = ['-s', '--sandbox']
-const SANDBOX_BYPASS_FLAGS = ['--dangerously-bypass-approvals-and-sandbox']
+// Flags/config keys that select or bypass the sandbox or approval policy. The adapter
+// sets the sandbox itself and no caller has a legitimate reason to pass any of these
+// via extraArgs, so matching is deliberately broad (a prefix match on `-s`/`--sandbox`
+// covers the bare flag, `-s <mode>`, the compact `-s<mode>`, and `-s=<mode>`/
+// `--sandbox=<mode>` forms) rather than trying to enumerate every accepted spelling.
+// All checks are case-insensitive.
+const SANDBOX_BYPASS_FLAGS = new Set([
+  '--dangerously-bypass-approvals-and-sandbox',
+  '--yolo',
+  '--approve-for-me',
+  '--not-so-yolo',
+  '--full-auto',
+])
+const DANGEROUS_CONFIG_KEYS = ['sandbox_mode', 'approval_policy']
 
-function containsSandboxOverride(args: readonly string[]): boolean {
-  return args.some(
-    (arg) =>
-      SANDBOX_BYPASS_FLAGS.includes(arg) ||
-      SANDBOX_SELECT_FLAGS.includes(arg) ||
-      SANDBOX_SELECT_FLAGS.some((flag) => arg.startsWith(`${flag}=`)),
-  )
+function isDangerousConfigValue(value: string): boolean {
+  return DANGEROUS_CONFIG_KEYS.some((key) => new RegExp(`^${key}\\s*=`, 'i').test(value))
+}
+
+export function containsSandboxOverride(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!
+    const lower = arg.toLowerCase()
+
+    if (/^-s/i.test(arg)) return true // -s, -s <mode>, -s<mode> (compact), -s=<mode>
+    if (/^--sandbox/i.test(arg)) return true // --sandbox, --sandbox=<mode>
+    if (SANDBOX_BYPASS_FLAGS.has(lower)) return true
+    if (/^--add-dir(=|$)/i.test(arg)) return true
+
+    // -c/--config setting sandbox_mode or approval_policy: as a separate value argv
+    // entry ("-c sandbox_mode=..."), compact ("-csandbox_mode=..."), or inline
+    // ("--config=sandbox_mode=...").
+    if (lower === '-c' || lower === '--config') {
+      const value = args[i + 1]
+      if (value !== undefined && isDangerousConfigValue(value)) return true
+    } else if (/^-c/i.test(arg)) {
+      if (isDangerousConfigValue(arg.slice(2))) return true
+    } else if (/^--config=/i.test(arg)) {
+      if (isDangerousConfigValue(arg.slice('--config='.length))) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Copies `extraArgs` into a new, frozen array. Copying (rather than storing the
+ * caller's array by reference) means a caller mutating their own array after
+ * construction can never retroactively smuggle a sandbox override past the check in
+ * `createCodexReviewer` or into the spawned argv; freezing means this package's own
+ * code can't accidentally mutate it either.
+ */
+export function freezeExtraArgs(extraArgs?: readonly string[]): readonly string[] {
+  return Object.freeze([...(extraArgs ?? [])])
 }
 
 /**
@@ -70,15 +112,11 @@ export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer 
   const binary = config.binary ?? DEFAULT_BINARY
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const sandbox = config.sandbox ?? DEFAULT_SANDBOX
-  // Copied (not just referenced) so a caller mutating their own array after
-  // construction can never retroactively smuggle a sandbox override past the check
-  // below or into the spawned argv, and frozen so this package's own code can't
-  // accidentally mutate it either.
-  const extraArgs = Object.freeze([...(config.extraArgs ?? [])])
+  const extraArgs = freezeExtraArgs(config.extraArgs)
 
   if (containsSandboxOverride(extraArgs)) {
     throw new Error(
-      'CodexReviewer: extraArgs must not override the sandbox — no --sandbox/-s flag and no --dangerously-bypass-approvals-and-sandbox. Set `sandbox` in CodexReviewerConfig instead, so a later flag can never silently override the read-only guarantee.',
+      'CodexReviewer: extraArgs must not override the sandbox or approval policy — no --sandbox/-s, --add-dir, a bypass flag (e.g. --yolo, --full-auto, --dangerously-bypass-approvals-and-sandbox), or a -c/--config setting sandbox_mode/approval_policy. Set `sandbox` in CodexReviewerConfig instead, so a later flag can never silently override the read-only guarantee.',
     )
   }
 

@@ -1,4 +1,4 @@
-export { createCodexReviewer, containsSandboxOverride, freezeExtraArgs } from './adapter'
+export { createCodexReviewer } from './adapter'
 export type { CodexReviewerConfig } from './adapter'
 export { CodexProcessError, CodexTimeoutError, MalformedReviewError } from './errors'
 export { extractReview } from './extract'

@@ -55,30 +55,39 @@ export async function resolveWorktree(
   const root = input.worktreeRoot ?? tmpdir()
   const dir = join(root, `codex-review-${randomUUID()}`)
 
+  // Only true once `git worktree add` itself has succeeded — i.e. `dir` is actually
+  // registered as a worktree of `clonePath`. Cleanup uses this to decide whether
+  // attempting `git worktree remove` makes sense at all: if `add` never ran (e.g.
+  // `fetch` failed first), there is nothing registered to remove, and issuing that
+  // command would just fail (harmlessly, but needlessly) before falling back anyway.
+  let registered = false
+
   const cleanup = async () => {
-    try {
-      await runGit(['-C', clonePath, 'worktree', 'remove', '--force', dir])
-    } catch {
-      // The worktree may never have been fully registered (e.g. we failed right
-      // after `worktree add`), or git may refuse for other reasons. Fall back to
-      // removing the directory directly so we never leak a temp dir.
-      await rm(dir, { recursive: true, force: true }).catch(() => {})
+    if (registered) {
+      try {
+        await runGit(['-C', clonePath, 'worktree', 'remove', '--force', dir])
+        return
+      } catch {
+        // git may refuse for reasons beyond registration (e.g. it was already removed
+        // by something else). Fall through to a direct filesystem cleanup below.
+      }
     }
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
   }
 
   try {
     await runGit(['-C', clonePath, 'fetch', 'origin', input.headSha])
     await runGit(['-C', clonePath, 'worktree', 'add', '--detach', dir, input.headSha])
+    registered = true
     // `worktree add` can report success while the worktree ends up in an unexpected
     // state in rare interrupted cases. Verify it actually checked out the commit we
     // asked for before handing it to codex — reviewing the wrong commit silently
     // would be worse than failing loudly here.
     await verifyWorktreeHead(runGit, dir, input.headSha)
   } catch (err) {
-    // Whether `fetch`, `worktree add`, or the verification above threw, the worktree
-    // may already be partially created/registered — the caller never gets a chance to
-    // call `cleanup()` in this path, since `resolveWorktree()` never returned. Best
-    // -effort clean up whatever exists before rethrowing.
+    // Whether `fetch`, `worktree add`, or the verification above threw, the caller
+    // never gets a chance to call `cleanup()` in this path, since `resolveWorktree()`
+    // never returned. Best-effort clean up whatever exists before rethrowing.
     await cleanup().catch(() => {})
     throw err
   }

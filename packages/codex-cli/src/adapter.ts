@@ -7,24 +7,22 @@ import { extractReview } from './extract'
 import type { Reviewer, ReviewInput, ReviewResult } from './types'
 import { resolveWorktree } from './worktree'
 
+// Four rounds of an adversarial review kept finding new ways to smuggle an argv
+// element past a denylist on a caller-supplied extraArgs (a second --sandbox, a short
+// alias, a compact form, a -c/--config key, --add-dir, --cd/-C...). The fix is not a
+// bigger denylist: there is no caller-extensible argv at all. The only configurable
+// inputs are two typed, validated values translated into fixed flags by this adapter
+// itself; the sandbox mode, the subcommand, and the prompt's position are not
+// configurable by a caller under any name.
 export type CodexReviewerConfig = {
   /** Path to the codex binary, or a fixture script in tests. Defaults to `'codex'`. */
   readonly binary?: string
   /** Kill the process and throw `CodexTimeoutError` after this many ms. Default 15 min. */
   readonly timeoutMs?: number
-  /** `--sandbox` value. Default `'read-only'` — this reviewer never writes to the worktree. */
-  readonly sandbox?: string
-  /**
-   * Extra argv entries inserted between the sandbox flag and the prompt. Must not
-   * override the sandbox or approval policy — no `--sandbox`/`-s`, `--add-dir`, a
-   * bypass flag (`--yolo`, `--approve-for-me`, `--not-so-yolo`, `--full-auto`,
-   * `--dangerously-bypass-approvals-and-sandbox`), or a `-c`/`--config` setting
-   * `sandbox_mode`/`approval_policy` (the constructor throws if any are present,
-   * case-insensitively). Use `sandbox` instead if you need to change it. Copied and
-   * frozen at construction time, so mutating an array passed here afterward has no
-   * effect on an already-created reviewer.
-   */
-  readonly extraArgs?: readonly string[]
+  /** Emitted as `--model <value>`. Must match `/^[A-Za-z0-9._-]+$/`. */
+  readonly model?: string
+  /** Emitted as `--profile <value>`. Must match `/^[A-Za-z0-9._-]+$/`. */
+  readonly profile?: string
   /**
    * Local clone of the repo to review, used to create a detached worktree at
    * `headSha` when `review()` is called without a `worktreePath`. Required in that case.
@@ -36,61 +34,18 @@ export type CodexReviewerConfig = {
 
 const DEFAULT_BINARY = 'codex'
 const DEFAULT_TIMEOUT_MS = 15 * 60_000 // 15 minutes
-const DEFAULT_SANDBOX = 'read-only'
+// Fixed, not configurable: this reviewer never writes to the worktree, under any name.
+const SANDBOX = 'read-only'
 
-// Flags/config keys that select or bypass the sandbox or approval policy. The adapter
-// sets the sandbox itself and no caller has a legitimate reason to pass any of these
-// via extraArgs, so matching is deliberately broad (a prefix match on `-s`/`--sandbox`
-// covers the bare flag, `-s <mode>`, the compact `-s<mode>`, and `-s=<mode>`/
-// `--sandbox=<mode>` forms) rather than trying to enumerate every accepted spelling.
-// All checks are case-insensitive.
-const SANDBOX_BYPASS_FLAGS = new Set([
-  '--dangerously-bypass-approvals-and-sandbox',
-  '--yolo',
-  '--approve-for-me',
-  '--not-so-yolo',
-  '--full-auto',
-])
-const DANGEROUS_CONFIG_KEYS = ['sandbox_mode', 'approval_policy']
+const OPTION_VALUE_RE = /^[A-Za-z0-9._-]+$/
 
-function isDangerousConfigValue(value: string): boolean {
-  return DANGEROUS_CONFIG_KEYS.some((key) => new RegExp(`^${key}\\s*=`, 'i').test(value))
-}
-
-export function containsSandboxOverride(args: readonly string[]): boolean {
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!
-    const lower = arg.toLowerCase()
-
-    if (/^-s/i.test(arg)) return true // -s, -s <mode>, -s<mode> (compact), -s=<mode>
-    if (/^--sandbox/i.test(arg)) return true // --sandbox, --sandbox=<mode>
-    if (SANDBOX_BYPASS_FLAGS.has(lower)) return true
-    if (/^--add-dir(=|$)/i.test(arg)) return true
-
-    // -c/--config setting sandbox_mode or approval_policy: as a separate value argv
-    // entry ("-c sandbox_mode=..."), compact ("-csandbox_mode=..."), or inline
-    // ("--config=sandbox_mode=...").
-    if (lower === '-c' || lower === '--config') {
-      const value = args[i + 1]
-      if (value !== undefined && isDangerousConfigValue(value)) return true
-    } else if (/^-c/i.test(arg)) {
-      if (isDangerousConfigValue(arg.slice(2))) return true
-    } else if (/^--config=/i.test(arg)) {
-      if (isDangerousConfigValue(arg.slice('--config='.length))) return true
-    }
+function validateOptionValue(name: 'model' | 'profile', value: string | undefined): void {
+  if (value === undefined) return
+  if (!OPTION_VALUE_RE.test(value)) {
+    throw new Error(
+      `CodexReviewer: ${name} must match ${OPTION_VALUE_RE} — got ${JSON.stringify(value)}. This is deliberately restrictive: it is translated straight into an argv element, so it must not be able to look like a flag or carry shell/argv metacharacters.`,
+    )
   }
-  return false
-}
-
-/**
- * Copies `extraArgs` into a new, frozen array. Copying (rather than storing the
- * caller's array by reference) means a caller mutating their own array after
- * construction can never retroactively smuggle a sandbox override past the check in
- * `createCodexReviewer` or into the spawned argv; freezing means this package's own
- * code can't accidentally mutate it either.
- */
-export function freezeExtraArgs(extraArgs?: readonly string[]): readonly string[] {
-  return Object.freeze([...(extraArgs ?? [])])
 }
 
 /**
@@ -107,18 +62,24 @@ export function freezeExtraArgs(extraArgs?: readonly string[]): readonly string[
  * - The read-only sandbox cannot run tests, so its conclusions are analytical only.
  * - It bills a ChatGPT subscription (`~/.codex/auth.json`), not an API key — nothing in
  *   this adapter reads or sets an API key env var.
+ *
+ * argv is fixed by design: `[binary, 'exec', '--sandbox', 'read-only', ...typed flags
+ * from `model`/`profile`, prompt]`. There is no `extraArgs` and no way for a caller to
+ * add, remove, or reorder an argv element — `model` and `profile` are validated
+ * against a strict charset and can only ever render as their own `--model`/`--profile`
+ * flag pair, never as something else.
  */
 export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer {
   const binary = config.binary ?? DEFAULT_BINARY
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
-  const sandbox = config.sandbox ?? DEFAULT_SANDBOX
-  const extraArgs = freezeExtraArgs(config.extraArgs)
 
-  if (containsSandboxOverride(extraArgs)) {
-    throw new Error(
-      'CodexReviewer: extraArgs must not override the sandbox or approval policy — no --sandbox/-s, --add-dir, a bypass flag (e.g. --yolo, --full-auto, --dangerously-bypass-approvals-and-sandbox), or a -c/--config setting sandbox_mode/approval_policy. Set `sandbox` in CodexReviewerConfig instead, so a later flag can never silently override the read-only guarantee.',
-    )
-  }
+  validateOptionValue('model', config.model)
+  validateOptionValue('profile', config.profile)
+
+  const typedFlags: string[] = []
+  if (config.model !== undefined) typedFlags.push('--model', config.model)
+  if (config.profile !== undefined) typedFlags.push('--profile', config.profile)
+  Object.freeze(typedFlags)
 
   return {
     vendor: 'codex',
@@ -134,8 +95,7 @@ export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer 
       try {
         const rawOutput = await runCodex({
           binary,
-          sandbox,
-          extraArgs,
+          typedFlags,
           timeoutMs,
           prompt: input.prompt,
           cwd: worktree.cwd,
@@ -154,15 +114,16 @@ export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer 
 
 async function runCodex(opts: {
   readonly binary: string
-  readonly sandbox: string
-  readonly extraArgs: readonly string[]
+  readonly typedFlags: readonly string[]
   readonly timeoutMs: number
   readonly prompt: string
   readonly cwd: string
 }): Promise<string> {
-  // The prompt is passed as a single argv element via Bun.spawn's array form (no
-  // shell involved), so quotes, `$(...)`, backticks etc. inside the prompt are inert.
-  const args = [opts.binary, 'exec', '--sandbox', opts.sandbox, ...opts.extraArgs, opts.prompt]
+  // Fixed shape, no caller-extensible piece except the two typed, validated flags —
+  // and the prompt is always the last argv element via Bun.spawn's array form (no
+  // shell involved), so quotes, `$(...)`, backticks, or a leading `-` inside the
+  // prompt are inert rather than being interpreted as another flag.
+  const args = [opts.binary, 'exec', '--sandbox', SANDBOX, ...opts.typedFlags, opts.prompt]
 
   const stdoutPath = join(tmpdir(), `codex-review-stdout-${randomUUID()}.log`)
   const stdoutFile = Bun.file(stdoutPath)

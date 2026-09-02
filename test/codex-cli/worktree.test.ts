@@ -68,13 +68,15 @@ test('cleans up (worktree remove) when a step after a successful worktree add fa
   expect(getRemovedDir()).toBe(registered)
 })
 
-test('never calls worktree remove if worktree add itself never ran (fetch failure)', async () => {
+test('never attempts git worktree remove if worktree add itself never ran (fetch failure) — cleanup goes straight to a filesystem removal', async () => {
   const calls: (readonly string[])[] = []
   const runGit: GitRunner = async (args) => {
     calls.push(args)
     if (args.includes('fetch')) {
       throw new Error('simulated fetch failure')
     }
+    // If cleanup ever calls `worktree remove` here, that's the bug this test pins —
+    // fail loudly rather than silently returning '' and letting it slide.
     throw new Error(`unexpected git invocation in test fake: ${args.join(' ')}`)
   }
 
@@ -82,10 +84,10 @@ test('never calls worktree remove if worktree add itself never ran (fetch failur
     resolveWorktree({ headSha: HEAD_SHA, clonePath: CLONE_PATH, worktreeRoot: '/fake/root' }, { runGit }),
   ).rejects.toThrow(/simulated fetch failure/)
 
-  // Cleanup still runs (best-effort) even though nothing was ever registered — but
-  // since `worktree add` never ran, `worktree remove` fails too and the fallback
-  // filesystem removal (a no-op here, nothing was created) is what actually executes.
   expect(calls.some((args) => args.includes('worktree') && args.includes('add'))).toBe(false)
+  // The actual behavior this test name promises: cleanup must not attempt
+  // `git worktree remove` for a directory `worktree add` never registered.
+  expect(calls.some((args) => args.includes('worktree') && args.includes('remove'))).toBe(false)
 })
 
 test('the default GitRunner is used when none is injected (integration smoke test)', async () => {

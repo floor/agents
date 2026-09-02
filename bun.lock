@@ -28,6 +28,9 @@
     "packages/codex-cli": {
       "name": "@floor-agents/codex-cli",
       "version": "0.0.1",
+      "dependencies": {
+        "@floor-agents/core": "workspace:*",
+      },
     },
     "packages/context-builder": {
       "name": "@floor-agents/context-builder",

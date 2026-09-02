@@ -1,6 +1,11 @@
 export type ReviewPromptVars = {
   readonly repo: string
-  readonly prNumber: number
+  /**
+   * The same PR number a caller typically also passes as `ReviewInput.prNumber`
+   * (a `string` in `@floor-agents/core`'s `Reviewer` interface) — accepted as either
+   * `string` or `number` here since this helper only ever renders it as text.
+   */
+  readonly prNumber: string | number
   readonly headSha: string
   readonly title: string
   readonly body: string

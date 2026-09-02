@@ -34,6 +34,20 @@ test('substitutes every placeholder', () => {
   expect(result).toContain('- packages/codex-cli/src/index.ts')
 })
 
+test('accepts prNumber as a string, matching core\'s ReviewInput.prNumber, and renders it as text', () => {
+  const result = renderReviewPrompt(TEMPLATE, {
+    repo: 'floor/agents',
+    prNumber: '42', // the type a caller typically also passes to reviewer.review()
+    headSha: 'abc123',
+    title: 't',
+    body: 'b',
+    baseRef: 'main',
+    changedFiles: [],
+  })
+
+  expect(result).toContain('pr: 42')
+})
+
 test('renders a placeholder for an empty changed-files list', () => {
   const result = renderReviewPrompt(TEMPLATE, {
     repo: 'floor/agents',

@@ -24,6 +24,8 @@ export { decideGate, verdictNamesHead, latestValidVerdictsByVendor, DEFAULT_GATE
 export type { GateDecision, GateConfig, GateDecisionInput, GateDecisionPR, GateDecisionComment, ValidVerdict } from './gate/decision.ts'
 export { buildReviewPrompt, extractChangedFiles } from './gate/prompt.ts'
 export type { ReviewPromptContext } from './gate/prompt.ts'
+export { selectChecklistFiles, loadChecklists, DEFAULT_CHECKLISTS_CONFIG, NO_CHECKLIST_TEXT, MAX_CHECKLIST_BYTES, MAX_TOTAL_CHECKLIST_BYTES } from './gate/checklists.ts'
+export type { ChecklistRule, ChecklistsConfig } from './gate/checklists.ts'
 export { createGateStateStore } from './gate/state-store.ts'
 export type { GateStateStore, GatePrState } from './gate/state-store.ts'
 export { loadGateConfig } from './gate/config.ts'

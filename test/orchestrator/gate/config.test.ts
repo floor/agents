@@ -116,3 +116,26 @@ test('gate.secondReviewer is parsed as a plain string, and is undefined when uns
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('checklists.rules is parsed from YAML, both label and pathContains, and defaults to empty when unset', async () => {
+  const { mkdir, writeFile, rm } = await import('node:fs/promises')
+  const dir = './data/test-gate-config-checklists'
+  await mkdir(dir, { recursive: true })
+  try {
+    await writeFile(
+      `${dir}/with.yaml`,
+      'repos: [r]\nchecklists:\n  rules:\n    - label: auth\n      file: docs/review/concurrency.md\n    - pathContains: player/\n      file: docs/review/concurrency.md\n',
+    )
+    const withIt = await loadGateConfig(`${dir}/with.yaml`, {})
+    expect(withIt.checklists.rules).toEqual([
+      { label: 'auth', pathContains: undefined, file: 'docs/review/concurrency.md' },
+      { label: undefined, pathContains: 'player/', file: 'docs/review/concurrency.md' },
+    ])
+
+    await writeFile(`${dir}/without.yaml`, 'repos: [r]\n')
+    const withoutIt = await loadGateConfig(`${dir}/without.yaml`, {})
+    expect(withoutIt.checklists.rules).toEqual([])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

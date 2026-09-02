@@ -28,7 +28,8 @@ Every `pollIntervalMs` (default 60s), for each configured repo:
      already been asked to review this exact head (and isn't the same
      vendor as the PR's implementer), build a prompt from
      `promptTemplatePath` plus the PR's title/body/base/head/changed-file
-     list, **durably mark the attempt** (`reviewedHeads`, saved to
+     list and any checklist(s) selected by `checklists.rules` (see
+     "Checklists" below), **durably mark the attempt** (`reviewedHeads`, saved to
      `stateDir` immediately — before the call below, not after), then call
      `Reviewer.review()` and post the returned text **as-is** as a PR
      comment — unless it's malformed (no valid header/verdict line), in
@@ -274,6 +275,65 @@ the PR). This loop's job for such a PR is still just to hold the merge
 gate correctly, not to solicit review. Tracked in
 [Known Issues](./known-issues.md).
 
+## Checklists
+
+`{{checklists}}` is a placeholder in the review prompt (like
+`{{changedFiles}}`) that gets filled with the text of whichever checklist
+file(s) match the PR being reviewed, so a reviewer gets a targeted list of
+"answer this against the code" questions for the kind of change it is,
+not just the generic instructions every PR gets. Configured under
+`checklists.rules` in the gate YAML (`packages/orchestrator/src/gate/checklists.ts`):
+
+```yaml
+checklists:
+  rules:
+    - label: auth              # matches a PR carrying this label
+      file: docs/review/concurrency.md
+    - pathContains: player/       # matches a PR that touched a file whose path contains this text
+      file: docs/review/concurrency.md
+    - label: parity
+      file: docs/review/matrix.md
+```
+
+Each rule matches on `label` OR `pathContains` (a rule can set one or both;
+either condition is enough). A PR can match more than one rule; every
+matched file's content is concatenated into the prompt, in rule order,
+deduplicated by file path. With no rules configured (the default), every
+prompt renders a "no checklist matched" line in that slot — existing
+configs and templates need no changes to keep working.
+
+**The `file` path is resolved in the TARGET repo being reviewed — not in
+this repo — AT THE PR'S BASE BRANCH HEAD, never at the PR's own head.**
+`selectChecklistFiles` only picks file paths from config; `loop.ts` then
+calls `GitAdapter.getPR(repo, prId)` fresh, right before loading
+checklists, to resolve the base branch's current head sha, and passes
+that as `ref` to `GitAdapter.getFile(repo, file, ref)`. This is
+deliberate, not an oversight: loading from the PR's own head would let a
+PR edit the very checklist that's about to review it — weaken an item,
+or repoint a `pathContains` rule at a file the PR controls — and get a
+softer review of itself as a result. Loading from the base means the
+checklist a reviewer sees is the one the PR is actually being held to,
+whatever the base branch says it is, not something the PR can choose for
+itself. If that fresh `getPR()` call returns no PR or no base sha (e.g. a
+transient API failure, or the PR closed between listing and review),
+checklists are skipped entirely for that pass — not attempted, and never
+substituted with the head sha — and a line is logged saying so; the
+review still runs, just without a checklist that pass. A checklist file
+genuinely missing at the resolved base ref (typo, not yet merged to the
+base) is skipped the same way, per file, also logged.
+
+Each loaded file is capped at `MAX_CHECKLIST_BYTES` (16 KB) and the whole
+concatenated result at `MAX_TOTAL_CHECKLIST_BYTES` (48 KB); either cap
+being hit truncates rather than fails, leaving a visible `[... truncated
+... ]` marker line in the prompt so a shortened checklist is obvious
+rather than silently incomplete.
+
+Checklists are also how a lane self-checks before opening a PR: the
+target repo's own `docs/review/README.md` (or equivalent) documents the
+same selection table and asks the PR body to say which checklist was
+self-checked and why any item didn't apply — see e.g. your-org/your-repo's
+`docs/review/README.md`.
+
 ## Config
 
 `GATE_CONFIG_PATH` (default `config/gate/gate.example.yaml`) points at a
@@ -296,6 +356,10 @@ vendor:
   labelPrefix: "vendor:"
   branchPrefixes: [{ prefix: cursor/, vendor: cursor }]
   bodyMarkers: [{ prefix: "Generated-By:", vendor: some-agent }]
+checklists:                # optional — see "Checklists" above
+  rules:
+    - label: auth
+      file: docs/review/concurrency.md
 ```
 
 `GATE_MERGE_ENABLED` (env) overrides the file's `mergeEnabled`. `GATE_REVIEWER`

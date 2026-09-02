@@ -131,6 +131,7 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
       headSha: data.head.sha,
       headRef: data.head.ref,
       baseRef: data.base.ref,
+      baseSha: data.base.sha ?? '',
       authorLogin: data.user?.login ?? '',
       labels: (data.labels as any[]).map((l: any) => (typeof l === 'string' ? l : l.name)),
       draft: Boolean(data.draft),

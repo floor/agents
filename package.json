@@ -5,6 +5,7 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "start": "bun run src/main.ts",
+    "gate": "bun run src/gate.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

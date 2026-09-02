@@ -196,6 +196,33 @@ test('listComments maps author/body/createdAt', async () => {
   }
 })
 
+test('listComments paginates until a short page — a later verdict on page 2 is not missed', async () => {
+  let calls = 0
+  const restore = withMockFetch(url => {
+    calls++
+    expect(url).toContain('/issues/7/comments')
+    const page = Number(new URL(url).searchParams.get('page'))
+    const items = page === 1
+      ? Array.from({ length: 100 }, (_, i) => ({
+          id: i + 1,
+          user: { login: 'codex-bot' },
+          body: 'Verdict: approve as-is',
+          created_at: '2026-01-01T00:00:00Z',
+        }))
+      : [{ id: 101, user: { login: 'codex-bot' }, body: 'Verdict: changes needed', created_at: '2026-02-01T00:00:00Z' }]
+    return new Response(JSON.stringify(items), { status: 200 })
+  })
+  try {
+    const adapter = createGitHubAdapter({ token: 't', owner: 'o' })
+    const comments = await adapter.listComments('r', '7')
+    expect(comments.length).toBe(101)
+    expect(comments[100]!.body).toBe('Verdict: changes needed')
+    expect(calls).toBe(2)
+  } finally {
+    restore()
+  }
+})
+
 test('addLabel posts the label', async () => {
   let sentBody: any = null
   const restore = withMockFetch((url, init) => {

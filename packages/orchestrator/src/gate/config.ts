@@ -15,6 +15,10 @@ export type GateModeConfig = {
   readonly promptTemplatePath: string
   readonly stateDir: string
   readonly mergeEnabled: boolean
+  /** GitHub logins (case-insensitive) whose PRs this loop never processes
+   *  — put this process's own posting identity here so it never reviews
+   *  or merges its own PRs. Empty by default: configure it explicitly. */
+  readonly excludeAuthors: readonly string[]
   readonly gate: GateConfig
   readonly vendor: VendorAttributionConfig
 }
@@ -36,11 +40,20 @@ function parseVendorConfig(raw: any): VendorAttributionConfig {
   }
 }
 
+function parseTrustedReviewers(raw: any): Record<string, string> {
+  const trusted: Record<string, string> = {}
+  for (const [login, vendor] of Object.entries(raw ?? {})) {
+    trusted[String(login).toLowerCase()] = String(vendor)
+  }
+  return trusted
+}
+
 function parseGateConfig(raw: any): GateConfig {
   if (!raw) return DEFAULT_GATE_CONFIG
   return {
     authLabels: raw.authLabels ?? DEFAULT_GATE_CONFIG.authLabels,
     needsHumanLabel: raw.needsHumanLabel ?? DEFAULT_GATE_CONFIG.needsHumanLabel,
+    trustedReviewers: raw.trustedReviewers ? parseTrustedReviewers(raw.trustedReviewers) : DEFAULT_GATE_CONFIG.trustedReviewers,
   }
 }
 
@@ -66,6 +79,7 @@ export async function loadGateConfig(
     promptTemplatePath: raw.promptTemplatePath ?? 'config/gate/review-prompt.md',
     stateDir: raw.stateDir ?? './data/gate',
     mergeEnabled,
+    excludeAuthors: raw.excludeAuthors ?? [],
     gate: parseGateConfig(raw.gate),
     vendor: parseVendorConfig(raw.vendor),
   }

@@ -44,17 +44,22 @@ async function defaultLoadPromptTemplate(path: string): Promise<string> {
 /** Has `vendor` already posted a verdict comment that is current for this
  *  head? Used to avoid re-reviewing the same head twice, independent of
  *  whether that verdict was itself an approval — a "changes needed" review
- *  still counts as "already reviewed this head". */
+ *  still counts as "already reviewed this head". Identity comes from
+ *  `trustedReviewers[comment.author]`, the same rule decideGate() uses —
+ *  an untrusted author's comment never counts, even if it claims to be
+ *  from `vendor` in its header. */
 function hasVendorReviewedHead(
-  comments: readonly { body: string; createdAt: Date }[],
+  comments: readonly { author: string; body: string; createdAt: Date }[],
   vendor: string,
   headSha: string,
   headCommitDate: Date,
+  trustedReviewers: Readonly<Record<string, string>>,
 ): boolean {
   return comments.some(c => {
     const parsed = parseVerdictComment(c.body)
     if (!parsed) return false
-    if (parsed.vendor.toLowerCase() !== vendor.toLowerCase()) return false
+    const trustedVendor = trustedReviewers[c.author.toLowerCase()]
+    if (!trustedVendor || trustedVendor.toLowerCase() !== vendor.toLowerCase()) return false
     return isVerdictCurrentForHead(parsed.shas, c.createdAt, headSha, headCommitDate)
   })
 }
@@ -104,7 +109,7 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
   if (decision.kind === 'needs_review') {
     if (reviewer.vendor.toLowerCase() === implementerVendor.toLowerCase()) {
       log(`[gate] ${repo}#${pr.id}: skipping review — configured reviewer vendor "${reviewer.vendor}" matches the implementer`)
-    } else if (hasVendorReviewedHead(comments, reviewer.vendor, pr.headSha, headCommitDate)) {
+    } else if (hasVendorReviewedHead(comments, reviewer.vendor, pr.headSha, headCommitDate, config.gate.trustedReviewers)) {
       log(`[gate] ${repo}#${pr.id}: reviewer "${reviewer.vendor}" already reviewed head ${pr.headSha.slice(0, 7)}`)
     } else {
       const diff = await git.getPRDiff(repo, pr.id)
@@ -159,9 +164,16 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
  *  separately from the interval wrapper below so tests can drive it
  *  deterministically without real timers. */
 export async function runGatePass(deps: GateLoopDeps): Promise<void> {
+  const log = deps.log ?? console.log
+  const excludeAuthors = new Set(deps.config.excludeAuthors.map(a => a.toLowerCase()))
+
   for (const repo of deps.config.repos) {
     const prs = await deps.git.listOpenPRs(repo)
     for (const pr of prs) {
+      if (excludeAuthors.has(pr.authorLogin.toLowerCase())) {
+        log(`[gate] ${repo}#${pr.id}: skipping — authored by excluded login "${pr.authorLogin}" (this process's own identity)`)
+        continue
+      }
       await processPR(repo, pr, deps)
     }
   }

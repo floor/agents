@@ -55,6 +55,16 @@ test('leading blank lines before the header are tolerated', () => {
   expect(parseVerdictComment(body)?.vendor).toBe('Codex')
 })
 
+test('a header missing the space after "##" does not count', () => {
+  const body = ['##Reviewer agent (Codex)', 'Verdict: approve as-is'].join('\n')
+  expect(parseVerdictComment(body)).toBeNull()
+})
+
+test('a header with extra spaces before "Reviewer" does not count', () => {
+  const body = ['##  Reviewer agent (Codex)', 'Verdict: approve as-is'].join('\n')
+  expect(parseVerdictComment(body)).toBeNull()
+})
+
 test('returns null when the header is present but there is no verdict line', () => {
   const body = ['## Reviewer agent (Codex)', 'Still reviewing, no verdict yet.'].join('\n')
   expect(parseVerdictComment(body)).toBeNull()

@@ -20,6 +20,12 @@ stateDir: ./data/gate
 # .env.example. Dry run (unset / false) is the default and safe to leave on.
 mergeEnabled: false
 
+# GitHub logins (case-insensitive) whose own PRs this loop skips entirely —
+# put the identity your GITHUB_TOKEN posts as here so this process never
+# reviews or merges its own PRs.
+excludeAuthors:
+  - your-bot-account
+
 gate:
   # Labels that put a PR on the stronger two-vendor + runtime-sign-in-check
   # gate — reserve this for auth/session/token-handling changes in your repo.
@@ -29,6 +35,17 @@ gate:
   # reviews or checks. Set this to whatever your repo already uses for
   # "needs a human to look at this."
   needsHumanLabel: needs-human
+  # SECURITY: a verdict comment only counts if its GitHub comment AUTHOR
+  # (not the vendor name its own header claims) is a key here. Without an
+  # entry, anyone who can comment on the PR — including the PR's own
+  # author — could post "## Reviewer agent (Codex)" / "Verdict: approve
+  # as-is" and satisfy the gate. Map each trusted login (case-insensitive)
+  # to the vendor it's trusted for. Include your own posting identity
+  # (same as excludeAuthors above, if this account also posts reviews)
+  # mapped to GATE_REVIEWER's vendor, or the loop will never recognize
+  # its own posted review and will re-review every pass.
+  trustedReviewers:
+    your-bot-account: codex
 
 vendor:
   # A `vendor:<name>` label on the PR wins over every other rule below.

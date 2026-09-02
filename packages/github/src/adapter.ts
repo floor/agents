@@ -367,13 +367,24 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
     },
 
     async listComments(repo, prId) {
-      const data = await api(`/repos/${owner}/${repo}/issues/${prId}/comments?per_page=100`)
-      return (data as any[]).map((c: any): PRCommentEntry => ({
-        id: String(c.id),
-        author: c.user?.login ?? '',
-        body: c.body ?? '',
-        createdAt: new Date(c.created_at),
-      }))
+      const results: PRCommentEntry[] = []
+      let page = 1
+      // Paginate: gate correctness depends on seeing every comment (e.g. a
+      // later "changes needed" on page 2 must not be missed because an
+      // earlier "approve as-is" on page 1 looked sufficient).
+      while (true) {
+        const data = await api(`/repos/${owner}/${repo}/issues/${prId}/comments?per_page=100&page=${page}`)
+        const items = data as any[]
+        results.push(...items.map((c: any): PRCommentEntry => ({
+          id: String(c.id),
+          author: c.user?.login ?? '',
+          body: c.body ?? '',
+          createdAt: new Date(c.created_at),
+        })))
+        if (items.length < 100) break
+        page++
+      }
+      return results
     },
 
     async addLabel(repo, prId, label) {

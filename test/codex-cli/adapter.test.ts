@@ -81,6 +81,21 @@ test('rejects an invalid profile value before ever spawning', () => {
   expect(() => createCodexReviewer({ binary: OK, profile: 'a/b' })).toThrow(/profile/i)
 })
 
+test('rejects a model/profile value that starts with a dash, so it can never be mistaken for a flag by codex\'s own argv parser', () => {
+  expect(() => createCodexReviewer({ binary: OK, model: '--sandbox' })).toThrow(/model/i)
+  expect(() => createCodexReviewer({ binary: OK, model: '-x' })).toThrow(/model/i)
+  expect(() => createCodexReviewer({ binary: OK, profile: '--sandbox' })).toThrow(/profile/i)
+  expect(() => createCodexReviewer({ binary: OK, profile: '-x' })).toThrow(/profile/i)
+})
+
+test('rejects a model/profile value over the 128-character length cap', () => {
+  const tooLong = 'a'.repeat(129)
+  const atLimit = 'a'.repeat(128)
+
+  expect(() => createCodexReviewer({ binary: OK, model: tooLong })).toThrow(/model/i)
+  expect(() => createCodexReviewer({ binary: OK, model: atLimit })).not.toThrow()
+})
+
 test('emits exactly [binary, "exec", "--sandbox", "read-only", prompt] when neither model nor profile is set', async () => {
   const recordFile = join(tmpdir(), `codex-test-record-${crypto.randomUUID()}.txt`)
   const prevEnv = process.env.CODEX_TEST_RECORD

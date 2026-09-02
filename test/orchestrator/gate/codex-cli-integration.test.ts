@@ -1,11 +1,16 @@
-// Integration test for issue #17: the gate loop, wired to a REAL
-// @floor-agents/codex-cli Reviewer (not createFakeReviewer), driven end to
-// end by a fixture binary — the same fixture-binary approach used in
-// test/codex-cli/adapter.test.ts. This proves the loop posts the codex-cli
-// adapter's returned `ReviewResult.text` as the PR comment body byte-for-byte
-// (no re-trimming, editing, or re-wrapping anywhere in the gate/orchestrator
-// path), which is exactly what src/gate.ts now relies on since it stopped
-// building its own inline Codex reviewer.
+// Integration test for issue #17: the gate loop (runGatePass), driven with a
+// REAL @floor-agents/codex-cli Reviewer instance (not createFakeReviewer),
+// exercised end to end via a fixture binary — the same fixture-binary
+// approach used in test/codex-cli/adapter.test.ts. This proves the loop
+// posts the codex-cli adapter's returned `ReviewResult.text` as the PR
+// comment body byte-for-byte (no re-trimming, editing, or re-wrapping
+// anywhere in the gate/orchestrator path).
+//
+// This file constructs the Reviewer directly (via createCodexReviewer), not
+// through src/gate.ts's own GATE_REVIEWER/GATE_CODEX_* env-var wiring — that
+// wiring (codexReviewerConfigFromEnv / createReviewer, in
+// src/gate/create-reviewer.ts) is covered separately by
+// test/gate/create-reviewer.test.ts.
 
 import { test, expect, beforeAll, afterAll } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'

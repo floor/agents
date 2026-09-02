@@ -67,7 +67,7 @@ const { text } = await reviewer.review({
 | `binary` | `'codex'` | Path to the codex binary, or a fixture script in tests. |
 | `timeoutMs` | 15 minutes | The process is killed and `CodexTimeoutError` thrown past this. |
 | `sandbox` | `'read-only'` | `--sandbox` value. This reviewer never writes to the worktree. |
-| `extraArgs` | `[]` | Extra argv entries inserted between the sandbox flag and the prompt. Must not contain a sandbox-overriding flag (`--sandbox`, `-s`, or `--dangerously-bypass-approvals-and-sandbox` — the constructor throws if it does) — that would let a later flag silently override the read-only guarantee. Copied at construction, so mutating the array afterward has no effect. |
+| `extraArgs` | `[]` | Extra argv entries inserted between the sandbox flag and the prompt. Must not override the sandbox or approval policy — no `--sandbox`/`-s` (any form, including compact `-s<mode>`), `--add-dir`, a bypass flag (`--yolo`, `--approve-for-me`, `--not-so-yolo`, `--full-auto`, `--dangerously-bypass-approvals-and-sandbox`), or a `-c`/`--config` setting `sandbox_mode`/`approval_policy` — the constructor throws if any are present, case-insensitively. Copied and frozen at construction, so mutating the array afterward has no effect. |
 | `clonePath` | — | Local clone used to create a detached worktree at `headSha` when `review()` is called without a `worktreePath`. Required in that case. |
 | `worktreeRoot` | OS temp dir | Directory under which detached worktrees are created. |
 
@@ -93,11 +93,16 @@ cd <worktree> && codex exec --sandbox read-only "<prompt>" > out.md 2>/dev/null 
 - **It must run inside a git worktree checked out at the PR head** so `git diff`
   resolves against the right commit. If `review()` is called without a `worktreePath`,
   this package creates one itself: `git -C <clonePath> fetch origin <headSha>` then
-  `git worktree add --detach <tmpdir> <headSha>`, and removes it afterwards
-  (`git worktree remove --force`, or a direct directory removal if git refuses) — on
-  success, on a thrown error, and on timeout, including a partial `worktree add`
-  failure (setup itself best-effort cleans up before rethrowing). It is never run
-  directly in `clonePath` itself.
+  `git worktree add --detach <tmpdir> <headSha>`, then verifies `git -C <tmpdir>
+  rev-parse HEAD` actually equals `headSha` (`worktree add` can report success while
+  leaving an unexpected checkout in rare interrupted cases — this refuses to silently
+  review the wrong commit). It removes the worktree afterwards (`git worktree remove
+  --force`, or a direct directory removal if git refuses) — on success, on a thrown
+  error, and on timeout, including a failure at any of the three setup steps above
+  (setup itself best-effort cleans up before rethrowing). It is never run directly in
+  `clonePath` itself. The git invocation itself is injectable (`GitRunner`, exported
+  from this package alongside `resolveWorktree`) for testing without a real git
+  process.
 - **Timeouts escalate straight to `SIGKILL`, not `SIGTERM`.** A `SIGTERM` can be
   ignored by codex or a wedged descendant process, which would leave `proc.exited`
   unresolved and defeat the timeout entirely. `SIGKILL` cannot be caught or ignored.

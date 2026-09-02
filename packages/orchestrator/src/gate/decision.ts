@@ -25,8 +25,10 @@ export type GateConfig = {
    *  comment on the PR (including its own author) could post
    *  `## Reviewer agent (Codex)` / `Verdict: approve as-is` and satisfy
    *  the gate. Include the gate loop's own posting identity here, mapped
-   *  to its configured Reviewer's vendor — otherwise the loop can never
-   *  recognize its own posted review and will re-review every pass.
+   *  to its configured Reviewer's vendor — otherwise its own posted review
+   *  never counts as a verdict, nothing merges, and every PR stays at
+   *  `needs_review` after one attempted review (`reviewedHeads` persistence
+   *  prevents a repeat review; it does not make the verdict count).
    *  Default `{}` is fail-closed: no comment is trusted until configured. */
   readonly trustedReviewers: Readonly<Record<string, string>>
 }

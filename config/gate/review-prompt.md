@@ -23,17 +23,22 @@ Head branch: {{headRef}} ({{headSha}})
 ## Instructions
 
 1. Read the changed files and the surrounding code they touch. The PR's
-   changes are `git diff <merge-base of the base branch and the head>...HEAD`,
-   not the diff against the base branch's tip at PR creation; commits
-   merged into the base branch since then are not part of this PR.
+   changes are `git diff <merge-base>...HEAD` where the merge-base is the
+   one between the base branch's current tip and the head: compute it
+   yourself in the checkout (`git merge-base origin/{{baseRef}} HEAD`) and
+   do not treat any base sha you are given as the diff base except through
+   a three-dot diff. Commits merged into the base branch after the PR was
+   opened are not part of this PR.
 2. Check correctness, security, style, test coverage, and whether the PR
    actually does what its description claims.
 3. Report every finding you can reach in this pass, ordered by severity,
    not only the first one or two. A pass that stops early costs the PR a
    whole round per finding (lane fix, build, review, CI); a pass that
-   lists all of them costs one. If the PR carries earlier reviewer
-   comments, treat their findings as known and fixed or disputed on the
-   PR, look elsewhere, and re-raise one only if its fix is wrong.
+   lists all of them costs one. Treat earlier reviewer comments on the PR
+   as context, not as exclusions: do not repeat a finding only because it
+   was raised before, but re-check each affected area and report any
+   current defect there, including an incomplete fix, a wrong fix, or a
+   new regression.
 4. If one or more checklists are included above, answer every one of
    their questions against the actual code at this PR's head commit, not
    against the PR's own description — name the file and line for each

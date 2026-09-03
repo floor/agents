@@ -1173,6 +1173,61 @@ test('{{mergeBase}} renders compare()\'s mergeBaseSha, never PRDetails.baseSha',
   expect(capturedPrompt).not.toContain(pr.baseSha)
 })
 
+test('the Reviewer itself receives mergeBaseSha in ReviewInput (not just the rendered {{mergeBase}} text) — a worktree-creating Reviewer needs the sha value, not only prose', async () => {
+  // floor/radiooooo #130 round 22: a Reviewer that creates its own local worktree
+  // (codex-cli, antigravity-cli) must fetch the merge-base COMMIT OBJECT itself, so
+  // its own `git diff {{mergeBase}}...{{headSha}}` (per the prompt) can actually run
+  // — the rendered prompt text alone can't do that, only ReviewInput.mergeBaseSha can.
+  const pr = makePR({ mergeBaseSha: 'f'.repeat(40) })
+  const { adapter } = makeFakeGitAdapter([pr])
+
+  let capturedInput: { mergeBaseSha?: string } | undefined
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: input => {
+      capturedInput = input
+      return '## Reviewer agent (Codex)\n\nVerdict: approve as-is'
+    },
+  })
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig(),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'irrelevant to this test',
+  })
+
+  expect(capturedInput?.mergeBaseSha).toBe(pr.mergeBaseSha)
+})
+
+test('compare() fails: ReviewInput.mergeBaseSha is left unset, not filled with PRDetails.baseSha', async () => {
+  const pr = makePR({ baseSha: 'b'.repeat(40) })
+  const { adapter } = makeFakeGitAdapter([pr])
+  adapter.compare = async () => null
+
+  let capturedInput: { mergeBaseSha?: string } | undefined
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: input => {
+      capturedInput = input
+      return '## Reviewer agent (Codex)\n\nVerdict: approve as-is'
+    },
+  })
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig(),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'irrelevant to this test',
+  })
+
+  expect(capturedInput?.mergeBaseSha).toBeUndefined()
+})
+
 test('compare() fails: {{mergeBase}} falls back to the unresolved placeholder text, logged, review still posts', async () => {
   const pr = makePR()
   const { adapter, commentCalls } = makeFakeGitAdapter([pr])

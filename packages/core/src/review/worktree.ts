@@ -42,6 +42,41 @@ export type ResolveWorktreeInput = {
    * package never have to pass this themselves.
    */
   readonly label?: string
+  /**
+   * The PR's merge-base commit sha (see `CompareResult.mergeBaseSha` in
+   * `@floor-agents/core`'s adapter types, and
+   * `packages/orchestrator/src/gate/loop.ts`, which resolves it and hands
+   * it to the reviewer as this field). Fetched into `clonePath` — a
+   * SEPARATE, best-effort `git fetch`, never bundled into `headSha`'s own
+   * fetch — before the worktree is created, ONLY when this is set and
+   * creating a fresh worktree (a caller-supplied `worktreePath` is used
+   * as-is and never touched here). Ignored when equal to `headSha`
+   * (already covered by that fetch) or unset.
+   *
+   * This exists because a review prompt can tell the reviewer to run
+   * `git diff <mergeBaseSha>...<headSha>` itself (see
+   * `config/gate/review-prompt.md`), and that command needs the
+   * merge-base COMMIT OBJECT to actually exist in this worktree's clone —
+   * not just a correct sha string. Before this field existed, the clone
+   * only ever had `headSha` fetched, so that git command failed with
+   * "unknown revision" (floor/radiooooo #130, round 22): the fix in that
+   * round moved to having the reviewer recompute the merge base itself
+   * from a local `origin/<baseRef>`, which is worse — that ref is only as
+   * fresh as whatever was last fetched into `clonePath`, which nothing
+   * here ever refreshes, so it silently returns a stale ancestor instead
+   * of failing loudly. Fetching the exact, already-correct
+   * `mergeBaseSha` (resolved server-side, fresh, by `gate/loop.ts` via
+   * `GitAdapter.compare()`) sidesteps needing `origin/<baseRef>` to be
+   * fresh — or to exist at all — in this clone.
+   *
+   * Best-effort deliberately: a failure fetching this specific object
+   * (network hiccup, an unusual server-side upload-pack policy) must
+   * never abort the whole review the way a `headSha` fetch failure does
+   * — the reviewer still has the prompt's own changed-files list and can
+   * read files directly even if its own later `git diff` attempt then
+   * fails inside its sandbox.
+   */
+  readonly mergeBaseSha?: string
 }
 
 /**
@@ -110,6 +145,18 @@ export async function resolveWorktree(
 
   try {
     await runGit(['-C', clonePath, 'fetch', 'origin', input.headSha])
+
+    // Best-effort, deliberately separate from the fetch above: see
+    // `ResolveWorktreeInput.mergeBaseSha`'s own doc comment for why this
+    // object needs to be fetched at all, and why a failure here must not
+    // propagate. A single combined `fetch origin <headSha> <mergeBaseSha>`
+    // was considered and rejected — `git fetch` is all-or-nothing per
+    // invocation, so bundling them would let a mergeBaseSha-only failure
+    // (this fetch) take down the mandatory headSha fetch (that one) too.
+    if (input.mergeBaseSha && input.mergeBaseSha !== input.headSha) {
+      await runGit(['-C', clonePath, 'fetch', 'origin', input.mergeBaseSha]).catch(() => {})
+    }
+
     await runGit(['-C', clonePath, 'worktree', 'add', '--detach', dir, input.headSha])
     registered = true
     // `worktree add` can report success while the worktree ends up in an unexpected

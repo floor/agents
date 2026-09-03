@@ -303,23 +303,26 @@ prompt renders a "no checklist matched" line in that slot — existing
 configs and templates need no changes to keep working.
 
 **The `file` path is resolved in the TARGET repo being reviewed — not in
-this repo — AT THE PR'S BASE BRANCH HEAD, never at the PR's own head.**
-`selectChecklistFiles` only picks file paths from config; `loop.ts` then
-calls `GitAdapter.getPR(repo, prId)` fresh, right before loading
-checklists, to resolve the base branch's current head sha, and passes
-that as `ref` to `GitAdapter.getFile(repo, file, ref)`. This is
+this repo — AT THE BASE BRANCH'S CURRENT TIP, never at the PR's own
+head.** `selectChecklistFiles` only picks file paths from config;
+`loop.ts` then calls `GitAdapter.compare(repo, pr.baseRef, pr.headSha)`
+fresh, right before loading checklists, to resolve the base branch's
+CURRENT head sha (not `PRDetails.baseSha`, which is frozen at PR
+creation/last-sync and can lag — see that field's own doc comment), and
+passes that as `ref` to `GitAdapter.getFile(repo, file, ref)`. This is
 deliberate, not an oversight: loading from the PR's own head would let a
 PR edit the very checklist that's about to review it — weaken an item,
 or repoint a `pathContains` rule at a file the PR controls — and get a
 softer review of itself as a result. Loading from the base means the
 checklist a reviewer sees is the one the PR is actually being held to,
 whatever the base branch says it is, not something the PR can choose for
-itself. If that fresh `getPR()` call returns no PR or no base sha (e.g. a
-transient API failure, or the PR closed between listing and review),
-checklists are skipped entirely for that pass — not attempted, and never
-substituted with the head sha — and a line is logged saying so; the
-review still runs, just without a checklist that pass. A checklist file
-genuinely missing at the resolved base ref (typo, not yet merged to the
+itself. If that fresh `compare()` call fails (e.g. a transient API
+failure, or the PR closed between listing and review), checklist content
+falls back to the PR's own recorded `PRDetails.baseSha` — still a ref
+outside the PR's control, just possibly staler; only if THAT is also
+empty are checklists skipped entirely for the pass, never substituted
+with the head sha, with a line logged saying so. A checklist file
+genuinely missing at whichever ref resolved (typo, not yet merged to the
 base) is skipped the same way, per file, also logged.
 
 Each loaded file is capped at `MAX_CHECKLIST_BYTES` (16 KB) and the whole

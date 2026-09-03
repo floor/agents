@@ -98,3 +98,123 @@ test('the default GitRunner is used when none is injected (integration smoke tes
     resolveWorktree({ headSha: HEAD_SHA, clonePath: '/definitely/does/not/exist', worktreeRoot: '/fake/root' }),
   ).rejects.toThrow()
 })
+
+// ── mergeBaseSha (floor/radiooooo #130 round 22: the merge-base commit ──
+// object must actually be fetched into the clone, or the reviewer's own
+// `git diff {{mergeBase}}...{{headSha}}` fails with "unknown revision") ──
+
+const MERGE_BASE_SHA = 'cafef00dcafef00dcafef00dcafef00dcafef00d'
+
+function makeTrackingGitRunner() {
+  const fetchedRefs: string[] = []
+  const calls: (readonly string[])[] = []
+
+  const runGit: GitRunner = async (args) => {
+    calls.push(args)
+    if (args.includes('fetch')) {
+      // ['-C', clonePath, 'fetch', 'origin', ref]
+      fetchedRefs.push(args[4]!)
+      return ''
+    }
+    if (args.includes('worktree') && args.includes('add')) return ''
+    if (args.includes('rev-parse')) return `${HEAD_SHA}\n`
+    if (args.includes('worktree') && args.includes('remove')) return ''
+    throw new Error(`unexpected git invocation in test fake: ${args.join(' ')}`)
+  }
+
+  return { runGit, fetchedRefs, calls }
+}
+
+test('mergeBaseSha is fetched as its own `git fetch`, separate from and after headSha\'s, before worktree add', async () => {
+  const { runGit, fetchedRefs, calls } = makeTrackingGitRunner()
+
+  const worktree = await resolveWorktree(
+    { headSha: HEAD_SHA, clonePath: CLONE_PATH, worktreeRoot: '/fake/root', mergeBaseSha: MERGE_BASE_SHA },
+    { runGit },
+  )
+  await worktree.cleanup()
+
+  expect(fetchedRefs).toEqual([HEAD_SHA, MERGE_BASE_SHA])
+  const addIndex = calls.findIndex((args) => args.includes('worktree') && args.includes('add'))
+  const mergeBaseFetchIndex = calls.findIndex((args) => args.includes('fetch') && args.includes(MERGE_BASE_SHA))
+  expect(mergeBaseFetchIndex).toBeGreaterThanOrEqual(0)
+  expect(mergeBaseFetchIndex).toBeLessThan(addIndex)
+})
+
+test('mergeBaseSha is NOT fetched again when it equals headSha (already covered by that fetch)', async () => {
+  const { runGit, fetchedRefs } = makeTrackingGitRunner()
+
+  const worktree = await resolveWorktree(
+    { headSha: HEAD_SHA, clonePath: CLONE_PATH, worktreeRoot: '/fake/root', mergeBaseSha: HEAD_SHA },
+    { runGit },
+  )
+  await worktree.cleanup()
+
+  expect(fetchedRefs).toEqual([HEAD_SHA])
+})
+
+test('mergeBaseSha is not fetched at all when unset (existing behavior unchanged)', async () => {
+  const { runGit, fetchedRefs } = makeTrackingGitRunner()
+
+  const worktree = await resolveWorktree(
+    { headSha: HEAD_SHA, clonePath: CLONE_PATH, worktreeRoot: '/fake/root' },
+    { runGit },
+  )
+  await worktree.cleanup()
+
+  expect(fetchedRefs).toEqual([HEAD_SHA])
+})
+
+test('a mergeBaseSha fetch failure is swallowed — the review still gets a worktree, unlike a headSha fetch failure', async () => {
+  const calls: (readonly string[])[] = []
+  const runGit: GitRunner = async (args) => {
+    calls.push(args)
+    if (args.includes('fetch') && args.includes(MERGE_BASE_SHA)) {
+      throw new Error('simulated: mergeBaseSha unreachable on this remote')
+    }
+    if (args.includes('fetch')) return '' // the headSha fetch
+    if (args.includes('worktree') && args.includes('add')) return ''
+    if (args.includes('rev-parse')) return `${HEAD_SHA}\n`
+    if (args.includes('worktree') && args.includes('remove')) return ''
+    throw new Error(`unexpected git invocation in test fake: ${args.join(' ')}`)
+  }
+
+  const worktree = await resolveWorktree(
+    { headSha: HEAD_SHA, clonePath: CLONE_PATH, worktreeRoot: '/fake/root', mergeBaseSha: MERGE_BASE_SHA },
+    { runGit },
+  )
+
+  expect(worktree.cwd).toBeTruthy()
+  expect(calls.some((args) => args.includes('worktree') && args.includes('add'))).toBe(true)
+  await worktree.cleanup()
+})
+
+test('a mergeBaseSha fetch failure does not trigger cleanup — only headSha-fetch/add/verify failures do', async () => {
+  const calls: (readonly string[])[] = []
+  let removeCalled = false
+  const runGit: GitRunner = async (args) => {
+    calls.push(args)
+    if (args.includes('fetch') && args.includes(MERGE_BASE_SHA)) {
+      throw new Error('simulated: mergeBaseSha unreachable on this remote')
+    }
+    if (args.includes('fetch')) return ''
+    if (args.includes('worktree') && args.includes('add')) return ''
+    if (args.includes('rev-parse')) return `${HEAD_SHA}\n`
+    if (args.includes('worktree') && args.includes('remove')) {
+      removeCalled = true
+      return ''
+    }
+    throw new Error(`unexpected git invocation in test fake: ${args.join(' ')}`)
+  }
+
+  const worktree = await resolveWorktree(
+    { headSha: HEAD_SHA, clonePath: CLONE_PATH, worktreeRoot: '/fake/root', mergeBaseSha: MERGE_BASE_SHA },
+    { runGit },
+  )
+
+  // Cleanup was never triggered by the swallowed mergeBaseSha failure — resolveWorktree
+  // returned normally, so cleanup only runs when THIS test calls it explicitly below.
+  expect(removeCalled).toBe(false)
+  await worktree.cleanup()
+  expect(removeCalled).toBe(true)
+})

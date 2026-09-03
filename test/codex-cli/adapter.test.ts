@@ -47,6 +47,7 @@ let originPath: string
 let clonePath: string
 let realClonePath: string
 let headSha: string
+let divergentSha: string
 
 beforeAll(async () => {
   // `resolveWorktree` always does `git fetch origin <sha>`, mirroring a real clone of
@@ -66,7 +67,39 @@ beforeAll(async () => {
   const sha = await Bun.$`git -C ${clonePath} rev-parse HEAD`.quiet().text()
   headSha = sha.trim()
   realClonePath = await realpath(clonePath)
+
+  // A second commit, pushed to a DIFFERENT branch off `headSha`, from a throwaway
+  // clone made and torn down before `clonePath` (above) ever sees it — `clonePath`
+  // never fetches this branch on its own, so its commit object is genuinely absent
+  // from `clonePath`'s local git object store until something explicitly fetches it
+  // by sha. Stands in for a PR's real merge-base commit: present on `origin`, but not
+  // anything a plain `git fetch origin <headSha>` would pull in (that only pulls
+  // `headSha` and its ANCESTORS, never an unrelated descendant branch's tip).
+  const divergentClone = await mkdtemp(join(tmpdir(), 'codex-cli-test-divergent-'))
+  await Bun.$`git clone -q ${originPath} ${divergentClone}`.quiet()
+  await Bun.$`git -C ${divergentClone} config user.email test@example.com`.quiet()
+  await Bun.$`git -C ${divergentClone} config user.name test`.quiet()
+  await Bun.$`git -C ${divergentClone} checkout -q -b divergent`.quiet()
+  await Bun.write(join(divergentClone, 'other.txt'), 'other\n')
+  await Bun.$`git -C ${divergentClone} add -A`.quiet()
+  await Bun.$`git -C ${divergentClone} commit -q -m divergent`.quiet()
+  await Bun.$`git -C ${divergentClone} push -q origin divergent`.quiet()
+  const divergentShaOutput = await Bun.$`git -C ${divergentClone} rev-parse HEAD`.quiet().text()
+  divergentSha = divergentShaOutput.trim()
+  await rm(divergentClone, { recursive: true, force: true }).catch(() => {})
 })
+
+/** True iff `sha`'s commit object already exists in `clonePath`'s local git object
+ *  database (`git cat-file -e` exits 0 iff the object is present, non-zero otherwise
+ *  — this is a plain existence check, no output to parse). */
+async function objectExistsInClone(sha: string): Promise<boolean> {
+  try {
+    await Bun.$`git -C ${clonePath} cat-file -e ${sha}`.quiet()
+    return true
+  } catch {
+    return false
+  }
+}
 
 afterAll(async () => {
   await rm(clonePath, { recursive: true, force: true }).catch(() => {})
@@ -630,3 +663,32 @@ test('never runs directly in the clone itself', async () => {
     await rm(recordFile, { force: true }).catch(() => {})
   }
 }, 10_000)
+
+// ── mergeBaseSha end to end (floor/radiooooo #130 round 22): review()'s ──
+// input.mergeBaseSha must actually reach a real `git fetch`, not just get
+// threaded through types — this exercises the whole adapter, not the
+// underlying resolveWorktree() directly (see test/codex-cli/worktree.test.ts
+// for that, with a fake GitRunner). ──
+
+test('review() with mergeBaseSha set fetches that exact commit into the clone, not just headSha', async () => {
+  expect(await objectExistsInClone(divergentSha)).toBe(false) // sanity: genuinely absent beforehand
+
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-mergebase-root-'))
+  const reviewer = createCodexReviewer({ binary: OK, clonePath, worktreeRoot })
+
+  await reviewer.review({ ...baseInput, headSha, worktreePath: undefined, mergeBaseSha: divergentSha })
+
+  expect(await objectExistsInClone(divergentSha)).toBe(true)
+
+  await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+})
+
+test('review() without mergeBaseSha never throws or otherwise changes normal completion (no behavior change for callers that don\'t set it)', async () => {
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-no-mergebase-root-'))
+  const reviewer = createCodexReviewer({ binary: OK, clonePath, worktreeRoot })
+
+  const result = await reviewer.review({ ...baseInput, headSha, worktreePath: undefined })
+  expect(result.text).toContain('Verdict: approve as-is')
+
+  await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+})

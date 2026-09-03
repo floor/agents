@@ -16,6 +16,17 @@ export type ReviewInput = {
    *  reviewer that only needs the diff/prompt text can ignore this. */
   readonly worktreePath?: string
   readonly prompt: string
+  /** The PR's merge-base commit sha, when the caller resolved one (see
+   *  `CompareResult.mergeBaseSha` and `gate/loop.ts`, which is the only
+   *  current caller that sets this). A reviewer that creates its own
+   *  worktree (codex-cli, antigravity-cli) fetches this object into it —
+   *  see `ResolveWorktreeInput.mergeBaseSha` in
+   *  `packages/core/src/review/worktree.ts` for why that's needed at
+   *  all. Optional and best-effort throughout: a reviewer that doesn't
+   *  use a local worktree can ignore this entirely, and a reviewer that
+   *  does still works without it, just with the same "unknown revision"
+   *  failure mode this field exists to avoid. */
+  readonly mergeBaseSha?: string
 }
 
 export type ReviewResult = {

@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { buildReviewPrompt, extractChangedFiles, NO_CHECKLIST_TEXT, type ReviewPromptContext } from '@floor-agents/orchestrator'
+import { buildReviewPrompt, extractChangedFiles, NO_CHECKLIST_TEXT, MERGE_BASE_UNRESOLVED_TEXT, type ReviewPromptContext } from '@floor-agents/orchestrator'
 
 const BASE_CTX: ReviewPromptContext = {
   repo: 'acme/widgets',
@@ -54,4 +54,17 @@ test('{{checklists}} renders the pre-built checklist text when provided', () => 
 test('{{checklists}} falls back to the "no checklist matched" line when ctx.checklists is unset', () => {
   const prompt = buildReviewPrompt('{{checklists}}', BASE_CTX)
   expect(prompt).toBe(NO_CHECKLIST_TEXT)
+})
+
+test('{{mergeBase}} renders the given merge-base sha when provided', () => {
+  const prompt = buildReviewPrompt('git diff {{mergeBase}}...{{headSha}}', {
+    ...BASE_CTX,
+    mergeBase: 'cafef00d',
+  })
+  expect(prompt).toBe('git diff cafef00d...deadbeef')
+})
+
+test('{{mergeBase}} falls back to MERGE_BASE_UNRESOLVED_TEXT when ctx.mergeBase is unset', () => {
+  const prompt = buildReviewPrompt('{{mergeBase}}', BASE_CTX)
+  expect(prompt).toBe(MERGE_BASE_UNRESOLVED_TEXT)
 })

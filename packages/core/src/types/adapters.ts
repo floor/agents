@@ -97,11 +97,15 @@ export type PRDetails = {
   /** The base branch's head commit sha AT THE TIME THIS PRDetails WAS
    *  FETCHED (GitHub's PR API returns this alongside `base.ref`) — not
    *  merge-base with the head, and not stable across a re-fetch if the
-   *  base branch has since moved. Empty string if the platform adapter
-   *  could not resolve it. Used by the gate's checklist loader
-   *  (gate/checklists.ts) to read a checklist file from the base branch
-   *  rather than the PR's own head, so a PR cannot edit the checklist
-   *  that reviews it. */
+   *  base branch has since moved; can also lag behind the base branch's
+   *  actual current tip (GitHub only updates it on PR sync events).
+   *  Empty string if the platform adapter could not resolve it. The
+   *  gate's checklist loader (gate/checklists.ts) prefers
+   *  `GitAdapter.compare()`'s fresher `baseSha` and uses this field only
+   *  as a fallback when `compare()` itself fails — either way, always a
+   *  ref outside the PR's control, never the PR's own head. NOT used as
+   *  the reviewer prompt's diff base ({{mergeBase}}) at all — see
+   *  `CompareResult.mergeBaseSha` for that. */
   readonly baseSha: string
   readonly authorLogin: string
   readonly labels: readonly string[]
@@ -120,6 +124,27 @@ export type PRCommentEntry = {
 export type MergeOptions = {
   readonly commitTitle?: string
   readonly commitMessage?: string
+}
+
+export type CompareResult = {
+  /** The `base` ref's current tip commit sha, resolved AT THE TIME OF
+   *  THIS CALL — unlike `PRDetails.baseSha`, this reflects the base
+   *  branch's actual current head, not a value frozen at PR
+   *  creation/last-sync. Used by the gate's checklist loader to fetch
+   *  checklist content from a ref outside the PR's control (never the
+   *  PR's own head). */
+  readonly baseSha: string
+  /** The merge-base commit sha of `base` and `head` — the commit where
+   *  the PR's branch actually forked off, i.e. the correct diff base
+   *  (`git diff mergeBaseSha...head`). Deliberately NOT `baseSha` above:
+   *  once the base branch has advanced past the fork point, a diff
+   *  against `baseSha` (or the even-staler `PRDetails.baseSha`) pulls in
+   *  every commit merged into the base branch after the PR forked,
+   *  making them look like part of the PR (see
+   *  packages/orchestrator/src/gate/loop.ts's `tryReview` for where this
+   *  is handed to the reviewer prompt as `{{mergeBase}}`, and never
+   *  `PRDetails.baseSha`). */
+  readonly mergeBaseSha: string
 }
 
 export type GitAdapter = {
@@ -143,6 +168,14 @@ export type GitAdapter = {
   addLabel(repo: string, prId: string, label: string): Promise<void>
   removeLabel(repo: string, prId: string, label: string): Promise<void>
   getCommitDate(repo: string, sha: string): Promise<Date>
+  /** Resolves, in one call, both the `base` ref's current tip and its
+   *  merge-base with `head` — see `CompareResult`'s own doc comments for
+   *  why the two differ and what each feeds. `base` is a ref name
+   *  (typically a branch); `head` a sha. Returns `null` if either side
+   *  can't be resolved (e.g. a deleted base branch), never throws for
+   *  that case — callers decide their own fallback per use (gate/loop.ts
+   *  has two different fallback policies for the same failure). */
+  compare(repo: string, base: string, head: string): Promise<CompareResult | null>
 }
 
 // ── LLM Provider Adapter ─────────────────────────────────────────────

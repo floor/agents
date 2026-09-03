@@ -22,7 +22,13 @@ Head branch: {{headRef}} ({{headSha}})
 
 ## Instructions
 
-1. Read the changed files and the surrounding code they touch.
+1. Read the changed files and the surrounding code they touch. This PR's
+   actual changes are `git diff {{mergeBase}}...{{headSha}}` — the merge
+   base of `{{baseRef}}` and this PR's head — not a diff against
+   `{{baseRef}}`'s current tip. A commit merged into `{{baseRef}}` after
+   this PR's head branched off is not part of this PR, even though it's
+   reachable from `{{baseRef}}` today — do not raise a scope finding
+   against such a commit.
 2. Check correctness, security, style, test coverage, and whether the PR
    actually does what its description claims.
 3. If one or more checklists are included above, answer every one of

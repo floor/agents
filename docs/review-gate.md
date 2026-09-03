@@ -316,14 +316,25 @@ or repoint a `pathContains` rule at a file the PR controls — and get a
 softer review of itself as a result. Loading from the base means the
 checklist a reviewer sees is the one the PR is actually being held to,
 whatever the base branch says it is, not something the PR can choose for
-itself. If that fresh `compare()` call fails (e.g. a transient API
-failure, or the PR closed between listing and review), checklist content
-falls back to the PR's own recorded `PRDetails.baseSha` — still a ref
-outside the PR's control, just possibly staler; only if THAT is also
-empty are checklists skipped entirely for the pass, never substituted
-with the head sha, with a line logged saying so. A checklist file
-genuinely missing at whichever ref resolved (typo, not yet merged to the
-base) is skipped the same way, per file, also logged.
+itself. If that fresh `compare()` call resolves to `null` — the ref it
+was asked to compare no longer exists (e.g. the base branch was deleted,
+or the PR closed between listing and review), which the adapter reports
+as a 404 — checklist content falls back to the PR's own recorded
+`PRDetails.baseSha` instead: still a ref outside the PR's control, just
+possibly staler; only if THAT is also empty are checklists skipped
+entirely for the pass, never substituted with the head sha, with a line
+logged saying so.
+
+A genuine `compare()` API failure (a 5xx, a rate limit) is a different
+case: the adapter rethrows rather than returning `null`, so it is NOT
+this fallback path — it propagates and aborts the whole pass, exactly
+like any other unhandled `GitAdapter` call failure in this loop
+(`getPRDiff`, `listComments`, ...), and is handled by the gate loop's own
+rate-limit backoff (`startGateLoop` in `gate/loop.ts`), not by per-PR
+degradation.
+
+A checklist file genuinely missing at whichever ref resolved (typo, not
+yet merged to the base) is skipped the same way, per file, also logged.
 
 Each loaded file is capped at `MAX_CHECKLIST_BYTES` (16 KB) and the whole
 concatenated result at `MAX_TOTAL_CHECKLIST_BYTES` (48 KB); either cap

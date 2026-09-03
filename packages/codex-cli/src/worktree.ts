@@ -18,6 +18,7 @@ export async function resolveWorktree(
     readonly headSha: string
     readonly clonePath?: string
     readonly worktreeRoot?: string
+    readonly mergeBaseSha?: string
   },
   deps: { readonly runGit?: GitRunner } = {},
 ): Promise<ResolvedWorktree> {

@@ -223,7 +223,13 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
     reviewedHeads = withReviewedHead(reviewedHeads, pr.headSha, rv.vendor)
     await persist()
 
-    const result = await rv.review({ repo, prNumber: pr.id, headSha: pr.headSha, prompt })
+    // mergeBaseSha lets a Reviewer that creates its own local worktree
+    // (codex-cli, antigravity-cli) fetch that exact commit object in, so
+    // its own `git diff {{mergeBase}}...{{headSha}}` (per the prompt
+    // template) can actually run — see ReviewInput.mergeBaseSha's own doc
+    // comment for the full "unknown revision" failure mode this avoids
+    // (floor/radiooooo #130, round 22).
+    const result = await rv.review({ repo, prNumber: pr.id, headSha: pr.headSha, prompt, mergeBaseSha: compareResult?.mergeBaseSha })
     const parsed = parseVerdictComment(result.text)
 
     if (!parsed) {

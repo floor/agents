@@ -273,6 +273,7 @@ export function createAntigravityReviewer(config: AntigravityReviewerConfig = {}
         headSha: input.headSha,
         clonePath: resolvedOptions.clonePath,
         worktreeRoot: resolvedOptions.worktreeRoot,
+        mergeBaseSha: input.mergeBaseSha,
       })
 
       try {

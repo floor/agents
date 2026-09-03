@@ -102,10 +102,14 @@ export type PRDetails = {
    *  Empty string if the platform adapter could not resolve it. The
    *  gate's checklist loader (gate/checklists.ts) prefers
    *  `GitAdapter.compare()`'s fresher `baseSha` and uses this field only
-   *  as a fallback when `compare()` itself fails — either way, always a
-   *  ref outside the PR's control, never the PR's own head. NOT used as
-   *  the reviewer prompt's diff base ({{mergeBase}}) at all — see
-   *  `CompareResult.mergeBaseSha` for that. */
+   *  as a fallback when `compare()` resolves to `null` (an unresolvable
+   *  ref — e.g. a deleted base branch) — NOT on every `compare()`
+   *  failure: a thrown error (a genuine API failure) propagates instead
+   *  and aborts the pass, same as any other unhandled `GitAdapter` call
+   *  in gate/loop.ts, never falling back to this field. Either way, this
+   *  field is always a ref outside the PR's control, never the PR's own
+   *  head. NOT used as the reviewer prompt's diff base ({{mergeBase}}) at
+   *  all — see `CompareResult.mergeBaseSha` for that. */
   readonly baseSha: string
   readonly authorLogin: string
   readonly labels: readonly string[]

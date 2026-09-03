@@ -28,17 +28,30 @@ Head branch: {{headRef}} ({{headSha}})
    `{{baseRef}}`'s current tip. A commit merged into `{{baseRef}}` after
    this PR's head branched off is not part of this PR, even though it's
    reachable from `{{baseRef}}` today — do not raise a scope finding
-   against such a commit.
+   against such a commit. `{{mergeBase}}` is resolved for you server-side
+   (GitHub's compare API) before this prompt is built — do not attempt to
+   recompute it yourself with a local `git merge-base` in your own
+   checkout, since that checkout's `origin/{{baseRef}}` is only as fresh
+   as whatever was last fetched into it and is not guaranteed to be
+   fetched at all.
 2. Check correctness, security, style, test coverage, and whether the PR
    actually does what its description claims.
-3. If one or more checklists are included above, answer every one of
+3. Report every finding you can reach in this pass, ordered by severity,
+   not only the first one or two. A pass that stops early costs the PR a
+   whole round per finding (lane fix, build, review, CI); a pass that
+   lists all of them costs one. Treat earlier reviewer comments on the PR
+   as context, not as exclusions: do not repeat a finding only because it
+   was raised before, but re-check each affected area and report any
+   current defect there, including an incomplete fix, a wrong fix, or a
+   new regression.
+4. If one or more checklists are included above, answer every one of
    their questions against the actual code at this PR's head commit, not
    against the PR's own description — name the file and line for each
    answer, exactly as each checklist's own header asks. A checklist
    question you can't answer without more information is a finding, not
    something to skip silently.
-4. Name specific files and line ranges for any issue you raise.
-5. Your response must START with a header line naming your vendor, e.g.
+5. Name specific files and line ranges for any issue you raise.
+6. Your response must START with a header line naming your vendor, e.g.
    `## Reviewer agent (Codex)`, and must END with an exact verdict line —
    one of:
    - `Verdict: approve as-is`
@@ -47,7 +60,7 @@ Head branch: {{headRef}} ({{headSha}})
    Nothing else satisfies the gate: a missing header or a verdict line
    that doesn't match one of those three exactly does not count as a
    review.
-6. **You MUST name the exact commit you reviewed somewhere in your
+7. **You MUST name the exact commit you reviewed somewhere in your
    response** — write out the full head sha `{{headSha}}` at least once
    (for example: "Reviewed at {{headSha}}."). This is mandatory, not
    optional: a verdict that never names a sha does not count toward the

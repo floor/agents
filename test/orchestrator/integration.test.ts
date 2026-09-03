@@ -145,6 +145,7 @@ function mockGitAdapter(): GitAdapter & { branches: string[]; commits: { branch:
     async addLabel() {},
     async removeLabel() {},
     async getCommitDate() { return new Date() },
+    async compare() { return null },
   }
 }
 

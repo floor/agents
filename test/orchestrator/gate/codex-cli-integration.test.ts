@@ -136,6 +136,7 @@ function makeGitAdapter(pr: PRDetails, commentCalls: { repo: string; prId: strin
     async addLabel() {},
     async removeLabel() {},
     async getCommitDate() { return new Date('2026-01-01T00:00:00Z') },
+    async compare() { return { baseSha: pr.baseSha, mergeBaseSha: pr.baseSha } },
   }
 }
 

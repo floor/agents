@@ -15,6 +15,7 @@ export type {
   PRDetails,
   PRCommentEntry,
   MergeOptions,
+  CompareResult,
   ToolDefinition,
   ToolCall,
   ContentBlock,

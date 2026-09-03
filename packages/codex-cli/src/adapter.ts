@@ -167,6 +167,7 @@ export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer 
         headSha: input.headSha,
         clonePath: resolvedOptions.clonePath,
         worktreeRoot: resolvedOptions.worktreeRoot,
+        mergeBaseSha: input.mergeBaseSha,
       })
 
       try {

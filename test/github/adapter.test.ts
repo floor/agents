@@ -290,6 +290,75 @@ test('mergePR passes commit title/message through when provided', async () => {
   }
 })
 
+// ── compare (base branch tip + merge-base, for the gate's diff-base fix) ──
+
+test('compare hits GitHub\'s compare API with base...head and maps base_commit/merge_base_commit shas', async () => {
+  const restore = withMockFetch(url => {
+    expect(url).toContain('/repos/o/r/compare/main...deadbeef')
+    return new Response(JSON.stringify({
+      base_commit: { sha: 'c'.repeat(40) },
+      merge_base_commit: { sha: 'f'.repeat(40) },
+    }), { status: 200 })
+  })
+  try {
+    const adapter = createGitHubAdapter({ token: 't', owner: 'o' })
+    const result = await adapter.compare('r', 'main', 'deadbeef')
+    expect(result).toEqual({ baseSha: 'c'.repeat(40), mergeBaseSha: 'f'.repeat(40) })
+  } finally {
+    restore()
+  }
+})
+
+test('compare URL-encodes a base ref containing slashes', async () => {
+  const restore = withMockFetch(url => {
+    expect(url).toContain('/repos/o/r/compare/release%2F3.x...deadbeef')
+    return new Response(JSON.stringify({
+      base_commit: { sha: 'c'.repeat(40) },
+      merge_base_commit: { sha: 'f'.repeat(40) },
+    }), { status: 200 })
+  })
+  try {
+    const adapter = createGitHubAdapter({ token: 't', owner: 'o' })
+    await adapter.compare('r', 'release/3.x', 'deadbeef')
+  } finally {
+    restore()
+  }
+})
+
+test('compare returns null on 404 (no such ref, or no common history) rather than throwing', async () => {
+  const restore = withMockFetch(() => new Response('not found', { status: 404 }))
+  try {
+    const adapter = createGitHubAdapter({ token: 't', owner: 'o' })
+    expect(await adapter.compare('r', 'main', 'deadbeef')).toBeNull()
+  } finally {
+    restore()
+  }
+})
+
+test('compare returns null when the response is missing either commit sha, rather than returning a partial result', async () => {
+  const restore = withMockFetch(() => new Response(JSON.stringify({ base_commit: { sha: 'c'.repeat(40) } }), { status: 200 }))
+  try {
+    const adapter = createGitHubAdapter({ token: 't', owner: 'o' })
+    expect(await adapter.compare('r', 'main', 'deadbeef')).toBeNull()
+  } finally {
+    restore()
+  }
+})
+
+test('compare rethrows a non-404 failure (e.g. a 500) rather than swallowing it', async () => {
+  // Deliberately not 429/403: those trigger the adapter's real retry-with-
+  // delay logic (see api()'s MAX_429_RETRIES handling above), which would
+  // make this test slow for no added coverage — a plain 500 exercises the
+  // same "non-404 must throw" path instantly.
+  const restore = withMockFetch(() => new Response('server error', { status: 500 }))
+  try {
+    const adapter = createGitHubAdapter({ token: 't', owner: 'o' })
+    await expect(adapter.compare('r', 'main', 'deadbeef')).rejects.toThrow()
+  } finally {
+    restore()
+  }
+})
+
 test('mergePR without options keeps prior behavior', async () => {
   let sentBody: any = null
   const restore = withMockFetch((_url, init) => {

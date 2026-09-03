@@ -61,6 +61,7 @@ function makeGitAdapter(files: Record<string, string>): GitAdapter {
     async addLabel() {},
     async removeLabel() {},
     async getCommitDate() { return new Date() },
+    async compare() { return null },
   }
 }
 

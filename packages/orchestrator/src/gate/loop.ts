@@ -163,22 +163,43 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
       ? await deps.loadPromptTemplate()
       : await defaultLoadPromptTemplate(config.promptTemplatePath)
 
+    // Resolves, fresh right here (never a value carried over from the
+    // pass's earlier listOpenPRs() call), both:
+    //  (a) the merge-base of pr.baseRef and pr.headSha — the correct diff
+    //      base, handed to the prompt as {{mergeBase}} below. NEVER
+    //      pr.baseSha: that's the base branch's tip as of PR
+    //      creation/last-sync, and once the base branch has advanced past
+    //      where this PR forked off, diffing against it (or an even
+    //      staler recorded value) pulls in every commit merged into the
+    //      base branch since, making them look like part of the PR (see
+    //      floor/radiooooo PR #130, which got a false scope finding from
+    //      exactly this).
+    //  (b) the base branch's CURRENT tip — used only below to fetch
+    //      checklist CONTENT from a ref outside the PR's control, never
+    //      the PR's own head (see gate/checklists.ts's header comment for
+    //      the full rationale). This is deliberately not the same value
+    //      as (a): a checklist should read the base branch's latest, not
+    //      freeze at the PR's fork point.
+    const compareResult = await git.compare(repo, pr.baseRef, pr.headSha)
+    if (!compareResult) {
+      log(`[gate] ${repo}#${pr.id}: could not resolve merge base (compare ${pr.baseRef}...${pr.headSha.slice(0, 7)} failed) — {{mergeBase}} left unresolved this pass`)
+    }
+
     // Checklist files are selected from config (label/path rules); their
-    // CONTENT is fetched from the target repo at the PR's BASE branch head
-    // sha, resolved fresh right here via getPR() — never at the PR's own
-    // head. Loading from the head would let a PR edit the very checklist
-    // that reviews it; see gate/checklists.ts's header comment for the
-    // full rationale. Skip checklists (not merely "getFile returns
-    // null" — never even attempt a fetch) if the base sha can't be
-    // resolved; DO NOT fall back to pr.headSha as a substitute ref.
+    // CONTENT is fetched at the base branch's current tip, from (a) above
+    // when it resolved, or pr.baseSha (the PR's own recorded value, which
+    // can lag but is still outside the PR's control) when compare()
+    // failed. Skip checklists entirely (not merely "getFile returns
+    // null" — never even attempt a fetch) if NEITHER resolves; DO NOT
+    // fall back to pr.headSha as a substitute ref under any circumstance.
     const checklistFiles = selectChecklistFiles(config.checklists.rules, { labels: pr.labels, changedFiles })
     let checklists = NO_CHECKLIST_TEXT
     if (checklistFiles.length > 0) {
-      const basePR = await git.getPR(repo, pr.id)
-      if (!basePR || !basePR.baseSha) {
-        log(`[gate] ${repo}#${pr.id}: could not resolve base sha for checklists (getPR returned ${basePR ? 'no baseSha' : 'null'}) — skipping checklists this pass, not falling back to head`)
+      const checklistRef = compareResult?.baseSha || pr.baseSha || null
+      if (!checklistRef) {
+        log(`[gate] ${repo}#${pr.id}: could not resolve any base ref for checklists (compare failed and PR has no recorded baseSha) — skipping checklists this pass, not falling back to head`)
       } else {
-        checklists = await loadChecklists(git, repo, basePR.baseSha, checklistFiles, log)
+        checklists = await loadChecklists(git, repo, checklistRef, checklistFiles, log)
       }
     }
 
@@ -192,6 +213,7 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
       headSha: pr.headSha,
       changedFiles,
       checklists,
+      mergeBase: compareResult?.mergeBaseSha,
     })
 
     // Mark (and durably persist) the attempt BEFORE calling the
@@ -201,7 +223,13 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
     reviewedHeads = withReviewedHead(reviewedHeads, pr.headSha, rv.vendor)
     await persist()
 
-    const result = await rv.review({ repo, prNumber: pr.id, headSha: pr.headSha, prompt })
+    // mergeBaseSha lets a Reviewer that creates its own local worktree
+    // (codex-cli, antigravity-cli) fetch that exact commit object in, so
+    // its own `git diff {{mergeBase}}...{{headSha}}` (per the prompt
+    // template) can actually run — see ReviewInput.mergeBaseSha's own doc
+    // comment for the full "unknown revision" failure mode this avoids
+    // (floor/radiooooo #130, round 22).
+    const result = await rv.review({ repo, prNumber: pr.id, headSha: pr.headSha, prompt, mergeBaseSha: compareResult?.mergeBaseSha })
     const parsed = parseVerdictComment(result.text)
 
     if (!parsed) {

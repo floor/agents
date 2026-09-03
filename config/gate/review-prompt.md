@@ -22,13 +22,18 @@ Head branch: {{headRef}} ({{headSha}})
 
 ## Instructions
 
-1. Read the changed files and the surrounding code they touch. The PR's
-   changes are `git diff <merge-base>...HEAD` where the merge-base is the
-   one between the base branch's current tip and the head: compute it
-   yourself in the checkout (`git merge-base origin/{{baseRef}} HEAD`) and
-   do not treat any base sha you are given as the diff base except through
-   a three-dot diff. Commits merged into the base branch after the PR was
-   opened are not part of this PR.
+1. Read the changed files and the surrounding code they touch. This PR's
+   actual changes are `git diff {{mergeBase}}...{{headSha}}` — the merge
+   base of `{{baseRef}}` and this PR's head — not a diff against
+   `{{baseRef}}`'s current tip. A commit merged into `{{baseRef}}` after
+   this PR's head branched off is not part of this PR, even though it's
+   reachable from `{{baseRef}}` today — do not raise a scope finding
+   against such a commit. `{{mergeBase}}` is resolved for you server-side
+   (GitHub's compare API) before this prompt is built — do not attempt to
+   recompute it yourself with a local `git merge-base` in your own
+   checkout, since that checkout's `origin/{{baseRef}}` is only as fresh
+   as whatever was last fetched into it and is not guaranteed to be
+   fetched at all.
 2. Check correctness, security, style, test coverage, and whether the PR
    actually does what its description claims.
 3. Report every finding you can reach in this pass, ordered by severity,

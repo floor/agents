@@ -22,7 +22,7 @@ export { attributeImplementerVendor, DEFAULT_VENDOR_CONFIG } from './gate/vendor
 export type { VendorAttributionConfig, VendorAttributionInput, VendorRule } from './gate/vendor.ts'
 export { decideGate, verdictNamesHead, latestValidVerdictsByVendor, DEFAULT_GATE_CONFIG } from './gate/decision.ts'
 export type { GateDecision, GateConfig, GateDecisionInput, GateDecisionPR, GateDecisionComment, ValidVerdict } from './gate/decision.ts'
-export { buildReviewPrompt, extractChangedFiles } from './gate/prompt.ts'
+export { buildReviewPrompt, extractChangedFiles, MERGE_BASE_UNRESOLVED_TEXT } from './gate/prompt.ts'
 export type { ReviewPromptContext } from './gate/prompt.ts'
 export { selectChecklistFiles, loadChecklists, DEFAULT_CHECKLISTS_CONFIG, NO_CHECKLIST_TEXT, MAX_CHECKLIST_BYTES, MAX_TOTAL_CHECKLIST_BYTES } from './gate/checklists.ts'
 export type { ChecklistRule, ChecklistsConfig } from './gate/checklists.ts'

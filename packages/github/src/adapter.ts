@@ -428,5 +428,29 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
       // rebases/amends), which is what "how stale is a verdict" cares about.
       return new Date(data.commit.committer.date)
     },
+
+    async compare(repo, base, head) {
+      try {
+        // GitHub resolves `base` (a ref name, typically a branch) to its
+        // CURRENT tip at call time — that's `base_commit` below, fresher
+        // than PRDetails.baseSha, which can lag. `merge_base_commit` is
+        // the actual fork point of `base` and `head`, computed server-side
+        // regardless of how far the two have since diverged.
+        const data = await api(
+          `/repos/${owner}/${repo}/compare/${encodeURIComponent(base)}...${head}`,
+        )
+        const baseSha = data.base_commit?.sha
+        const mergeBaseSha = data.merge_base_commit?.sha
+        if (!baseSha || !mergeBaseSha) return null
+        return { baseSha, mergeBaseSha }
+      } catch (err) {
+        // 404 covers both "no such branch/sha" and "no common history" —
+        // either way, nothing this method can resolve. Any other status
+        // (rate limit, 5xx) is a real failure and must throw, same as
+        // every other method here, so the gate loop's own backoff sees it.
+        if (err instanceof GitHubError && err.status === 404) return null
+        throw err
+      }
+    },
   }
 }

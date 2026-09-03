@@ -720,6 +720,12 @@ beforeAll(async () => {
   // directory is cacheable (see computePrepareCacheKey's lockfile scan).
   await mkdir(join(prepareClonePath, 'cached'), { recursive: true })
   await Bun.write(join(prepareClonePath, 'cached', 'package-lock.json'), '{"lockfileVersion":1}\n')
+  // Byte-identical lockfile content to `cached/`, in a DIFFERENT
+  // directory — used to prove the cache key includes pathPrefix (two
+  // directories with the same command and the same lockfile content must
+  // not share one cache entry).
+  await mkdir(join(prepareClonePath, 'cached2'), { recursive: true })
+  await Bun.write(join(prepareClonePath, 'cached2', 'package-lock.json'), '{"lockfileVersion":1}\n')
 
   await Bun.$`git -C ${prepareClonePath} add -A`.quiet()
   await Bun.$`git -C ${prepareClonePath} commit -q -m init`.quiet()
@@ -845,7 +851,14 @@ test('a prepare step that exceeds prepareTimeoutMs is killed and treated as fail
   }
 }, 15_000)
 
-test('a cacheable prepare step (lockfile present in its directory) runs only once across two review() calls on the same Reviewer instance', async () => {
+test('an AUTO-CREATED (ephemeral) worktree never uses the cache — a cacheable step still runs on every review() call', async () => {
+  // codex-review-round-1 finding (High): an auto-created worktree is torn
+  // down (`worktree.cleanup()`) after every review(), taking whatever a
+  // prepare step installed with it — caching a "succeeded" result there
+  // would skip re-running the command against a worktree with NOTHING
+  // installed. Proven here: two review() calls, same cacheable step
+  // (lockfile present in `cached/`), worktreePath left undefined
+  // (auto-created) — the counter must show it ran BOTH times.
   const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-prepare-cache-root-'))
   const counterPath = join(tmpdir(), `codex-prepare-counter-${crypto.randomUUID()}.txt`)
   const reviewer = createCodexReviewer({ binary: OK, clonePath: prepareClonePath, worktreeRoot })
@@ -856,29 +869,134 @@ test('a cacheable prepare step (lockfile present in its directory) runs only onc
     await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: undefined, prepareSteps: [step], prepareTimeoutMs: 10_000 })
 
     const counterLines = (await readFile(counterPath, 'utf-8')).trim().split('\n').filter(Boolean)
-    expect(counterLines.length).toBe(1)
+    expect(counterLines.length).toBe(2)
   } finally {
     await rm(counterPath, { force: true }).catch(() => {})
     await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
   }
 })
 
-test('a step whose directory has no known lockfile is never cached — it runs on every review() call', async () => {
-  const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-prepare-nocache-root-'))
+test('a CALLER-SUPPLIED worktreePath is a valid cache candidate — a cacheable step runs only once across two review() calls reusing it', async () => {
+  // The persistent-worktree case the cache is actually correct for: unlike
+  // an auto-created worktree, `prepareClonePath` here isn't torn down
+  // between calls, so whatever the first call installed genuinely is
+  // still there for the second.
+  const counterPath = join(tmpdir(), `codex-prepare-counter-persistent-${crypto.randomUUID()}.txt`)
+  const reviewer = createCodexReviewer({ binary: OK })
+  const step = { pathPrefix: 'cached/', command: `echo x >> ${counterPath}` }
+
+  try {
+    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: prepareClonePath, prepareSteps: [step], prepareTimeoutMs: 10_000 })
+    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: prepareClonePath, prepareSteps: [step], prepareTimeoutMs: 10_000 })
+
+    const counterLines = (await readFile(counterPath, 'utf-8')).trim().split('\n').filter(Boolean)
+    expect(counterLines.length).toBe(1)
+  } finally {
+    await rm(counterPath, { force: true }).catch(() => {})
+  }
+})
+
+test('a step whose directory has no known lockfile is never cached — it runs on every review() call, even with a persistent worktreePath', async () => {
   const counterPath = join(tmpdir(), `codex-prepare-counter-nolockfile-${crypto.randomUUID()}.txt`)
-  const reviewer = createCodexReviewer({ binary: OK, clonePath: prepareClonePath, worktreeRoot })
-  // The worktree root itself (pathPrefix: '') has no lockfile — only
-  // `cached/` does (see beforeAll) — so this step is never cacheable.
+  const reviewer = createCodexReviewer({ binary: OK })
+  // `root.txt` exists at the worktree root (see beforeAll) but no known
+  // lockfile does — only `cached/` has one — so this step is never
+  // cacheable regardless of worktree persistence.
   const step = { pathPrefix: '', command: `echo x >> ${counterPath}` }
 
   try {
-    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: undefined, prepareSteps: [step], prepareTimeoutMs: 10_000 })
-    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: undefined, prepareSteps: [step], prepareTimeoutMs: 10_000 })
+    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: prepareClonePath, prepareSteps: [step], prepareTimeoutMs: 10_000 })
+    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: prepareClonePath, prepareSteps: [step], prepareTimeoutMs: 10_000 })
 
     const counterLines = (await readFile(counterPath, 'utf-8')).trim().split('\n').filter(Boolean)
     expect(counterLines.length).toBe(2)
   } finally {
     await rm(counterPath, { force: true }).catch(() => {})
+  }
+})
+
+test('a FAILED prepare step is never cached — it is retried (not skipped) on the next review() call, even with a persistent worktreePath', async () => {
+  // codex-review-round-1 finding (Medium): caching `false` results would
+  // otherwise poison this lockfile hash until the process restarts.
+  // Proven via a counter that increments on EVERY invocation regardless
+  // of the command's own exit code — if the second call were wrongly
+  // treated as "already known to fail" and skipped, the counter would
+  // show only 1, not 2.
+  const counterPath = join(tmpdir(), `codex-prepare-counter-retry-${crypto.randomUUID()}.txt`)
+  const reviewer = createCodexReviewer({ binary: OK })
+  const step = { pathPrefix: 'cached/', command: `echo x >> ${counterPath}; exit 1` }
+
+  try {
+    const result1 = await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: prepareClonePath, prepareSteps: [step], prepareTimeoutMs: 10_000 })
+    const result2 = await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: prepareClonePath, prepareSteps: [step], prepareTimeoutMs: 10_000 })
+
+    // Both reviews still completed normally — a failed (and, this time,
+    // uncacheable) prepare step never aborts the review either.
+    expect(result1.text).toContain('Verdict: approve as-is')
+    expect(result2.text).toContain('Verdict: approve as-is')
+
+    const counterLines = (await readFile(counterPath, 'utf-8')).trim().split('\n').filter(Boolean)
+    expect(counterLines.length).toBe(2)
+  } finally {
+    await rm(counterPath, { force: true }).catch(() => {})
+  }
+})
+
+test('the cache key includes pathPrefix — two directories with an IDENTICAL command and byte-identical lockfile do not share one cached result', async () => {
+  // codex-review-round-1 finding (High, second half): without pathPrefix
+  // in the key, `cached/` and `cached2/` (same lockfile content, see
+  // beforeAll) running the exact same command would incorrectly share one
+  // cache entry — the second directory's run would be wrongly skipped as
+  // "already done". The command itself is byte-identical for both steps
+  // (isolating pathPrefix as the only variable) and writes its OWN `pwd`
+  // to a shared marker — if both genuinely ran, the marker has two lines,
+  // one per directory; if the second were wrongly skipped, only one.
+  const markerPath = join(tmpdir(), `codex-prepare-pathprefix-marker-${crypto.randomUUID()}.txt`)
+  const reviewer = createCodexReviewer({ binary: OK })
+  const sameCommand = `pwd >> ${markerPath}`
+  const stepA = { pathPrefix: 'cached/', command: sameCommand }
+  const stepB = { pathPrefix: 'cached2/', command: sameCommand }
+
+  try {
+    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: prepareClonePath, prepareSteps: [stepA], prepareTimeoutMs: 10_000 })
+    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: prepareClonePath, prepareSteps: [stepB], prepareTimeoutMs: 10_000 })
+
+    const lines = (await readFile(markerPath, 'utf-8')).trim().split('\n').filter(Boolean)
+    expect(lines.length).toBe(2)
+    expect(lines[0]!.endsWith('/cached')).toBe(true)
+    expect(lines[1]!.endsWith('/cached2')).toBe(true)
+  } finally {
+    await rm(markerPath, { force: true }).catch(() => {})
+  }
+})
+
+test('a prepare command runs with a minimal env allowlist, never this process\'s own secrets (e.g. an auth token)', async () => {
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-prepare-env-root-'))
+  const dumpPath = join(tmpdir(), `codex-prepare-env-dump-${crypto.randomUUID()}.txt`)
+  const secretVarName = 'CODEX_TEST_TOTALLY_SECRET_TOKEN'
+  const prevSecret = process.env[secretVarName]
+  process.env[secretVarName] = 'super-secret-value-must-not-leak'
+
+  try {
+    const reviewer = createCodexReviewer({ binary: OK, clonePath: prepareClonePath, worktreeRoot })
+    await reviewer.review({
+      ...baseInput,
+      headSha: prepareHeadSha,
+      worktreePath: undefined,
+      prepareSteps: [{ pathPrefix: '', command: `env > ${dumpPath}` }],
+      prepareTimeoutMs: 10_000,
+    })
+
+    const dump = await readFile(dumpPath, 'utf-8')
+    expect(dump).not.toContain('super-secret-value-must-not-leak')
+    expect(dump).not.toContain(secretVarName)
+    // The allowlist isn't empty — PATH must still be present, or the
+    // command couldn't have found /bin/sh's usual tools at all.
+    expect(dump).toContain('PATH=')
+  } finally {
+    if (prevSecret === undefined) delete process.env[secretVarName]
+    else process.env[secretVarName] = prevSecret
+    await rm(dumpPath, { force: true }).catch(() => {})
     await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
   }
 })

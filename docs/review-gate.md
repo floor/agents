@@ -396,14 +396,33 @@ owns the worktree.
   never captured into anything — not the prompt, not a log a prompt could
   later include — structurally: the spawn discards it outright rather
   than capturing-then-discarding.
-- Runs are cached by the target directory's lockfile content hash
-  (`bun.lock`, `bun.lockb`, `package-lock.json`, `yarn.lock`, or
-  `pnpm-lock.yaml` — whichever is found first), for the lifetime of the
-  `Reviewer` instance (the whole gate process, in practice) — an
-  unchanged lockfile hashes the same across many reviews, so "run once
-  per base sha and reuse" happens naturally without tracking base shas
-  explicitly. A directory with none of those lockfiles is never cached —
-  nothing to key staleness off of — so it re-runs every review.
+- The command runs with a MINIMAL, ALLOWLISTED environment (`PATH`,
+  `HOME`, `TMPDIR`/`TEMP`/`TMP`, `SHELL`, `USER`, `LANG`, `LC_ALL`) —
+  never this gate process's own `process.env`. This matters because the
+  worktree it runs in is checked out at the PR's OWN head, so the command
+  executes PR-supplied package-manager lifecycle code (a `postinstall`
+  script, for instance) before any review has happened — the same class
+  of risk any CI system takes running an install step on a PR branch, and
+  the same standard mitigation: that step never sees `GITHUB_TOKEN`,
+  `GATE_CODEX_*`, or any other secret this process holds. (The `command`
+  string itself is trusted — it comes from this repo's own operator-edited
+  config, never from the PR — but what it operates on, the PR's checked-out
+  dependency tree, is not.)
+- Runs are cached by `pathPrefix` + `command` + the target directory's
+  lockfile content hash (`bun.lock`, `bun.lockb`, `package-lock.json`,
+  `yarn.lock`, or `pnpm-lock.yaml` — whichever is found first; a directory
+  with none of those is never cached, nothing to key staleness off of, so
+  it re-runs every review) — but ONLY when the Reviewer was given a
+  caller-supplied `worktreePath` that persists across calls. An
+  auto-created worktree (the default — no `worktreePath` given) is torn
+  down after every single `review()` call, taking whatever the command
+  installed with it, so caching a "succeeded" result there would skip
+  re-running the command against a worktree that then has nothing
+  installed at all — worse than not caching. Only a genuine SUCCESS is
+  ever cached; a failure is never written to the cache, so a transient
+  failure (a registry hiccup) is retried on the very next review rather
+  than being treated as permanently broken for the rest of the process's
+  lifetime.
 
 A Reviewer that doesn't create a local worktree, or doesn't need this,
 ignores `prepareSteps`/`prepareTimeoutMs` entirely — both are optional

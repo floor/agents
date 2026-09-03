@@ -118,35 +118,75 @@ function readRequiredPath(name: string, raw: unknown): string {
   return value
 }
 
-/**
- * Returns a cache key combining `command` and the content hash of whichever
- * `LOCKFILE_CANDIDATES` entry is found first in `dir` (its own filename is
- * folded into the key too, so switching lockfile kinds in the same
- * directory is never mistaken for "unchanged") — or `null` if none exists,
- * meaning this step is NOT cacheable (nothing to key staleness off of, so
- * the caller must always run it fresh rather than guess).
- */
-async function computePrepareCacheKey(dir: string, command: string): Promise<string | null> {
-  for (const name of LOCKFILE_CANDIDATES) {
-    const file = Bun.file(join(dir, name))
-    if (await file.exists()) {
-      const hasher = new Bun.CryptoHasher('sha256')
-      hasher.update(await file.arrayBuffer())
-      return `${command} ${name} ${hasher.digest('hex')}`
-    }
+// A prepare command runs inside the PR's OWN checked-out worktree, so it
+// executes PR-supplied package-manager lifecycle code (postinstall
+// scripts, ...) BEFORE any review has happened — the command string
+// itself is operator-configured and trusted (see prepare.ts's own header
+// comment), but what it OPERATES ON is not. This is the same class of
+// risk any CI system takes running `npm ci` on a PR branch, and the same
+// standard mitigation applies: never hand that step this process's own
+// secrets. Allowlist, not a denylist — a denylist can miss a secret this
+// list was never told about; an allowlist can only ever be too narrow,
+// never too permissive. Notably absent: GITHUB_TOKEN, GATE_CODEX_*,
+// GATE_AGY_*, or anything else this gate process holds.
+const PREPARE_ENV_ALLOWLIST = ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'TMP', 'SHELL', 'USER', 'LANG', 'LC_ALL']
+
+function buildPrepareEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const key of PREPARE_ENV_ALLOWLIST) {
+    const value = process.env[key]
+    if (value !== undefined) env[key] = value
   }
-  return null
+  return env
 }
 
 /**
- * Runs one prepare command via the OS shell, from `opts.cwd`, killing it
- * (SIGKILL, same reasoning as `runCodex`'s own timeout below — a hung
- * install may ignore SIGTERM) after `opts.timeoutMs`. Returns `true` iff it
- * exited zero before the timeout — NEVER throws, including when `opts.cwd`
- * doesn't exist or the shell itself can't be spawned: a prepare step is
- * best-effort by design (see `ReviewInput.prepareSteps`'s doc comment), so
- * every failure mode collapses to the same "false", for the caller to
- * report as one line rather than treat as fatal.
+ * Returns a cache key combining `pathPrefix`, `command`, and the content
+ * hash of whichever `LOCKFILE_CANDIDATES` entry is found first in `dir`
+ * (its own filename is folded in too, so switching lockfile kinds in the
+ * same directory is never mistaken for "unchanged") — or `null` if none
+ * exists, meaning this step is NOT cacheable (nothing to key staleness
+ * off of, so the caller must always run it fresh rather than guess).
+ * `pathPrefix` is included specifically so two different directories that
+ * happen to run the identical command against byte-identical lockfiles
+ * (e.g. two workspace packages pinned to the same versions) get distinct
+ * cache entries rather than incorrectly sharing one.
+ *
+ * Never throws: any I/O error (permissions, a transient FS issue) while
+ * probing for a lockfile is treated the same as "no lockfile found" —
+ * not cacheable — never propagated. See `ReviewInput.prepareSteps`'s
+ * "never aborts the review" contract; this is one of two places that
+ * contract is enforced (the other is `review()`'s own try/catch around
+ * the whole `runPrepareSteps` call, as defense in depth).
+ */
+async function computePrepareCacheKey(dir: string, pathPrefix: string, command: string): Promise<string | null> {
+  try {
+    for (const name of LOCKFILE_CANDIDATES) {
+      const file = Bun.file(join(dir, name))
+      if (await file.exists()) {
+        const hasher = new Bun.CryptoHasher('sha256')
+        hasher.update(await file.arrayBuffer())
+        return `${pathPrefix} :: ${command} :: ${name} :: ${hasher.digest('hex')}`
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Runs one prepare command via the OS shell, from `opts.cwd`, with a
+ * minimal ALLOWLISTED environment (`buildPrepareEnv` — never this
+ * process's full `process.env`; see that function's own doc comment for
+ * why), killing it (SIGKILL, same reasoning as `runCodex`'s own timeout
+ * below — a hung install may ignore SIGTERM) after `opts.timeoutMs`.
+ * Returns `true` iff it exited zero before the timeout — NEVER throws,
+ * including when `opts.cwd` doesn't exist or the shell itself can't be
+ * spawned: a prepare step is best-effort by design (see
+ * `ReviewInput.prepareSteps`'s doc comment), so every failure mode
+ * collapses to the same "false", for the caller to report as one line
+ * rather than treat as fatal.
  *
  * stdout/stderr are deliberately never captured (`'ignore'`, not `'pipe'`)
  * — floor/agents#32's own "output excluded from the prompt" requirement is
@@ -164,7 +204,7 @@ async function runPrepareStep(opts: {
   try {
     proc = Bun.spawn(['/bin/sh', '-c', opts.command], {
       cwd: opts.cwd,
-      env: process.env,
+      env: buildPrepareEnv(),
       stdin: 'ignore',
       stdout: 'ignore',
       stderr: 'ignore',
@@ -190,34 +230,48 @@ async function runPrepareStep(opts: {
 }
 
 /**
- * Runs every selected `steps` entry (skipping/reusing via `cache` when a
- * step's directory has a cacheable lockfile whose hash this `cache`
- * instance has already seen — see `computePrepareCacheKey`), and returns a
- * short, one-line-per-adapter-call summary of which steps failed or timed
- * out, empty when every step succeeded (or `steps` was empty). `cache` is
- * owned by the caller (one per `createCodexReviewer()` instance, so it
- * persists across `review()` calls for that Reviewer's whole lifetime —
- * "run once per base sha and reuse" in practice, since an unchanged
- * lockfile hashes the same across many reviews).
+ * Runs every selected `steps` entry and returns a short,
+ * one-line-per-failed-step summary — empty when every step succeeded (or
+ * `steps` was empty).
+ *
+ * Caching (skipping a step whose `cache` entry already says "succeeded")
+ * applies ONLY when `cacheable` is true — pass this as `worktreePath !==
+ * undefined` from `review()`: an AUTO-CREATED worktree is torn down
+ * (`worktree.cleanup()`) after every single `review()` call, taking
+ * whatever a prepare step installed (`node_modules`, ...) with it, so a
+ * cache hit there would skip re-running the command against a worktree
+ * that has NOTHING installed — worse than not caching at all. Only a
+ * CALLER-SUPPLIED `worktreePath` (this package's own tests use
+ * `clonePath` this way; a real caller might reuse one across calls)
+ * plausibly still has a previous run's artifacts on disk, so only that
+ * case is safe to skip. `cache` is owned by the caller (one per
+ * `createCodexReviewer()` instance, persisting across `review()` calls
+ * for that Reviewer's whole lifetime).
+ *
+ * Only a SUCCESS is ever cached — a failure is never written to `cache`,
+ * so a transient failure (a network blip, a registry hiccup) is retried
+ * on the very next review rather than poisoning that lockfile hash for
+ * the rest of this process's lifetime.
  */
 async function runPrepareSteps(
   steps: readonly PrepareStep[],
   worktreeCwd: string,
   timeoutMs: number,
   cache: Map<string, boolean>,
+  cacheable: boolean,
 ): Promise<string[]> {
   const failed: string[] = []
 
   for (const step of steps) {
     const dir = join(worktreeCwd, step.pathPrefix)
-    const cacheKey = await computePrepareCacheKey(dir, step.command)
+    const cacheKey = cacheable ? await computePrepareCacheKey(dir, step.pathPrefix, step.command) : null
 
     let ok: boolean
-    if (cacheKey !== null && cache.has(cacheKey)) {
-      ok = cache.get(cacheKey)!
+    if (cacheKey !== null && cache.get(cacheKey) === true) {
+      ok = true
     } else {
       ok = await runPrepareStep({ cwd: dir, command: step.command, timeoutMs })
-      if (cacheKey !== null) cache.set(cacheKey, ok)
+      if (cacheKey !== null && ok) cache.set(cacheKey, true)
     }
 
     if (!ok) failed.push(`\`${step.command}\` in ${step.pathPrefix || '.'}`)
@@ -306,15 +360,30 @@ export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer 
         // is a plain, writable Bun.spawn — the sandbox flag below is
         // fixed and unaffected either way) — see
         // `ReviewInput.prepareSteps`'s own doc comment (floor/agents#32)
-        // for the full rationale. Best-effort by construction:
-        // `runPrepareSteps` never throws, so a prepare failure can only
-        // ever change the prompt text below, never abort the review.
-        const failedPrepareSteps = await runPrepareSteps(
-          input.prepareSteps ?? [],
-          worktree.cwd,
-          input.prepareTimeoutMs ?? DEFAULT_PREPARE_TIMEOUT_MS,
-          prepareCache,
-        )
+        // for the full rationale. Caching only ever applies for a
+        // caller-supplied `worktreePath` — see `runPrepareSteps`'s own
+        // doc comment for why an auto-created worktree must always run
+        // fresh. Best-effort by construction (`runPrepareSteps` and
+        // everything it calls are designed to never throw), and wrapped
+        // in a try/catch here too as defense in depth — a prepare failure
+        // can only ever change the prompt text below, never abort the
+        // review, even if some future bug in this path throws anyway.
+        let failedPrepareSteps: string[]
+        try {
+          failedPrepareSteps = await runPrepareSteps(
+            input.prepareSteps ?? [],
+            worktree.cwd,
+            input.prepareTimeoutMs ?? DEFAULT_PREPARE_TIMEOUT_MS,
+            prepareCache,
+            worktreePath !== undefined,
+          )
+        } catch {
+          // Should be unreachable — runPrepareSteps and everything it
+          // calls are designed to never throw — but if it ever does,
+          // surface it as one generic failure line rather than let it
+          // propagate and abort the review.
+          failedPrepareSteps = ['(unexpected error running the prepare steps)']
+        }
 
         // A single note line, prepended to the ORIGINAL prompt — never
         // codex's own stdout, and never the prepare step's own output

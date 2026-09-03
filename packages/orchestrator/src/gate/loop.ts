@@ -10,6 +10,7 @@ import { parseVerdictComment, type Decision as VerdictDecision } from './verdict
 import { attributeImplementerVendor } from './vendor.ts'
 import { buildReviewPrompt, extractChangedFiles } from './prompt.ts'
 import { selectChecklistFiles, loadChecklists, NO_CHECKLIST_TEXT } from './checklists.ts'
+import { selectPrepareCommands } from './prepare.ts'
 import type { GateStateStore } from './state-store.ts'
 import type { GateModeConfig } from './config.ts'
 
@@ -203,6 +204,15 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
       }
     }
 
+    // Prepare-step selection (floor/agents#32): which configured
+    // pathPrefix -> command rules apply to THIS PR's changed files. Never
+    // run here — only selected here, using data (changedFiles) already
+    // computed above for checklists. Actually running each selected
+    // command, with its timeout and caching, is the Reviewer's own job
+    // (see ReviewInput.prepareSteps's doc comment) — a Reviewer that
+    // doesn't create a local worktree simply has nothing to do with this.
+    const prepareSteps = selectPrepareCommands(config.prepare.rules, changedFiles)
+
     const prompt = buildReviewPrompt(template, {
       repo,
       prNumber: pr.id,
@@ -229,7 +239,15 @@ async function processPR(repo: string, pr: PRDetails, deps: GateLoopDeps): Promi
     // template) can actually run — see ReviewInput.mergeBaseSha's own doc
     // comment for the full "unknown revision" failure mode this avoids
     // (floor/radiooooo #130, round 22).
-    const result = await rv.review({ repo, prNumber: pr.id, headSha: pr.headSha, prompt, mergeBaseSha: compareResult?.mergeBaseSha })
+    const result = await rv.review({
+      repo,
+      prNumber: pr.id,
+      headSha: pr.headSha,
+      prompt,
+      mergeBaseSha: compareResult?.mergeBaseSha,
+      prepareSteps,
+      prepareTimeoutMs: config.prepare.timeoutMs,
+    })
     const parsed = parseVerdictComment(result.text)
 
     if (!parsed) {

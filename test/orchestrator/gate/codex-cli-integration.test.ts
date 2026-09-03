@@ -40,7 +40,7 @@ import type {
   Commit,
   PullRequest,
 } from '@floor-agents/core'
-import { runGatePass, createGateStateStore, DEFAULT_GATE_CONFIG, DEFAULT_VENDOR_CONFIG, DEFAULT_CHECKLISTS_CONFIG, type GateModeConfig, type GateStateStore } from '@floor-agents/orchestrator'
+import { runGatePass, createGateStateStore, DEFAULT_GATE_CONFIG, DEFAULT_VENDOR_CONFIG, DEFAULT_CHECKLISTS_CONFIG, DEFAULT_PREPARE_CONFIG, type GateModeConfig, type GateStateStore } from '@floor-agents/orchestrator'
 
 // Same fixture directory the codex-cli package's own tests use.
 const FIXTURES = join(import.meta.dir, '..', '..', 'codex-cli', 'fixtures')
@@ -176,6 +176,7 @@ test('gate loop wired to a real codex-cli Reviewer (fixture binary) posts its Re
     gate: DEFAULT_GATE_CONFIG,
     vendor: DEFAULT_VENDOR_CONFIG,
     checklists: DEFAULT_CHECKLISTS_CONFIG,
+    prepare: DEFAULT_PREPARE_CONFIG,
   }
 
   await runGatePass({
@@ -228,6 +229,7 @@ test('a real createGateStateStore + real codex-cli Reviewer round trip also post
       gate: DEFAULT_GATE_CONFIG,
       vendor: DEFAULT_VENDOR_CONFIG,
       checklists: DEFAULT_CHECKLISTS_CONFIG,
+      prepare: DEFAULT_PREPARE_CONFIG,
     }
 
     await runGatePass({

@@ -41,7 +41,7 @@ export type { WorkflowDefinition, WorkflowStateDefinition, TransitionDefinition,
 export type { ChainOfCommand, ChainNode, WorkSource } from './types/chain.ts'
 export type { AutonomyConfig, AutonomyOverride, AutonomyMatch } from './types/autonomy.ts'
 export type { ExecutionStep, FileOutput, AgentOutput, ReviewVerdict, ExecutionState, StateStore } from './types/execution.ts'
-export type { ReviewInput, ReviewResult, Reviewer } from './types/reviewer.ts'
+export type { ReviewInput, ReviewResult, Reviewer, PrepareStep } from './types/reviewer.ts'
 
 // Testing
 export { createFakeReviewer } from './testing/fake-reviewer.ts'

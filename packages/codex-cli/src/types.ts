@@ -1,1 +1,1 @@
-export type { Reviewer, ReviewInput, ReviewResult } from '@floor-agents/core'
+export type { Reviewer, ReviewInput, ReviewResult, PrepareStep } from '@floor-agents/core'

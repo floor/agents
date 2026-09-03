@@ -27,6 +27,35 @@ export type ReviewInput = {
    *  does still works without it, just with the same "unknown revision"
    *  failure mode this field exists to avoid. */
   readonly mergeBaseSha?: string
+  /** Shell command(s) a worktree-creating reviewer should run, each from
+   *  `<worktree>/<pathPrefix>`, before reviewing (floor/agents#32) — e.g.
+   *  a package install, so the reviewer's own later commands (`bun test`,
+   *  `bun run typecheck`) have something to run against instead of
+   *  failing on a missing `node_modules` every time. Selected by the
+   *  caller (`gate/loop.ts`'s `selectPrepareCommands`, from
+   *  `GateModeConfig.prepare`) from the PR's changed files — this field
+   *  is already the resolved list to run, not raw config. A reviewer
+   *  that doesn't create a local worktree (or doesn't need dependencies
+   *  installed) can ignore this entirely; one that does MUST run each
+   *  step best-effort (never let a failure abort the review) and MUST
+   *  exclude each step's own output from the prompt it sends — see
+   *  `@floor-agents/codex-cli`'s adapter for the reference
+   *  implementation (caching by lockfile hash, a timeout per step, and a
+   *  one-line failure note prepended to the prompt instead). */
+  readonly prepareSteps?: readonly PrepareStep[]
+  /** Per-step timeout for `prepareSteps`, in ms. Optional — a reviewer
+   *  that supports `prepareSteps` should fall back to its own sane
+   *  default when this is unset (never wait forever). */
+  readonly prepareTimeoutMs?: number
+}
+
+/** One `pathPrefix` -> `command` pair from `ReviewInput.prepareSteps` —
+ *  see that field's own doc comment. `pathPrefix` is relative to the
+ *  worktree root (e.g. `"web/"`, or `""` to run at the worktree root
+ *  itself). */
+export type PrepareStep = {
+  readonly pathPrefix: string
+  readonly command: string
 }
 
 export type ReviewResult = {

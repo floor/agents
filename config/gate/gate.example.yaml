@@ -133,3 +133,36 @@ vendor:
 #       file: docs/review/matrix.md
 #     - pathContains: PARITY.md
 #       file: docs/review/matrix.md
+
+# Optional. Selects shell command(s) a worktree-creating Reviewer (today:
+# @floor-agents/codex-cli only — a Reviewer that doesn't create a local
+# worktree ignores this entirely) runs BEFORE reviewing a PR, so its own
+# later commands (bun test, bun run typecheck, ...) have real dependencies
+# installed instead of failing on a missing node_modules every review —
+# see packages/orchestrator/src/gate/prepare.ts and docs/review-gate.md.
+# `pathPrefix` is matched against the PR's changed files the same way
+# checklists' `pathContains` is (just anchored to the start); `command`
+# runs from `<worktree>/<pathPrefix>`. The command comes from THIS repo's
+# own config, never from the PR — no argv-injection concern the way the
+# review prompt or codex-cli's model/profile flags have. The literal value
+# "none" documents an intentionally-skipped path without a separate
+# on/off field. Each selected command is killed and treated as failed
+# after `timeoutMs` (default 120000 = 2 minutes); a failure is reported to
+# the reviewer as one line prepended to its prompt, never aborts the
+# review, and its own output is never captured into anything the prompt
+# could include. Runs are cached by the target directory's lockfile
+# content hash (bun.lock, bun.lockb, package-lock.json, yarn.lock, or
+# pnpm-lock.yaml — whichever is found first), for the life of the
+# Reviewer process; a directory with none of those is never cached, so it
+# runs fresh every time. Missing entirely (or an empty `rules: []`) means
+# no Reviewer ever gets a `prepareSteps` value — same behavior as before
+# this key existed. Adjust to your own repo's package managers/directories:
+# prepare:
+#   timeoutMs: 120000
+#   rules:
+#     - pathPrefix: web/
+#       command: bun install --frozen-lockfile
+#     - pathPrefix: android/
+#       command: none
+#     - pathPrefix: ios/
+#       command: none

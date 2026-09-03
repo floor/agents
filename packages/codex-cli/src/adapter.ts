@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CodexProcessError, CodexTimeoutError } from './errors'
 import { extractReview } from './extract'
-import type { Reviewer, ReviewInput, ReviewResult } from './types'
+import type { PrepareStep, Reviewer, ReviewInput, ReviewResult } from './types'
 import { resolveWorktree } from './worktree'
 
 // Four rounds of an adversarial review kept finding new ways to smuggle an argv
@@ -40,6 +40,21 @@ const DEFAULT_BINARY = 'codex'
 const DEFAULT_TIMEOUT_MS = 15 * 60_000 // 15 minutes
 // Fixed, not configurable: this reviewer never writes to the worktree, under any name.
 const SANDBOX = 'read-only'
+
+// Fallback for a caller that sets `input.prepareSteps` but not
+// `input.prepareTimeoutMs` (e.g. an older caller, or one that doesn't
+// source it from gate/loop.ts's own GateModeConfig.prepare.timeoutMs).
+// Same value as @floor-agents/orchestrator's own DEFAULT_PREPARE_TIMEOUT_MS
+// — kept as an independent constant, not a cross-package import, since
+// this package must not depend on @floor-agents/orchestrator (that
+// package already depends on this one, via gate/create-reviewer.ts).
+const DEFAULT_PREPARE_TIMEOUT_MS = 120_000
+
+// Known lockfile filenames, checked in this order — the first one found in
+// a prepare step's directory is hashed to build its cache key (floor/agents#32:
+// "cached by lockfile hash"). A directory with none of these is simply not
+// cacheable (nothing to key staleness off of), not an error.
+const LOCKFILE_CANDIDATES = ['bun.lock', 'bun.lockb', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml']
 
 // The leading-character restriction (must start alphanumeric) means a value can never
 // itself start with `-`, so it can never be mistaken for a flag by codex's own argv
@@ -104,6 +119,114 @@ function readRequiredPath(name: string, raw: unknown): string {
 }
 
 /**
+ * Returns a cache key combining `command` and the content hash of whichever
+ * `LOCKFILE_CANDIDATES` entry is found first in `dir` (its own filename is
+ * folded into the key too, so switching lockfile kinds in the same
+ * directory is never mistaken for "unchanged") — or `null` if none exists,
+ * meaning this step is NOT cacheable (nothing to key staleness off of, so
+ * the caller must always run it fresh rather than guess).
+ */
+async function computePrepareCacheKey(dir: string, command: string): Promise<string | null> {
+  for (const name of LOCKFILE_CANDIDATES) {
+    const file = Bun.file(join(dir, name))
+    if (await file.exists()) {
+      const hasher = new Bun.CryptoHasher('sha256')
+      hasher.update(await file.arrayBuffer())
+      return `${command} ${name} ${hasher.digest('hex')}`
+    }
+  }
+  return null
+}
+
+/**
+ * Runs one prepare command via the OS shell, from `opts.cwd`, killing it
+ * (SIGKILL, same reasoning as `runCodex`'s own timeout below — a hung
+ * install may ignore SIGTERM) after `opts.timeoutMs`. Returns `true` iff it
+ * exited zero before the timeout — NEVER throws, including when `opts.cwd`
+ * doesn't exist or the shell itself can't be spawned: a prepare step is
+ * best-effort by design (see `ReviewInput.prepareSteps`'s doc comment), so
+ * every failure mode collapses to the same "false", for the caller to
+ * report as one line rather than treat as fatal.
+ *
+ * stdout/stderr are deliberately never captured (`'ignore'`, not `'pipe'`)
+ * — floor/agents#32's own "output excluded from the prompt" requirement is
+ * met structurally this way: there is no code path for a prepare command's
+ * own output (e.g. `bun install`'s full log) to reach anything that could
+ * end up in the review prompt, rather than relying on remembering to
+ * discard it later.
+ */
+async function runPrepareStep(opts: {
+  readonly cwd: string
+  readonly command: string
+  readonly timeoutMs: number
+}): Promise<boolean> {
+  let proc: ReturnType<typeof Bun.spawn>
+  try {
+    proc = Bun.spawn(['/bin/sh', '-c', opts.command], {
+      cwd: opts.cwd,
+      env: process.env,
+      stdin: 'ignore',
+      stdout: 'ignore',
+      stderr: 'ignore',
+    })
+  } catch {
+    return false
+  }
+
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    proc.kill('SIGKILL')
+  }, opts.timeoutMs)
+
+  try {
+    const exitCode = await proc.exited
+    return !timedOut && exitCode === 0
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Runs every selected `steps` entry (skipping/reusing via `cache` when a
+ * step's directory has a cacheable lockfile whose hash this `cache`
+ * instance has already seen — see `computePrepareCacheKey`), and returns a
+ * short, one-line-per-adapter-call summary of which steps failed or timed
+ * out, empty when every step succeeded (or `steps` was empty). `cache` is
+ * owned by the caller (one per `createCodexReviewer()` instance, so it
+ * persists across `review()` calls for that Reviewer's whole lifetime —
+ * "run once per base sha and reuse" in practice, since an unchanged
+ * lockfile hashes the same across many reviews).
+ */
+async function runPrepareSteps(
+  steps: readonly PrepareStep[],
+  worktreeCwd: string,
+  timeoutMs: number,
+  cache: Map<string, boolean>,
+): Promise<string[]> {
+  const failed: string[] = []
+
+  for (const step of steps) {
+    const dir = join(worktreeCwd, step.pathPrefix)
+    const cacheKey = await computePrepareCacheKey(dir, step.command)
+
+    let ok: boolean
+    if (cacheKey !== null && cache.has(cacheKey)) {
+      ok = cache.get(cacheKey)!
+    } else {
+      ok = await runPrepareStep({ cwd: dir, command: step.command, timeoutMs })
+      if (cacheKey !== null) cache.set(cacheKey, ok)
+    }
+
+    if (!ok) failed.push(`\`${step.command}\` in ${step.pathPrefix || '.'}`)
+  }
+
+  return failed
+}
+
+/**
  * Creates a `Reviewer` that runs the Codex CLI in read-only mode against a PR's head
  * commit and returns its review text.
  *
@@ -153,6 +276,14 @@ export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer 
   if (resolvedOptions.profile !== undefined) typedFlags.push('--profile', resolvedOptions.profile)
   Object.freeze(typedFlags)
 
+  // Owned by this Reviewer instance, not module-global (a fresh
+  // createCodexReviewer() call — as every test makes — gets a fresh,
+  // empty cache) and not per-call (persists across every review() call
+  // this instance ever makes, which in the real gate loop is its whole
+  // process lifetime) — see runPrepareSteps's own doc comment for why
+  // that's the point.
+  const prepareCache = new Map<string, boolean>()
+
   return {
     vendor: 'codex',
 
@@ -171,11 +302,34 @@ export function createCodexReviewer(config: CodexReviewerConfig = {}): Reviewer 
       })
 
       try {
+        // Runs BEFORE codex, outside its read-only sandbox entirely (this
+        // is a plain, writable Bun.spawn — the sandbox flag below is
+        // fixed and unaffected either way) — see
+        // `ReviewInput.prepareSteps`'s own doc comment (floor/agents#32)
+        // for the full rationale. Best-effort by construction:
+        // `runPrepareSteps` never throws, so a prepare failure can only
+        // ever change the prompt text below, never abort the review.
+        const failedPrepareSteps = await runPrepareSteps(
+          input.prepareSteps ?? [],
+          worktree.cwd,
+          input.prepareTimeoutMs ?? DEFAULT_PREPARE_TIMEOUT_MS,
+          prepareCache,
+        )
+
+        // A single note line, prepended to the ORIGINAL prompt — never
+        // codex's own stdout, and never the prepare step's own output
+        // (runPrepareStep discards that structurally; see its doc
+        // comment). Silent when every step succeeded (or none were
+        // configured): a success has nothing worth telling the reviewer.
+        const promptForCodex = failedPrepareSteps.length > 0
+          ? `Note: the prepare step failed or timed out for ${failedPrepareSteps.join(', ')} — dependency-based commands (tests, typecheck) may not work in this sandbox.\n\n${input.prompt}`
+          : input.prompt
+
         const rawOutput = await runCodex({
           binary: resolvedOptions.binary,
           typedFlags,
           timeoutMs,
-          prompt: input.prompt,
+          prompt: promptForCodex,
           cwd: worktree.cwd,
         })
 

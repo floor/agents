@@ -6,6 +6,7 @@ import { parse } from 'yaml'
 import { DEFAULT_GATE_CONFIG, type GateConfig } from './decision.ts'
 import { DEFAULT_VENDOR_CONFIG, type VendorAttributionConfig } from './vendor.ts'
 import { DEFAULT_CHECKLISTS_CONFIG, type ChecklistsConfig } from './checklists.ts'
+import { DEFAULT_PREPARE_CONFIG, DEFAULT_PREPARE_TIMEOUT_MS, type PrepareConfig } from './prepare.ts'
 
 export type GateModeConfig = {
   /** Bare repo names (no owner prefix) — the gate mode's GitAdapter is
@@ -28,6 +29,12 @@ export type GateModeConfig = {
    *  case every reviewer prompt renders the "no checklist matched" line
    *  in that slot, same as before this config key existed. */
   readonly checklists: ChecklistsConfig
+  /** Rules selecting which "prepare" command(s) (e.g. `bun install`) a
+   *  worktree-creating Reviewer runs before reviewing a PR — see
+   *  gate/prepare.ts's header comment. Defaults to no rules, in which
+   *  case no Reviewer gets any `prepareSteps`, same as before this config
+   *  key existed. */
+  readonly prepare: PrepareConfig
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000
@@ -81,6 +88,19 @@ function parseChecklistsConfig(raw: any): ChecklistsConfig {
   }
 }
 
+function parsePrepareConfig(raw: any): PrepareConfig {
+  if (!raw) return DEFAULT_PREPARE_CONFIG
+  return {
+    rules: Array.isArray(raw.rules)
+      ? raw.rules.map((r: any) => ({
+          pathPrefix: String(r.pathPrefix),
+          command: r.command !== undefined && r.command !== null ? String(r.command) : '',
+        }))
+      : DEFAULT_PREPARE_CONFIG.rules,
+    timeoutMs: raw.timeoutMs !== undefined ? Number(raw.timeoutMs) : DEFAULT_PREPARE_TIMEOUT_MS,
+  }
+}
+
 function parseGateConfig(raw: any): GateConfig {
   if (!raw) return DEFAULT_GATE_CONFIG
   return {
@@ -117,5 +137,6 @@ export async function loadGateConfig(
     gate: parseGateConfig(raw.gate),
     vendor: parseVendorConfig(raw.vendor),
     checklists: parseChecklistsConfig(raw.checklists),
+    prepare: parsePrepareConfig(raw.prepare),
   }
 }

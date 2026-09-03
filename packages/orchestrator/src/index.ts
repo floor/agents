@@ -26,6 +26,8 @@ export { buildReviewPrompt, extractChangedFiles, MERGE_BASE_UNRESOLVED_TEXT } fr
 export type { ReviewPromptContext } from './gate/prompt.ts'
 export { selectChecklistFiles, loadChecklists, DEFAULT_CHECKLISTS_CONFIG, NO_CHECKLIST_TEXT, MAX_CHECKLIST_BYTES, MAX_TOTAL_CHECKLIST_BYTES } from './gate/checklists.ts'
 export type { ChecklistRule, ChecklistsConfig } from './gate/checklists.ts'
+export { selectPrepareCommands, DEFAULT_PREPARE_CONFIG, DEFAULT_PREPARE_TIMEOUT_MS } from './gate/prepare.ts'
+export type { PrepareRule, PrepareConfig } from './gate/prepare.ts'
 export { createGateStateStore } from './gate/state-store.ts'
 export type { GateStateStore, GatePrState } from './gate/state-store.ts'
 export { loadGateConfig } from './gate/config.ts'

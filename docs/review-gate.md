@@ -351,6 +351,64 @@ same selection table and asks the PR body to say which checklist was
 self-checked and why any item didn't apply — see e.g. your-org/your-repo's
 `docs/review/README.md`.
 
+## Prepare steps
+
+A Reviewer that creates its own local worktree (today: `@floor-agents/codex-cli`
+only) can only run its own commands (`bun test`, `bun run typecheck`, a
+linter, ...) against whatever is already on disk in that worktree. Fresh
+from `git worktree add`, that's just the checked-out source — no
+`node_modules`, no installed dependencies — so those commands routinely
+fail before they even get to test anything, and the reviewer is left
+reading code rather than exercising it. `gate.prepare` (see
+`config/gate/gate.example.yaml` for the exact shape) exists to close that
+gap: a per-path-prefix shell command (e.g. a package install) that runs
+in the worktree BEFORE the review starts.
+
+Selection mirrors checklists: `packages/orchestrator/src/gate/prepare.ts`'s
+`selectPrepareCommands` picks which configured `pathPrefix -> command`
+rules match the PR's changed files (a plain "starts with" check, same
+style as checklists' `pathContains`, just anchored), in `gate/loop.ts`,
+using the same `changedFiles` list checklists already use. This is
+SELECTION ONLY — `gate/loop.ts` never runs anything itself. The resolved
+list is handed to the Reviewer via `ReviewInput.prepareSteps` (plus
+`ReviewInput.prepareTimeoutMs`, from `gate.prepare.timeoutMs`); actually
+running each command is the Reviewer's own job, since it's the one that
+owns the worktree.
+
+`@floor-agents/codex-cli`'s adapter is the reference implementation
+(`packages/codex-cli/src/adapter.ts`):
+
+- Each selected command runs from `<worktree>/<pathPrefix>`, via a plain
+  writable shell spawn — deliberately OUTSIDE codex's own
+  `--sandbox read-only` invocation, which runs after and is completely
+  unaffected (the read-only sandbox stays read-only for the review
+  itself; only the prepare step gets write access, and only to do the
+  install).
+- A command is killed (SIGKILL) and treated as failed if it doesn't
+  finish within `prepareTimeoutMs`.
+- Failure is best-effort throughout: a failing or timed-out command NEVER
+  aborts the review. It's reported to the reviewer as ONE line prepended
+  to its prompt ("Note: the prepare step failed or timed out for
+  `<command>` in `<pathPrefix>` — dependency-based commands (tests,
+  typecheck) may not work in this sandbox.") — silent on success, so a
+  normal run's prompt is unchanged from before this feature existed.
+- The command's own stdout/stderr (e.g. a full `bun install` log) is
+  never captured into anything — not the prompt, not a log a prompt could
+  later include — structurally: the spawn discards it outright rather
+  than capturing-then-discarding.
+- Runs are cached by the target directory's lockfile content hash
+  (`bun.lock`, `bun.lockb`, `package-lock.json`, `yarn.lock`, or
+  `pnpm-lock.yaml` — whichever is found first), for the lifetime of the
+  `Reviewer` instance (the whole gate process, in practice) — an
+  unchanged lockfile hashes the same across many reviews, so "run once
+  per base sha and reuse" happens naturally without tracking base shas
+  explicitly. A directory with none of those lockfiles is never cached —
+  nothing to key staleness off of — so it re-runs every review.
+
+A Reviewer that doesn't create a local worktree, or doesn't need this,
+ignores `prepareSteps`/`prepareTimeoutMs` entirely — both are optional
+`ReviewInput` fields, same as `mergeBaseSha`.
+
 ## Config
 
 `GATE_CONFIG_PATH` (default `config/gate/gate.example.yaml`) points at a
@@ -377,6 +435,11 @@ checklists:                # optional — see "Checklists" above
   rules:
     - label: auth
       file: docs/review/concurrency.md
+prepare:                    # optional — see "Prepare steps" above
+  timeoutMs: 120000
+  rules:
+    - pathPrefix: web/
+      command: bun install --frozen-lockfile
 ```
 
 `GATE_MERGE_ENABLED` (env) overrides the file's `mergeEnabled`. `GATE_REVIEWER`
@@ -446,7 +509,11 @@ type ReviewInput = {
   headSha: string
   worktreePath?: string
   prompt: string
+  mergeBaseSha?: string             // see "PRDetails.baseSha" doc comment / floor/radiooooo #130 round 22
+  prepareSteps?: readonly PrepareStep[]  // see "Prepare steps" above
+  prepareTimeoutMs?: number
 }
+type PrepareStep = { pathPrefix: string; command: string }
 type ReviewResult = { text: string }
 type Reviewer = { vendor: string; review(input: ReviewInput): Promise<ReviewResult> }
 ```

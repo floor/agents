@@ -139,3 +139,41 @@ test('checklists.rules is parsed from YAML, both label and pathContains, and def
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('prepare.rules and prepare.timeoutMs are parsed from YAML, and default to empty/2 minutes when unset', async () => {
+  const { mkdir, writeFile, rm } = await import('node:fs/promises')
+  const dir = './data/test-gate-config-prepare'
+  await mkdir(dir, { recursive: true })
+  try {
+    await writeFile(
+      `${dir}/with.yaml`,
+      'repos: [r]\nprepare:\n  timeoutMs: 30000\n  rules:\n    - pathPrefix: web/\n      command: bun install --frozen-lockfile\n    - pathPrefix: ios/\n      command: none\n',
+    )
+    const withIt = await loadGateConfig(`${dir}/with.yaml`, {})
+    expect(withIt.prepare.timeoutMs).toBe(30000)
+    expect(withIt.prepare.rules).toEqual([
+      { pathPrefix: 'web/', command: 'bun install --frozen-lockfile' },
+      { pathPrefix: 'ios/', command: 'none' },
+    ])
+
+    await writeFile(`${dir}/without.yaml`, 'repos: [r]\n')
+    const withoutIt = await loadGateConfig(`${dir}/without.yaml`, {})
+    expect(withoutIt.prepare.rules).toEqual([])
+    expect(withoutIt.prepare.timeoutMs).toBe(120_000)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('prepare.rules with a missing command defaults it to "" (a no-op), rather than throwing or rendering "undefined"', async () => {
+  const { mkdir, writeFile, rm } = await import('node:fs/promises')
+  const dir = './data/test-gate-config-prepare-missing-command'
+  await mkdir(dir, { recursive: true })
+  try {
+    await writeFile(`${dir}/with.yaml`, 'repos: [r]\nprepare:\n  rules:\n    - pathPrefix: android/\n')
+    const config = await loadGateConfig(`${dir}/with.yaml`, {})
+    expect(config.prepare.rules).toEqual([{ pathPrefix: 'android/', command: '' }])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test'
 import { existsSync, statSync } from 'node:fs'
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -691,4 +691,218 @@ test('review() without mergeBaseSha never throws or otherwise changes normal com
   expect(result.text).toContain('Verdict: approve as-is')
 
   await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+})
+
+// ── Prepare steps (floor/agents#32): run before codex, best-effort, cached ──
+// by lockfile hash, output never captured. Own origin/clone fixture (not the
+// shared one above) so its extra committed files (a `sub/` subdirectory, a
+// `cached/` directory with a lockfile) can't affect any other test in this
+// file — every test below uses ONLY prepareOriginPath/prepareClonePath/
+// prepareHeadSha, never the shared clonePath/headSha.
+
+let prepareOriginPath: string
+let prepareClonePath: string
+let prepareHeadSha: string
+
+beforeAll(async () => {
+  prepareOriginPath = await mkdtemp(join(tmpdir(), 'codex-cli-test-prepare-origin-'))
+  await Bun.$`git -C ${prepareOriginPath} init -q --bare -b main`.quiet()
+
+  prepareClonePath = await mkdtemp(join(tmpdir(), 'codex-cli-test-prepare-clone-'))
+  await Bun.$`git clone -q ${prepareOriginPath} ${prepareClonePath}`.quiet()
+  await Bun.$`git -C ${prepareClonePath} config user.email test@example.com`.quiet()
+  await Bun.$`git -C ${prepareClonePath} config user.name test`.quiet()
+
+  await Bun.write(join(prepareClonePath, 'root.txt'), 'root\n')
+  await mkdir(join(prepareClonePath, 'sub'), { recursive: true })
+  await Bun.write(join(prepareClonePath, 'sub', 'file.txt'), 'sub\n')
+  // A known lockfile name, committed, so a prepare step scoped to this
+  // directory is cacheable (see computePrepareCacheKey's lockfile scan).
+  await mkdir(join(prepareClonePath, 'cached'), { recursive: true })
+  await Bun.write(join(prepareClonePath, 'cached', 'package-lock.json'), '{"lockfileVersion":1}\n')
+
+  await Bun.$`git -C ${prepareClonePath} add -A`.quiet()
+  await Bun.$`git -C ${prepareClonePath} commit -q -m init`.quiet()
+  await Bun.$`git -C ${prepareClonePath} push -q origin main`.quiet()
+  const sha = await Bun.$`git -C ${prepareClonePath} rev-parse HEAD`.quiet().text()
+  prepareHeadSha = sha.trim()
+})
+
+afterAll(async () => {
+  await rm(prepareClonePath, { recursive: true, force: true }).catch(() => {})
+  await rm(prepareOriginPath, { recursive: true, force: true }).catch(() => {})
+})
+
+test('a prepare step with pathPrefix "" runs at the worktree root, before codex', async () => {
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-prepare-root-'))
+  const markerPath = join(tmpdir(), `codex-prepare-marker-${crypto.randomUUID()}.txt`)
+  const reviewer = createCodexReviewer({ binary: OK, clonePath: prepareClonePath, worktreeRoot })
+
+  try {
+    await reviewer.review({
+      ...baseInput,
+      headSha: prepareHeadSha,
+      worktreePath: undefined,
+      prepareSteps: [{ pathPrefix: '', command: `git rev-parse HEAD > ${markerPath}` }],
+      prepareTimeoutMs: 10_000,
+    })
+
+    // Proves the command actually ran (the marker exists) AND ran in a
+    // real checkout of the expected commit (not some stray directory).
+    const recorded = (await readFile(markerPath, 'utf-8')).trim()
+    expect(recorded).toBe(prepareHeadSha)
+  } finally {
+    await rm(markerPath, { force: true }).catch(() => {})
+    await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+test('a prepare step with a pathPrefix runs from that subdirectory of the worktree', async () => {
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-prepare-subdir-'))
+  const markerPath = join(tmpdir(), `codex-prepare-marker-${crypto.randomUUID()}.txt`)
+  const reviewer = createCodexReviewer({ binary: OK, clonePath: prepareClonePath, worktreeRoot })
+
+  try {
+    await reviewer.review({
+      ...baseInput,
+      headSha: prepareHeadSha,
+      worktreePath: undefined,
+      prepareSteps: [{ pathPrefix: 'sub/', command: `pwd > ${markerPath}` }],
+      prepareTimeoutMs: 10_000,
+    })
+
+    const recordedCwd = (await readFile(markerPath, 'utf-8')).trim()
+    expect(recordedCwd.endsWith('/sub')).toBe(true)
+  } finally {
+    await rm(markerPath, { force: true }).catch(() => {})
+    await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+test('a failing prepare step is reported as one line prepended to the prompt, and does not abort the review', async () => {
+  const recordFile = join(tmpdir(), `codex-prepare-record-fail-${crypto.randomUUID()}.txt`)
+  const prevEnv = process.env.CODEX_TEST_RECORD
+  process.env.CODEX_TEST_RECORD = recordFile
+
+  try {
+    const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-prepare-fail-root-'))
+    const reviewer = createCodexReviewer({ binary: RECORD, clonePath: prepareClonePath, worktreeRoot })
+
+    const result = await reviewer.review({
+      ...baseInput,
+      headSha: prepareHeadSha,
+      worktreePath: undefined,
+      prepareSteps: [{ pathPrefix: '', command: 'exit 1' }],
+      prepareTimeoutMs: 10_000,
+    })
+
+    // The review completed normally — a prepare failure never aborts it.
+    expect(result.text).toContain('Verdict: approve as-is')
+
+    // record.ts writes one "ARG:<value>" line per argv element by naive
+    // string join — the injected note text embeds a real `\n\n` before the
+    // original prompt, which breaks a per-line split (the prompt's own
+    // content would land on a later "line" that doesn't start with
+    // "ARG:"). Check the raw recorded content instead: both pieces are
+    // present, in the right order, and nothing else in a fixed argv like
+    // `exec --sandbox read-only --` could produce either string.
+    const record = await readFile(recordFile, 'utf-8')
+    const noteText =
+      'Note: the prepare step failed or timed out for `exit 1` in . — dependency-based commands (tests, typecheck) may not work in this sandbox.'
+    expect(record).toContain(noteText)
+    expect(record).toContain(baseInput.prompt)
+    expect(record.indexOf(noteText)).toBeLessThan(record.indexOf(baseInput.prompt))
+
+    await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+  } finally {
+    if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
+    else process.env.CODEX_TEST_RECORD = prevEnv
+    await rm(recordFile, { force: true }).catch(() => {})
+  }
+})
+
+test('a prepare step that exceeds prepareTimeoutMs is killed and treated as failed, without hanging the review', async () => {
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-prepare-timeout-root-'))
+  const reviewer = createCodexReviewer({ binary: OK, clonePath: prepareClonePath, worktreeRoot })
+
+  try {
+    const start = Date.now()
+    const result = await reviewer.review({
+      ...baseInput,
+      headSha: prepareHeadSha,
+      worktreePath: undefined,
+      prepareSteps: [{ pathPrefix: '', command: 'sleep 30' }],
+      prepareTimeoutMs: 300,
+    })
+    const elapsedMs = Date.now() - start
+
+    expect(result.text).toContain('Verdict: approve as-is')
+    // Nowhere near the full 30s sleep — proves the SIGKILL actually landed
+    // rather than this test just getting lucky with scheduling.
+    expect(elapsedMs).toBeLessThan(10_000)
+  } finally {
+    await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+  }
+}, 15_000)
+
+test('a cacheable prepare step (lockfile present in its directory) runs only once across two review() calls on the same Reviewer instance', async () => {
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-prepare-cache-root-'))
+  const counterPath = join(tmpdir(), `codex-prepare-counter-${crypto.randomUUID()}.txt`)
+  const reviewer = createCodexReviewer({ binary: OK, clonePath: prepareClonePath, worktreeRoot })
+  const step = { pathPrefix: 'cached/', command: `echo x >> ${counterPath}` }
+
+  try {
+    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: undefined, prepareSteps: [step], prepareTimeoutMs: 10_000 })
+    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: undefined, prepareSteps: [step], prepareTimeoutMs: 10_000 })
+
+    const counterLines = (await readFile(counterPath, 'utf-8')).trim().split('\n').filter(Boolean)
+    expect(counterLines.length).toBe(1)
+  } finally {
+    await rm(counterPath, { force: true }).catch(() => {})
+    await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+test('a step whose directory has no known lockfile is never cached — it runs on every review() call', async () => {
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-prepare-nocache-root-'))
+  const counterPath = join(tmpdir(), `codex-prepare-counter-nolockfile-${crypto.randomUUID()}.txt`)
+  const reviewer = createCodexReviewer({ binary: OK, clonePath: prepareClonePath, worktreeRoot })
+  // The worktree root itself (pathPrefix: '') has no lockfile — only
+  // `cached/` does (see beforeAll) — so this step is never cacheable.
+  const step = { pathPrefix: '', command: `echo x >> ${counterPath}` }
+
+  try {
+    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: undefined, prepareSteps: [step], prepareTimeoutMs: 10_000 })
+    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: undefined, prepareSteps: [step], prepareTimeoutMs: 10_000 })
+
+    const counterLines = (await readFile(counterPath, 'utf-8')).trim().split('\n').filter(Boolean)
+    expect(counterLines.length).toBe(2)
+  } finally {
+    await rm(counterPath, { force: true }).catch(() => {})
+    await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+test('no prepareSteps: the prompt reaches codex completely unmodified', async () => {
+  const recordFile = join(tmpdir(), `codex-prepare-record-none-${crypto.randomUUID()}.txt`)
+  const prevEnv = process.env.CODEX_TEST_RECORD
+  process.env.CODEX_TEST_RECORD = recordFile
+
+  try {
+    const worktreeRoot = await mkdtemp(join(tmpdir(), 'codex-cli-test-prepare-none-root-'))
+    const reviewer = createCodexReviewer({ binary: RECORD, clonePath: prepareClonePath, worktreeRoot })
+
+    await reviewer.review({ ...baseInput, headSha: prepareHeadSha, worktreePath: undefined })
+
+    const record = await readFile(recordFile, 'utf-8')
+    const argLines = record.split('\n').filter(l => l.startsWith('ARG:'))
+    const promptArg = argLines[argLines.length - 1]!.slice('ARG:'.length)
+    expect(promptArg).toBe(baseInput.prompt)
+
+    await rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
+  } finally {
+    if (prevEnv === undefined) delete process.env.CODEX_TEST_RECORD
+    else process.env.CODEX_TEST_RECORD = prevEnv
+    await rm(recordFile, { force: true }).catch(() => {})
+  }
 })

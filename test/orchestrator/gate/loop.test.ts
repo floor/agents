@@ -7,7 +7,9 @@ import {
   DEFAULT_GATE_CONFIG,
   DEFAULT_VENDOR_CONFIG,
   DEFAULT_CHECKLISTS_CONFIG,
+  DEFAULT_PREPARE_CONFIG,
   type ChecklistRule,
+  type PrepareRule,
   type GateModeConfig,
   type GateStateStore,
 } from '@floor-agents/orchestrator'
@@ -202,6 +204,7 @@ function makeConfig(overrides: Partial<GateModeConfig> = {}): GateModeConfig {
     gate: DEFAULT_TEST_GATE_CONFIG,
     vendor: DEFAULT_VENDOR_CONFIG,
     checklists: DEFAULT_CHECKLISTS_CONFIG,
+    prepare: DEFAULT_PREPARE_CONFIG,
     ...overrides,
   }
 }
@@ -1226,6 +1229,93 @@ test('compare() fails: ReviewInput.mergeBaseSha is left unset, not filled with P
   })
 
   expect(capturedInput?.mergeBaseSha).toBeUndefined()
+})
+
+// ── Prepare steps (gate/prepare.ts, floor/agents#32) wired into ReviewInput ──
+
+test('a matching prepare rule reaches ReviewInput.prepareSteps, selected from the diff-derived changed files', async () => {
+  // makeFakeGitAdapter's getPRDiff() always returns a diff touching
+  // src/thing.ts (see its definition above) — same fixture the checklist
+  // path-prefix test above relies on.
+  const pr = makePR()
+  const { adapter } = makeFakeGitAdapter([pr])
+
+  let capturedInput: { prepareSteps?: readonly { pathPrefix: string; command: string }[] } | undefined
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: input => {
+      capturedInput = input
+      return '## Reviewer agent (Codex)\n\nVerdict: approve as-is'
+    },
+  })
+
+  const rules: PrepareRule[] = [
+    { pathPrefix: 'src/', command: 'bun install --frozen-lockfile' },
+    { pathPrefix: 'android/', command: 'gradle dependencies' },
+  ]
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ prepare: { rules, timeoutMs: 5_000 } }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'irrelevant to this test',
+  })
+
+  expect(capturedInput?.prepareSteps).toEqual([{ pathPrefix: 'src/', command: 'bun install --frozen-lockfile' }])
+})
+
+test('no matching prepare rule: ReviewInput.prepareSteps is an empty array, not undefined', async () => {
+  const pr = makePR()
+  const { adapter } = makeFakeGitAdapter([pr])
+
+  let capturedInput: { prepareSteps?: readonly { pathPrefix: string; command: string }[] } | undefined
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: input => {
+      capturedInput = input
+      return '## Reviewer agent (Codex)\n\nVerdict: approve as-is'
+    },
+  })
+
+  const rules: PrepareRule[] = [{ pathPrefix: 'android/', command: 'gradle dependencies' }]
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ prepare: { rules, timeoutMs: 5_000 } }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'irrelevant to this test',
+  })
+
+  expect(capturedInput?.prepareSteps).toEqual([])
+})
+
+test('config.prepare.timeoutMs reaches ReviewInput.prepareTimeoutMs', async () => {
+  const pr = makePR()
+  const { adapter } = makeFakeGitAdapter([pr])
+
+  let capturedInput: { prepareTimeoutMs?: number } | undefined
+  const reviewer = createFakeReviewer({
+    vendor: 'codex',
+    text: input => {
+      capturedInput = input
+      return '## Reviewer agent (Codex)\n\nVerdict: approve as-is'
+    },
+  })
+
+  await runGatePass({
+    git: adapter,
+    reviewer,
+    gateStateStore: makeFakeGateStateStore(),
+    config: makeConfig({ prepare: { rules: [], timeoutMs: 42_000 } }),
+    log: NOOP_LOG,
+    loadPromptTemplate: async () => 'irrelevant to this test',
+  })
+
+  expect(capturedInput?.prepareTimeoutMs).toBe(42_000)
 })
 
 test('compare() fails: {{mergeBase}} falls back to the unresolved placeholder text, logged, review still posts', async () => {

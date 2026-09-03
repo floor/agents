@@ -325,13 +325,16 @@ possibly staler; only if THAT is also empty are checklists skipped
 entirely for the pass, never substituted with the head sha, with a line
 logged saying so.
 
-A genuine `compare()` API failure (a 5xx, a rate limit) is a different
-case: the adapter rethrows rather than returning `null`, so it is NOT
-this fallback path — it propagates and aborts the whole pass, exactly
-like any other unhandled `GitAdapter` call failure in this loop
-(`getPRDiff`, `listComments`, ...), and is handled by the gate loop's own
-rate-limit backoff (`startGateLoop` in `gate/loop.ts`), not by per-PR
-degradation.
+A genuine `compare()` API failure is a different case: the adapter
+rethrows rather than returning `null`, so it is NOT this fallback path —
+it propagates and aborts the whole pass, exactly like any other
+unhandled `GitAdapter` call failure in this loop (`getPRDiff`,
+`listComments`, ...), not per-PR degradation. What happens next depends
+on the error (`startGateLoop` in `gate/loop.ts`): a 403/429 triggers the
+loop's rate-limit backoff (the next pass is delayed, compounding on
+consecutive rate-limit failures); anything else (a 5xx, a network error)
+is logged as `pass failed` and the next pass still runs at the normal
+`pollIntervalMs` — no backoff, no skip.
 
 A checklist file genuinely missing at whichever ref resolved (typo, not
 yet merged to the base) is skipped the same way, per file, also logged.

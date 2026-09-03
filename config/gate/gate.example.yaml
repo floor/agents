@@ -105,14 +105,16 @@ vendor:
 # `file` is a path INSIDE THE TARGET REPO (the `repos:` entries above),
 # fetched at the base branch's CURRENT tip (resolved fresh via
 # GitAdapter.compare() at review time, falling back to the PR's own
-# recorded PRDetails.baseSha only if that fails), NEVER the PR's own head
-# — a PR editing this file on its own branch must not be able to soften
-# the checklist that reviews it. If neither resolves, checklists are
-# skipped for that pass rather than falling back to the head. A rule
-# matches on `label` OR
-# `pathContains` (either alone is enough); a PR can match more than one
-# rule, and every matched file is included, each capped at 16KB and the
-# total at 48KB (truncated with a visible marker past either cap).
+# recorded PRDetails.baseSha only if compare() resolves to null — e.g. a
+# deleted base branch — NEVER on a genuine compare() API failure, which
+# instead aborts the whole pass like any other unhandled GitAdapter call
+# here), NEVER the PR's own head — a PR editing this file on its own
+# branch must not be able to soften the checklist that reviews it. If
+# neither resolves, checklists are skipped for that pass rather than
+# falling back to the head. A rule matches on `label` OR `pathContains`
+# (either alone is enough); a PR can match more than one rule, and every
+# matched file is included, each capped at 16KB and the total at 48KB
+# (truncated with a visible marker past either cap).
 # Missing entirely (or an empty `rules: []`) means every prompt renders
 # "no checklist matched" in that slot — same behavior as before this key
 # existed. This example mirrors a docs/review/ layout in your-org/your-repo;

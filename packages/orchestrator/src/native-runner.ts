@@ -22,6 +22,15 @@ export const NATIVE_PROVIDERS = new Set(['claude-code', 'cursor'])
 
 export type NativeRole = 'implement' | 'review'
 
+/**
+ * How many tool calls a turn may make when the manifest says nothing. Claude
+ * Code counts every tool call as a turn; measured on floor/vlist#220, an
+ * implementer touching four files ran out at the old cap of 25 after four
+ * minutes, with the work half done and no result. The time budget already
+ * bounds a runaway turn, so the cap only needs to be larger than honest work.
+ */
+export const DEFAULT_MAX_TURNS: Readonly<Record<NativeRole, number>> = { implement: 300, review: 60 }
+
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
@@ -44,6 +53,7 @@ type NativeRunResult = {
   readonly cost: number
   readonly durationMs: number
   readonly exitCode: number
+  readonly subtype?: string
 }
 
 /**
@@ -73,7 +83,7 @@ export function nativeAgentArgv(opts: {
     return [
       'claude', '-p', opts.prompt,
       '--output-format', 'json',
-      '--max-turns', String(opts.maxTurns ?? 25),
+      '--max-turns', String(opts.maxTurns ?? DEFAULT_MAX_TURNS[opts.role]),
       '--allowedTools', tools,
       ...(opts.model ? ['--model', opts.model] : []),
     ]
@@ -81,22 +91,44 @@ export function nativeAgentArgv(opts: {
   throw new Error(`No native runner for provider "${opts.provider}"`)
 }
 
+export type NativeParsed = {
+  readonly resultText: string
+  readonly cost: number
+  readonly isError: boolean
+  /** The envelope's own reason, when it gives one: `error_max_turns`, `success`. */
+  readonly subtype?: string
+}
+
 /** Read a native turn's output. Cursor reports no price, so its cost is 0. */
-export function parseNativeResult(provider: string, stdout: string, stderr: string): { resultText: string; cost: number; isError: boolean } {
+export function parseNativeResult(provider: string, stdout: string, stderr: string): NativeParsed {
   if (provider === 'cursor') {
     try {
       const r = parseCursorResult(stdout)
-      return { resultText: r.result ?? '', cost: 0, isError: r.is_error }
+      return { resultText: r.result ?? '', cost: 0, isError: r.is_error, ...(r.subtype ? { subtype: r.subtype } : {}) }
     } catch {
       return { resultText: stdout || stderr, cost: 0, isError: true }
     }
   }
   try {
     const data = JSON.parse(stdout)
-    return { resultText: data.result ?? '', cost: data.total_cost_usd ?? 0, isError: Boolean(data.is_error) }
+    return {
+      resultText: data.result ?? '', cost: data.total_cost_usd ?? 0, isError: Boolean(data.is_error),
+      ...(typeof data.subtype === 'string' ? { subtype: data.subtype } : {}),
+    }
   } catch {
     return { resultText: stdout || stderr, cost: 0, isError: false }
   }
+}
+
+/** Why a turn failed, in the words a person can act on. */
+export function failureReason(exitCode: number, subtype: string | undefined, budget: { timeoutMs: number; maxTurns: number }): string {
+  if (exitCode === 143) {
+    return `did not finish within ${Math.round(budget.timeoutMs / 60_000)} minutes (raise the agent's timeoutMs in the manifest)`
+  }
+  if (subtype === 'error_max_turns') {
+    return `stopped at its cap of ${budget.maxTurns} tool calls with no result (raise the agent's maxTurns in the manifest)`
+  }
+  return `failed (exit ${exitCode}${subtype ? `, ${subtype}` : ''})`
 }
 
 const sandboxTool = (provider: string): SandboxTool => (provider === 'cursor' ? 'cursor' : 'claude')
@@ -171,10 +203,13 @@ export async function spawnNativeAgent(opts: {
   clearTimeout(timeout)
 
   const durationMs = Math.round(performance.now() - start)
-  const { resultText, cost, isError } = parseNativeResult(opts.provider, stdout, stderr)
+  const { resultText, cost, isError, subtype } = parseNativeResult(opts.provider, stdout, stderr)
 
   // A clean exit that reports an error is still a failure.
-  return { resultText, cost, durationMs, exitCode: timedOut ? 143 : exitCode === 0 && isError ? 1 : exitCode }
+  return {
+    resultText, cost, durationMs, exitCode: timedOut ? 143 : exitCode === 0 && isError ? 1 : exitCode,
+    ...(subtype ? { subtype } : {}),
+  }
 }
 
 // ── Dev agent: native execution on worktree ─────────────────────
@@ -256,9 +291,10 @@ export async function runNativeDevAgent(
     // The implementer may write its worktree and that worktree's own git metadata
     // (index, locks) — nothing else, including the main checkout it came from.
     const gitDir = await gitText(worktree.path, ['rev-parse', '--absolute-git-dir'])
+    const budget = { timeoutMs: turnTimeoutMs(agent.timeoutMs), maxTurns: agent.maxTurns ?? DEFAULT_MAX_TURNS.implement }
     const runAgent = deps.runAgent ?? ((prompt: string, cwd: string, model?: string) => spawnNativeAgent({
       provider: agent.llm.provider, role: 'implement', prompt, cwd, writable: [cwd, gitDir], denyRead: deps.denyRead ?? [],
-      timeoutMs: turnTimeoutMs(agent.timeoutMs), ...(model ? { model } : {}),
+      timeoutMs: budget.timeoutMs, maxTurns: budget.maxTurns, ...(model ? { model } : {}),
     }))
     const result = await runAgent(
       promptParts.join('\n'),
@@ -271,12 +307,9 @@ export async function runNativeDevAgent(
     console.log(`[${agent.id}] native agent: ${formatDuration(result.durationMs)}, $${result.cost.toFixed(4)}, exit ${result.exitCode}`)
 
     if (result.exitCode !== 0) {
-      // 143 is the runner's own deadline: say so, since the agent's output is
-      // empty and "failed (exit 143)" reads like a crash.
-      const why = result.exitCode === 143
-        ? `did not finish within ${Math.round(turnTimeoutMs(agent.timeoutMs) / 60_000)} minutes (raise the agent's timeoutMs in the manifest)`
-        : `failed (exit ${result.exitCode})`
-      throw new Error(`${agent.llm.provider} agent ${why}: ${result.resultText.slice(0, 500)}`)
+      // A killed or capped turn leaves no result, and "failed (exit 1)" reads
+      // like a crash: say which budget ran out and where to raise it.
+      throw new Error(`${agent.llm.provider} agent ${failureReason(result.exitCode, result.subtype, budget)}: ${result.resultText.slice(0, 500)}`)
     }
 
     state = await verifyAndCommit(
@@ -386,7 +419,7 @@ export async function runNativeReviewAgent(
     // state, and the snapshot check below still fails closed on any change.
     const result = await spawnNativeAgent({
       provider: reviewer.llm.provider, role: 'review', prompt, cwd: worktree.path, writable: [], denyRead: deps.denyRead ?? [],
-      timeoutMs: turnTimeoutMs(reviewer.timeoutMs), model: reviewer.llm.model,
+      timeoutMs: turnTimeoutMs(reviewer.timeoutMs), maxTurns: reviewer.maxTurns ?? DEFAULT_MAX_TURNS.review, model: reviewer.llm.model,
     })
 
     costTracker.recordCost(issue.id, result.cost)

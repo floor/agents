@@ -49,6 +49,9 @@ export function validateCompanyConfig(config: CompanyConfig): readonly string[] 
     if (agent.timeoutMs !== undefined && (!Number.isFinite(agent.timeoutMs) || agent.timeoutMs <= 0)) {
       errors.push(`Agent "${agent.id}" timeoutMs must be positive`)
     }
+    if (agent.maxTurns !== undefined && (!Number.isInteger(agent.maxTurns) || agent.maxTurns <= 0)) {
+      errors.push(`Agent "${agent.id}" maxTurns must be a positive whole number`)
+    }
     if (agent.capabilities.length === 0) {
       errors.push(`Agent "${agent.id}" has no capabilities`)
     }

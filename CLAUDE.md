@@ -52,7 +52,7 @@ Backlog → Triage → In Progress → In Review → QA → Done
 ```
 
 ### Committee Mode
-Multiple agents review proposals in parallel and vote. Activated when agents have `vote` capability.
+Multiple agents review proposals in parallel and vote. Runs when any agent has the `vote` capability. A manifest that also holds implementers (`write_code`) runs development alongside it, each pipeline on its own labels, so one `.agents/agents.yaml` can seat both.
 
 ```
 Issue (labeled "committee")

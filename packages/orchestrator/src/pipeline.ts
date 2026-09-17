@@ -156,7 +156,7 @@ function isNative(agent: AgentDefinition): boolean {
 async function dispatchReview(
   issue: Issue, reviewer: AgentDefinition, state: ExecutionState, deps: PipelineDeps, unsigned: TaskAdapter,
 ): Promise<ExecutionState> {
-  const taskAdapter = signComments(unsigned, agentSignature(reviewer))
+  const taskAdapter = signComments(unsigned, agentSignature(reviewer, 'reviewer'))
   if (isNative(reviewer)) {
     return runNativeReviewAgent(issue, reviewer, state, {
       stateStore: deps.stateStore,
@@ -190,7 +190,7 @@ export async function executeTask(
   // the account's name is not the only thing a reader sees.
   const { company, gitAdapter, stateStore } = deps
   const unsigned = deps.taskAdapter
-  const taskAdapter = signComments(unsigned, agentSignature(devAgent))
+  const taskAdapter = signComments(unsigned, agentSignature(devAgent, 'implementer'))
   deps = { ...deps, taskAdapter }
   const { guardrails } = company
   const reviewer = deps.findReviewer()

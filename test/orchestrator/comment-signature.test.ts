@@ -35,9 +35,18 @@ describe('signComments', () => {
 
   test('every comment says who wrote it, since the account name is the same for all of them', async () => {
     const out: string[] = []
-    const signed = signComments(capture(out), agentSignature(agent('Grok', 'cursor-grok-4.6-high', 'cursor')))
+    const signed = signComments(capture(out), agentSignature(agent('Grok', 'cursor-grok-4.6-high', 'cursor'), 'implementer'))
     await signed.addComment('210', '⏳ working on the code...')
-    expect(out[0]).toBe('⏳ working on the code...\n\n— **Agent:** Grok 4.6 high · automated by Floor Agents')
+    expect(out[0]).toBe('⏳ working on the code...\n\n— **Agent:** Grok 4.6 high · implementer · automated by Floor Agents')
+  })
+
+  test('the role tells two turns of the same model apart', async () => {
+    const out: string[] = []
+    const grok = agent('Grok', 'cursor-grok-4.6-high', 'cursor')
+    await signComments(capture(out), agentSignature(grok, 'implementer')).addComment('1', 'wrote the fix')
+    await signComments(capture(out), agentSignature(grok, 'committee member')).addComment('1', 'voted')
+    expect(out[0]).toContain('Grok 4.6 high · implementer')
+    expect(out[1]).toContain('Grok 4.6 high · committee member')
   })
 
   test('the engine signs its own turns, and a signature is never doubled', async () => {

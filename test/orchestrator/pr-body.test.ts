@@ -77,7 +77,7 @@ describe('buildPrBody', () => {
   })
 
   test('names the agent as a person reads it, and puts no price on a public page', () => {
-    expect(body).toContain('**Agent:** Grok 4.6 high')
+    expect(body).toContain('**Agent:** Grok 4.6 high · implementer')
     expect(body).not.toContain('via cursor')
     expect(body).not.toContain('Cost')
     expect(body).not.toContain('$0.0000')

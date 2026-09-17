@@ -315,7 +315,7 @@ export async function executeCommitteeReview(
   for (const vote of votes) {
     if (vote.response) {
       const voter = byId.get(vote.agentId)
-      await unsigned.addComment(issue.id, sign(vote.response, voter ? agentSignature(voter) : ENGINE_SIGNATURE))
+      await unsigned.addComment(issue.id, sign(vote.response, voter ? agentSignature(voter, 'committee member') : ENGINE_SIGNATURE))
     }
   }
 

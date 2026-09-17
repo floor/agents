@@ -42,9 +42,16 @@ export function agentLabel(agent: Signable): string {
   return `${agent.name} ${[word(rest[0]!), ...rest.slice(1)].join(' ')}`
 }
 
-/** `— **Agent:** Grok 4.6 high · automated by Floor Agents` */
-export function agentSignature(agent: Signable): string {
-  return `— **Agent:** ${agentLabel(agent)} · automated by Floor Agents`
+/**
+ * What the agent was doing when it wrote this, which the name alone does not
+ * say: one model can sit in a manifest twice, implementing under one id and
+ * voting under another.
+ */
+export type AgentRole = 'implementer' | 'reviewer' | 'committee member'
+
+/** `— **Agent:** Grok 4.6 high · implementer · automated by Floor Agents` */
+export function agentSignature(agent: Signable, role: AgentRole): string {
+  return `— **Agent:** ${agentLabel(agent)} · ${role} · automated by Floor Agents`
 }
 
 /** For the engine's own turns, which belong to no single agent. */

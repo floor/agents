@@ -92,7 +92,7 @@ export function buildPrBody(input: PrBodyInput): string {
     // Who wrote it and with what, and nothing else. A cost belongs to the run
     // log, not to a public page: a CLI on a subscription reports none, so this
     // line read "$0.0000" for work that was paid for.
-    `**Agent:** ${agentLabel(agent)}`,
+    `**Agent:** ${agentLabel(agent)} · implementer`,
   )
 
   return sections.join('\n')

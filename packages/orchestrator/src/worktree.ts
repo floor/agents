@@ -24,7 +24,8 @@ export async function createWorktree(branch: string, repoPath = process.cwd()): 
   // Refresh branches first created through the API; never reuse a stale local branch.
   await gitText(root, ['fetch', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`])
   const initialSha = await gitText(root, ['rev-parse', `refs/remotes/origin/${branch}`])
-  const dir = join(root, '.worktrees')
+  // Beside the manifest and the run state, so one ignore rule (.agents/*) covers all of it.
+  const dir = join(root, '.agents', 'worktrees')
   await mkdir(dir, { recursive: true })
   const path = await mkdtemp(join(dir, `${branch.replace(/[^a-zA-Z0-9-]/g, '-')}-`))
   await gitText(root, ['worktree', 'add', '--detach', path, initialSha])

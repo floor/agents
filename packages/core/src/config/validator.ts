@@ -46,6 +46,9 @@ export function validateCompanyConfig(config: CompanyConfig): readonly string[] 
     if (!agent.id) errors.push('Agent is missing an id')
     if (!agent.name) errors.push(`Agent "${agent.id}" is missing a name`)
     if (!agent.promptTemplate) errors.push(`Agent "${agent.id}" is missing a promptTemplate`)
+    if (agent.timeoutMs !== undefined && (!Number.isFinite(agent.timeoutMs) || agent.timeoutMs <= 0)) {
+      errors.push(`Agent "${agent.id}" timeoutMs must be positive`)
+    }
     if (agent.capabilities.length === 0) {
       errors.push(`Agent "${agent.id}" has no capabilities`)
     }

@@ -92,13 +92,21 @@ agents:
       - create_pr
       - write_tests
     autonomy: T1                     # T1: fully autonomous, T2: recommends, T3: presents options
+    timeoutMs: 1800000               # How long one turn may run (default 600000, ten minutes)
     customInstructions: ""           # Per-agent instructions appended to prompt
     external: false                  # If true, agent connects via gateway WebSocket
 ```
 
 **Available capabilities:** `read_code`, `write_code`, `create_pr`, `review_pr`, `write_tests`, `decompose_task`, `manage_issues`, `approve`, `reject`, `vote`, `review_rfc`
 
-**Available providers:** `anthropic`, `claude-code`, `gemini`, `lmstudio`, `openai`, `ollama`, `local`
+**Available providers:** `anthropic`, `claude-code`, `cursor`, `gemini`, `lmstudio`, `openai`, `ollama`, `local`
+
+**`timeoutMs`** bounds one turn of a native agent (`claude-code`, `cursor`): a single call that
+reads, edits and runs the project's tests until it is done. The budget is the size of the tasks
+that agent is given, not a property of the engine — a small fix finishes in minutes, a change
+across several plugins with tests does not. A turn that reaches the limit is killed and the task
+fails; its worktree is preserved. `FLOOR_AGENTS_AGENT_TIMEOUT_MS` overrides it for one run,
+without editing the manifest.
 
 ### `guardrails`
 

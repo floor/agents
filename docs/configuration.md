@@ -27,6 +27,11 @@ Floor Agents is configured through two layers: a YAML config file and environmen
 | `TELEGRAM_CHAT_ID` | No | — | Chat or channel the run posts to |
 | `TELEGRAM_ALLOW_FROM` | No | — | Comma-separated user ids allowed to interject; in a group, required before anyone is trusted |
 
+**Per project:** the manifest's directory may carry a `.env` (`.agents/.env`), loaded before
+anything reads the environment. A Telegram chat per project lives there, or a token scoped to
+one repository. A variable already set in the shell wins over the file. Bun loads the engine's
+own `.env` only when a process starts in the engine's directory; a run starts in the project's.
+
 **Key principle:** only providers referenced by your agent definitions require their env vars. If all agents use `provider: lmstudio`, you don't need `ANTHROPIC_API_KEY`.
 
 ## YAML Config Reference

@@ -18,6 +18,7 @@ import { dirname, join, resolve } from 'node:path'
 import { parseArgs } from './cli/args.ts'
 import { doctorProject, initProject } from './cli/project.ts'
 import { pipelinesFor, pipelinesLabel } from './cli/modes.ts'
+import { loadProjectEnv, projectEnvPath } from './cli/env.ts'
 
 // ── CLI flags (handle before any startup work) ───────────────────
 const VERSION = (
@@ -58,16 +59,22 @@ if (args.command === 'init') {
   process.exit(0)
 }
 
-// Environment
+// Discover the manifest; project and prompt paths are resolved by the loader.
+const CONFIG_PATH = args.config ?? process.env.CONFIG_PATH
+  ?? (await Bun.file('.agents/agents.yaml').exists() ? '.agents/agents.yaml' : 'config/templates/default.yaml')
+// The project's own secrets, beside its manifest: a Telegram chat per project,
+// a token scoped to its repository. Loaded before anything reads the environment.
+{
+  const added = await loadProjectEnv(CONFIG_PATH)
+  if (added.length) console.log(`[env] ${projectEnvPath(CONFIG_PATH)}: ${added.join(', ')}`)
+}
+const STATE_DIR = process.env.STATE_DIR ?? join(dirname(resolve(CONFIG_PATH)), 'runs')
+
+// Environment, read after the project's .env so its values count.
 const TASK_ADAPTER = process.env.TASK_ADAPTER ?? (args.command === 'watch' ? 'linear' : 'github-issues')
 // Trigger tags the committee watches (comma-separated).
 const COMMITTEE_LABELS = (process.env.COMMITTEE_LABELS ?? 'committee,agents')
   .split(',').map(s => s.trim()).filter(Boolean)
-
-// Discover the manifest; project and prompt paths are resolved by the loader.
-const CONFIG_PATH = args.config ?? process.env.CONFIG_PATH
-  ?? (await Bun.file('.agents/agents.yaml').exists() ? '.agents/agents.yaml' : 'config/templates/default.yaml')
-const STATE_DIR = process.env.STATE_DIR ?? join(dirname(resolve(CONFIG_PATH)), 'runs')
 
 // Load and validate config
 const company = await loadCompanyConfig(CONFIG_PATH).catch(err => {

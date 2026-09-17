@@ -53,6 +53,27 @@ test('doctor reports missing credentials and checks without launching agents', a
   expect(diagnostics.find(d => d.name === 'Task source')?.detail).toContain('LINEAR_API_KEY')
 })
 
+test('doctor knows the cursor provider', async () => {
+  const config = await loadCompanyConfig('config/templates/default.yaml')
+  const agents = config.agents.map(a => (a.capabilities.includes('write_code') ? { ...a, llm: { ...a.llm, provider: 'cursor', model: 'cursor-grok-4.6-high' } } : a))
+  const diagnostics = await doctorProject({ ...config, agents, project: { ...config.project, root: undefined } }, 'linear', {})
+  const cursor = diagnostics.find(d => d.name === 'Provider: cursor')
+  expect(cursor).toBeDefined()
+  // Present or missing depends on the machine; "unsupported" never does.
+  expect(cursor!.detail).not.toContain('Unsupported provider')
+  expect(cursor!.ok).toBe(Boolean(Bun.which('cursor-agent')))
+})
+
+test('doctor reports whether agent runs can be sandboxed', async () => {
+  const config = await loadCompanyConfig('config/templates/default.yaml')
+  const project = { ...config.project, root: undefined }
+  const off = await doctorProject({ ...config, project }, 'linear', { FLOOR_AGENTS_SANDBOX: 'off' })
+  expect(off.find(d => d.name === 'Sandbox')).toMatchObject({ ok: true })
+  expect(off.find(d => d.name === 'Sandbox')?.detail).toContain('uncontained')
+  const on = await doctorProject({ ...config, project }, 'linear', {})
+  expect(on.find(d => d.name === 'Sandbox')?.ok).toBe(process.platform === 'darwin' && Boolean(Bun.which('sandbox-exec')))
+})
+
 test('doctor still requires verification when implementers share a manifest with voters', async () => {
   const config = await loadCompanyConfig('config/templates/default.yaml')
   const voter = { ...config.agents[0]!, id: 'reviewer', capabilities: ['review_rfc', 'vote'] as const, external: true }

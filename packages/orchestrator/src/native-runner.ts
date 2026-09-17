@@ -13,8 +13,13 @@ import { createWorktree, gitText, snapshotWorktree, removeWorktree } from './wor
 import { requireVerification, prepareWorkspace, verifyAndCommit, resolveBaseSha } from './verified-commit.ts'
 import { verificationSummary } from './verification.ts'
 import type { CostTracker } from './cost-tracker.ts'
+import { implementerSandbox, reviewerSandbox, sandboxed, type SandboxTool } from '@floor-agents/sandbox'
+import { buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
 
-export const NATIVE_PROVIDERS = new Set(['claude-code'])
+/** Providers whose CLI runs as a full agent on a worktree, rather than through tool calls. */
+export const NATIVE_PROVIDERS = new Set(['claude-code', 'cursor'])
+
+export type NativeRole = 'implement' | 'review'
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
@@ -40,40 +45,99 @@ type NativeRunResult = {
   readonly exitCode: number
 }
 
-async function spawnClaudeCode(
-  prompt: string,
-  cwd: string,
-  model?: string,
-  maxTurns = 25,
-  timeoutMs = 600_000,
-): Promise<NativeRunResult> {
-  const { ANTHROPIC_API_KEY, ...cleanEnv } = process.env
-
-  const args = [
-    'claude',
-    '-p', prompt,
-    '--output-format', 'json',
-    '--max-turns', String(maxTurns),
-    '--allowedTools', 'Read,Edit,Write,Bash,Glob,Grep',
-  ]
-
-  if (model) {
-    args.push('--model', model)
+/**
+ * The CLI argv for one native turn. Pure, so each provider's flags are testable.
+ *
+ * A reviewer gets no edit tools; an implementer gets them. Neither list is
+ * containment — `Bash` alone can write anywhere, and Cursor's edit tool writes
+ * outside its folder even under `--trust`. The sandbox in spawnNativeAgent is.
+ */
+export function nativeAgentArgv(opts: {
+  readonly provider: string
+  readonly role: NativeRole
+  readonly prompt: string
+  readonly model?: string
+  readonly maxTurns?: number
+}): string[] {
+  if (opts.provider === 'cursor') {
+    return ['cursor-agent', ...buildCursorArgs({
+      prompt: opts.prompt,
+      ...(opts.model ? { model: opts.model } : {}),
+      // An implementer runs the project's tests, which needs the shell.
+      ...(opts.role === 'implement' ? { allowShell: true } : {}),
+    })]
   }
+  if (opts.provider === 'claude-code') {
+    const tools = opts.role === 'implement' ? 'Read,Edit,Write,Bash,Glob,Grep' : 'Read,Glob,Grep,Bash'
+    return [
+      'claude', '-p', opts.prompt,
+      '--output-format', 'json',
+      '--max-turns', String(opts.maxTurns ?? 25),
+      '--allowedTools', tools,
+      ...(opts.model ? ['--model', opts.model] : []),
+    ]
+  }
+  throw new Error(`No native runner for provider "${opts.provider}"`)
+}
+
+/** Read a native turn's output. Cursor reports no price, so its cost is 0. */
+export function parseNativeResult(provider: string, stdout: string, stderr: string): { resultText: string; cost: number; isError: boolean } {
+  if (provider === 'cursor') {
+    try {
+      const r = parseCursorResult(stdout)
+      return { resultText: r.result ?? '', cost: 0, isError: r.is_error }
+    } catch {
+      return { resultText: stdout || stderr, cost: 0, isError: true }
+    }
+  }
+  try {
+    const data = JSON.parse(stdout)
+    return { resultText: data.result ?? '', cost: data.total_cost_usd ?? 0, isError: Boolean(data.is_error) }
+  } catch {
+    return { resultText: stdout || stderr, cost: 0, isError: false }
+  }
+}
+
+const sandboxTool = (provider: string): SandboxTool => (provider === 'cursor' ? 'cursor' : 'claude')
+
+/**
+ * Run one native turn inside the operating-system sandbox.
+ *
+ * An implementer may write its worktree and that worktree's git metadata; a
+ * reviewer may write nothing but its CLI's state. Where the sandbox is
+ * unavailable the turn is refused, not run uncontained.
+ */
+export async function spawnNativeAgent(opts: {
+  readonly provider: string
+  readonly role: NativeRole
+  readonly prompt: string
+  readonly cwd: string
+  readonly model?: string
+  readonly writable: readonly string[]
+  readonly maxTurns?: number
+  readonly timeoutMs?: number
+  /** For tests: the home directory the sandbox protects. */
+  readonly home?: string
+}): Promise<NativeRunResult> {
+  // Both keys are stripped so each CLI authenticates through its logged-in
+  // subscription session instead of metered per-token API billing.
+  const { ANTHROPIC_API_KEY, CURSOR_API_KEY, ...cleanEnv } = process.env
+  const tool = sandboxTool(opts.provider)
+  const spec = opts.role === 'implement'
+    ? implementerSandbox(tool, opts.writable, process.env, opts.home)
+    : reviewerSandbox(tool, process.env, opts.home)
+  const args = sandboxed(nativeAgentArgv(opts), spec)
+  const timeoutMs = opts.timeoutMs ?? 600_000
 
   const start = performance.now()
 
-  // ANTHROPIC_API_KEY is stripped from the child env (see cleanEnv above) so the
-  // Claude Code subprocess authenticates via the local Max plan session instead of
-  // routing through paid per-token API billing. Run `claude setup-token` once to
-  // configure long-lived Max plan auth.
   const proc = Bun.spawn(args, {
-    cwd,
+    cwd: opts.cwd,
     stdout: 'pipe',
     stderr: 'pipe',
     stdin: 'ignore',
     detached: process.platform !== 'win32',
-    env: { ...cleanEnv, CLAUDE_CODE_SKIP_HOOKS: '1' },
+    env: { ...cleanEnv, CLAUDE_CODE_SKIP_HOOKS: '1', ...(opts.provider === 'cursor' ? { CI: 'true' } : {}) },
   })
 
   let timedOut = false
@@ -90,24 +154,16 @@ async function spawnClaudeCode(
   clearTimeout(timeout)
 
   const durationMs = Math.round(performance.now() - start)
+  const { resultText, cost, isError } = parseNativeResult(opts.provider, stdout, stderr)
 
-  let cost = 0
-  let resultText = ''
-  try {
-    const data = JSON.parse(stdout)
-    resultText = data.result ?? ''
-    cost = data.total_cost_usd ?? 0
-  } catch {
-    resultText = stdout || stderr
-  }
-
-  return { resultText, cost, durationMs, exitCode: timedOut ? 143 : exitCode }
+  // A clean exit that reports an error is still a failure.
+  return { resultText, cost, durationMs, exitCode: timedOut ? 143 : exitCode === 0 && isError ? 1 : exitCode }
 }
 
 // ── Dev agent: native execution on worktree ─────────────────────
 
 export type NativeAgentDeps = {
-  readonly runAgent?: typeof spawnClaudeCode
+  readonly runAgent?: (prompt: string, cwd: string, model?: string) => Promise<NativeRunResult>
   readonly contextBuilder: ContextBuilder
   readonly stateStore: StateStore
   readonly costTracker: CostTracker
@@ -178,7 +234,13 @@ export async function runNativeDevAgent(
       'Do NOT use write_file or pr_description tools — edit files directly.',
     )
 
-    const result = await (deps.runAgent ?? spawnClaudeCode)(
+    // The implementer may write its worktree and that worktree's own git metadata
+    // (index, locks) — nothing else, including the main checkout it came from.
+    const gitDir = await gitText(worktree.path, ['rev-parse', '--absolute-git-dir'])
+    const runAgent = deps.runAgent ?? ((prompt: string, cwd: string, model?: string) => spawnNativeAgent({
+      provider: agent.llm.provider, role: 'implement', prompt, cwd, writable: [cwd, gitDir], ...(model ? { model } : {}),
+    }))
+    const result = await runAgent(
       promptParts.join('\n'),
       worktree.path,
       agent.llm.model,
@@ -189,7 +251,7 @@ export async function runNativeDevAgent(
     console.log(`[${agent.id}] native agent: ${formatDuration(result.durationMs)}, $${result.cost.toFixed(4)}, exit ${result.exitCode}`)
 
     if (result.exitCode !== 0) {
-      throw new Error(`Claude Code failed (exit ${result.exitCode}): ${result.resultText.slice(0, 500)}`)
+      throw new Error(`${agent.llm.provider} agent failed (exit ${result.exitCode}): ${result.resultText.slice(0, 500)}`)
     }
 
     state = await verifyAndCommit(
@@ -293,11 +355,11 @@ export async function runNativeReviewAgent(
       'Only approve if the code is correct. Test claims must match the engine results above.',
     ].join('\n')
 
-    const result = await spawnClaudeCode(
-      prompt,
-      worktree.path,
-      reviewer.llm.model,
-    )
+    // A reviewer writes nothing: the sandbox denies every write outside its CLI's
+    // state, and the snapshot check below still fails closed on any change.
+    const result = await spawnNativeAgent({
+      provider: reviewer.llm.provider, role: 'review', prompt, cwd: worktree.path, writable: [], model: reviewer.llm.model,
+    })
 
     costTracker.recordCost(issue.id, result.cost)
     console.log(`[${reviewer.id}] native review: ${formatDuration(result.durationMs)}, $${result.cost.toFixed(4)}, exit ${result.exitCode}`)

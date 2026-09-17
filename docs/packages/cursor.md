@@ -36,6 +36,10 @@ agents:
 
 List identifiers with `cursor-agent --list-models` (requires `cursor-agent login`).
 
+## As a native implementer
+
+`cursor` is a native provider: an agent with `provider: cursor` and `write_code` implements through the native runner, like `claude-code`. It runs on a worktree with `--force` (it needs the shell for tests) inside an implementer sandbox — it may write that worktree and its git metadata, nothing else — and the engine verifies and publishes the tree. As a PR reviewer it runs with `--trust` in a reviewer sandbox.
+
 ## Configuration
 
 | option | default | description |

@@ -27,8 +27,11 @@ A second trap, found by the enforcement test: macOS symlinks `/tmp` and `/var` i
 
 | role | writable | example |
 |---|---|---|
-| **reviewer** | nothing but the CLI's own state | committee members reading the real checkout |
-| **implementer** | its worktree and that worktree's git metadata | `run --issue` (see status below) |
+| **reviewer** | nothing but the CLI's own state | committee members reading the real checkout; the native PR reviewer |
+| **implementer** | its worktree and that worktree's git metadata | the native agent in `run` and `watch` |
+| **project command** | the worktree and package caches | setup and verification commands |
+
+Project commands are contained because they execute code the agent may have written — its tests, a `postinstall` script. Sandboxing only the agent would let it plant a test that the engine then runs with your full access.
 
 A reviewer needs no copy of the repository: it reads your checkout directly, and every write to it fails.
 
@@ -40,6 +43,7 @@ These stay writable so the CLI can authenticate and keep its session:
 |---|---|
 | `cursor-agent` | `.cursor`, `.local/share/cursor-agent`, `Library/Application Support/Cursor`, `Library/Caches` |
 | `claude` | `.claude`, `.claude.json` (and its lock and backup files), `Library/Caches` |
+| project commands | `.bun`, `.npm`, `.cache`, `Library/Caches`, `.cargo/registry`, `.cargo/git`, `go/pkg/mod` |
 
 ### Unreadable by default
 
@@ -50,6 +54,7 @@ These stay writable so the CLI can authenticate and keep its session:
 | variable | effect |
 |---|---|
 | `FLOOR_AGENTS_DENY_READ` | extra unreadable paths, comma-separated, `~` expanded — e.g. `~/Code/private-notes,/srv/secrets`. Use it for private sources a hosted model must not see. |
+| `FLOOR_AGENTS_SANDBOX_WRITABLE` | extra writable paths for implementers and project commands — e.g. `~/.gradle` for a build that caches elsewhere. Reviewers never gain writable paths. |
 | `FLOOR_AGENTS_SANDBOX=off` | run agents uncontained. For developing Floor Agents itself; never for agents on a real repository. |
 
 ## What the sandbox does not contain
@@ -71,9 +76,18 @@ These stay writable so the CLI can authenticate and keep its session:
 | Claude in-process committee reviewer (`committee-run`, `discussion-committee`, `decision-committee`, `committee-smoke`) | ✓ reviewer |
 | `@floor-agents/cursor` adapter | ✓ always — the sandbox is a required option |
 | `@floor-agents/claude-code` adapter | when a `sandbox` is passed |
-| Native implementer in `run` / `watch` (`native-runner.ts`) | **not yet** |
+| Native implementer in `run` / `watch` — `claude-code` or `cursor` | ✓ implementer |
+| Native PR reviewer | ✓ reviewer |
+| Project setup and verification commands | ✓ project command |
 | Codex bridge | its own `codex exec --sandbox read-only` |
+
+Measured live with the native runner and `cursor-grok-4.6-high` in a worktree: it edited a file there and ran `git status` through the shell (the worktree's git metadata is writable), while creating a file under the home directory failed with `Write permission denied`. The main checkout the worktree came from was untouched.
 
 ## Verifying
 
-`bun test test/sandbox` includes an enforcement test that runs on macOS: it builds a profile around a temporary home directory, then checks that a write outside the allowed folder fails, a write inside it succeeds, and a denied file cannot be read. On other platforms it is skipped.
+Two enforcement tests run on macOS and are skipped elsewhere, both around a temporary home directory so nothing real is written:
+
+- `test/sandbox` — a profile's effect: a write outside the allowed folder fails, a write inside it succeeds, a denied file cannot be read.
+- `test/orchestrator/native-runner.test.ts` — the native launch path: fake `cursor-agent` and `claude` scripts first on `PATH` try to write inside and outside their folder; the implementer writes only its worktree, the reviewer writes nothing.
+
+`test/orchestrator/verified-project.test.ts` runs the whole verified-execution suite with project commands sandboxed on macOS, and sets `FLOOR_AGENTS_SANDBOX=off` on CI's Linux runner.

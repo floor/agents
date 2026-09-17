@@ -22,14 +22,17 @@ import {
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { mkdir } from 'node:fs/promises'
+import { committeeConfigPath, parseMaxRounds, selectVoters } from './lib/committee-env.ts'
+import { startBridges } from './lib/bridges.ts'
+import { reviewerSandbox } from '@floor-agents/sandbox'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 const REPO = expand(process.env.CODEX_CWD ?? join(homedir(), 'Code/floor/vlist'))
 const PORT = parseInt(process.env.GATEWAY_PORT ?? '3199', 10)
-const CONFIG = join(homedir(), 'Code/floor/.agents/projects/vlist/agents.yaml')
+const CONFIG = committeeConfigPath(REPO)
 const BRIEF_FILE = expand(process.env.BRIEF_FILE ?? join(import.meta.dir, 'lib/decision-brief.md'))
 const ONLY = (process.env.AGENTS ?? 'claude,codex,grok').split(',').map(s => s.trim())
-const MAX_ROUNDS = parseInt(process.env.MAX_ROUNDS ?? '3', 10)
+const MAX_ROUNDS = parseMaxRounds(process.env.MAX_ROUNDS)
 const TIMEOUT_MS = parseInt(process.env.EXTERNAL_TIMEOUT_MS ?? '900000', 10)
 const TITLE = process.env.DECISION_TITLE ?? 'RFC-013 v3 touch engine — Option A or B'
 // Full per-round deliberation transcript (every agent, every round) → a durable,
@@ -116,9 +119,7 @@ async function decideOnce(
 
 async function main() {
   const company = await loadCompanyConfig(CONFIG)
-  const agents = company.agents.filter(
-    (a: AgentDefinition) => a.capabilities.includes('vote') && ONLY.includes(a.id),
-  )
+  const agents = selectVoters(company.agents, ONLY, CONFIG)
   const brief = await Bun.file(BRIEF_FILE).text()
 
   console.log(`[decision] "${TITLE}"`)
@@ -126,18 +127,11 @@ async function main() {
 
   const gateway = createGateway({ port: PORT })
   gateway.start()
-  const bridges: { kill(): void }[] = []
-  for (const id of ['codex', 'grok'] as const) {
-    if (!agents.some(a => a.id === id && a.external)) continue
-    bridges.push(Bun.spawn(['bun', join(import.meta.dir, `${id}-agent.ts`)], {
-      env: { ...process.env, GATEWAY_URL: `ws://localhost:${PORT}`, CODEX_CWD: REPO, GROK_CWD: REPO },
-      stdout: 'inherit', stderr: 'inherit',
-    }))
-    for (let i = 0; i < 30 && !gateway.isAgentConnected(id); i++) await new Promise(r => setTimeout(r, 500))
-    console.log(`[decision] ${id} connected: ${gateway.isAgentConnected(id)}`)
-  }
+  // One bridge per external member, chosen by its `provider` in the manifest.
+  const bridges = await startBridges(agents, { port: PORT, repo: REPO, gateway, log: m => console.log(`[decision] ${m}`) })
 
-  const claudeCode = createClaudeCodeAdapter({ cwd: REPO, model: 'opus', allowedTools: ['Read', 'Glob', 'Grep', 'Bash'] })
+  // Claude reviews in-process with Bash, so it runs in a reviewer sandbox.
+  const claudeCode = createClaudeCodeAdapter({ cwd: REPO, model: 'opus', allowedTools: ['Read', 'Glob', 'Grep', 'Bash'], sandbox: reviewerSandbox('claude') })
   const getAdapter = (p: string) => {
     if (p === 'claude-code') return claudeCode
     throw new Error(`only claude-code wired internally, got: ${p}`)
@@ -228,7 +222,7 @@ async function main() {
     console.error(`[decision] could not write transcript: ${err instanceof Error ? err.message : String(err)}`)
   }
 
-  for (const br of bridges) br.kill()
+  bridges.stop()
   gateway.stop()
   process.exit(0)
 }

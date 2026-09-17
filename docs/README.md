@@ -27,6 +27,8 @@ Each package has its own documentation:
 | `@floor-agents/anthropic` | Anthropic LLM adapter | [anthropic](./packages/anthropic.md) |
 | `@floor-agents/lmstudio` | LM Studio adapter for local models | [lmstudio](./packages/lmstudio.md) |
 | `@floor-agents/claude-code` | Claude Code adapter (CTO agent) | [claude-code](./packages/claude-code.md) |
+| `@floor-agents/cursor` | Cursor CLI adapter — any Cursor-hosted model | [cursor](./packages/cursor.md) |
+| `@floor-agents/sandbox` | `sandbox-exec` containment for agent CLIs | [sandbox](./packages/sandbox.md) |
 | `@floor-agents/gemini` | Google Gemini adapter | [gemini](./packages/gemini.md) |
 | `@floor-agents/openai` | OpenAI-compatible adapter | [openai](./packages/openai.md) |
 | `@floor-agents/github` | GitHub git adapter | [github](./packages/github.md) |
@@ -41,6 +43,7 @@ Each package has its own documentation:
 - [Zero-Cost Committee](./guides/zero-cost-committee.md) — Claude Code + Gemma + Codex for $0/review
 - [Committee Mode](./guides/committee.md) — multi-agent proposal review with parallel voting
 - [Local Committee](./guides/local-committee.md) — Claude Code + Codex + Grok, event-driven, no cloud keys
+- [Agent Sandbox](./guides/sandbox.md) — why agent CLIs are contained by the OS, what is and is not covered
 - [Agent Gateway](./gateway.md) — WebSocket protocol, REST fallback, building custom agents
 - [Adding an LLM Provider](./guides/adding-llm-provider.md)
 - [Adding a Task Manager](./guides/adding-task-manager.md)

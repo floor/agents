@@ -147,4 +147,21 @@ describe('runDeliberation — channel streaming + human interjection', () => {
       }),
     ).rejects.toThrow('github write failed')
   })
+
+  // parseInt('three') is NaN, and `round <= NaN` is false: the loop ran zero rounds
+  // and the caller published an empty consensus as though the committee had met.
+  for (const cap of [Number.NaN, 0, -1, 2.5]) {
+    test(`refuses a round cap of ${cap} instead of running no round`, async () => {
+      let reviewed = 0
+      await expect(
+        runDeliberation<string>({
+          agents: AGENTS,
+          maxRounds: cap,
+          review: async () => { reviewed++; return { vote: 'reject', text: 'reject' } },
+          converged: () => null,
+        }),
+      ).rejects.toThrow(/maxRounds must be a positive whole number/)
+      expect(reviewed).toBe(0)
+    })
+  }
 })

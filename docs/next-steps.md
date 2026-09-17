@@ -118,6 +118,31 @@ providers they use.
   value yields `NaN`, runs zero rounds, and posts an empty consensus table to the public
   GitHub thread.
 
+### 7. `doctor` should refuse what `run` will refuse
+
+**Priority:** Medium — cheap fix, and it is the whole point of a preflight.
+**Status:** Observed Sep 17, 2026 against `.agents/projects/vlist/agents.yaml`.
+
+`doctor` reported PASS on every check — config, prompts, GitHub access, task source,
+provider — for a config that `run` then rejected outright:
+
+```
+run implements an issue. Use a developer config without vote agents;
+committee review remains available through watch.
+```
+
+The rejection itself is correct and is the "reject unsupported configuration" principle
+working. The gap is that `doctor` green-lights it. A preflight that passes a manifest the
+very next command refuses is worse than no preflight, because it transfers confidence it
+has not earned. `doctor` should run the same mode check `run` does, and should also flag
+the other reasons that manifest cannot implement an issue: no `project.root`, no
+`project.verification`, no `owner`/`baseBranch`, `blockedPaths: ["*"]`, and no agent
+holding `write_code` / `create_pr`.
+
+Related: `doctor` reported `Task source: linear` while the pilot guide documents GitHub
+Issues as the default for `doctor` and `run` — worth confirming which wins when
+`LINEAR_API_KEY` is present in the environment.
+
 ---
 
 ## Sprint Summary

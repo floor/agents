@@ -76,6 +76,47 @@ Guardrails 1 and 2 are implemented as a **pure function** (`applyGuards`) so the
 directly unit-testable without an LLM, and enforced in the `toolHandler` wrapper —
 the model physically cannot bypass them, regardless of what it says.
 
+## Setting up the Telegram channel
+
+It needs a **bot**, not a user account: the code talks to the Bot API
+(`api.telegram.org/bot<token>/`), while a Telegram user account speaks MTProto — a
+different protocol, and automating one risks a ban. One bot serves every agent; the
+speaker is a text prefix (`🤖 Codex:`), so there is no need for a bot per agent.
+
+1. **Create the bot.** Message @BotFather → `/newbot` → copy the token into
+   `TELEGRAM_BOT_TOKEN`.
+2. **Pick the chat.** A private 1:1 chat with the bot is the secure default: Telegram sets
+   `chat.id === from.id` there, so only you can steer the run and no allowlist is needed.
+   Use a group only when several people must watch.
+3. **Find the chat id.** Send the bot any message, then:
+
+   ```sh
+   curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates"
+   ```
+
+   Read `message.chat.id` into `TELEGRAM_CHAT_ID`. Group ids are negative; supergroups
+   start `-100`.
+4. **For a group only — two steps that are easy to miss:**
+   - BotFather → `/setprivacy` → **Disable**. Bots default to privacy mode ON in groups,
+     where they receive only messages starting with `/`, replying to the bot, or
+     @mentioning it. Leave it on and `drainHumanMessages` returns nothing while every
+     other check reports healthy.
+   - Set `TELEGRAM_ALLOW_FROM` to the operator user ids, or the group fails closed and
+     hears no one. Run once and the log names whoever was ignored:
+     `[telegram] ignored input from user 12345 in chat -100… — not in allowFrom`.
+
+```sh
+TELEGRAM_BOT_TOKEN=…
+TELEGRAM_CHAT_ID=…
+TELEGRAM_ALLOW_FROM=12345,67890   # group only; omit for a private chat
+```
+
+**What leaves the machine:** each turn's `summarize()` output — 600 characters of agent
+review text, which routinely quotes file paths and code from a private repo. It is stored
+in Telegram's cloud, and group chats are never end-to-end encrypted. The RFC body and the
+system prompts are not sent. Omit both variables and the committee scripts run
+console-only.
+
 ## First proof (next increment)
 
 One small, test-backed vlist task: orchestrator agent runs `inspect_repo` →

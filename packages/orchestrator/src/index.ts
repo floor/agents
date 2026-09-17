@@ -25,6 +25,7 @@ export type { OrchestratorTool, OrchestratorAgentDeps, OrchestratorRunResult, Gu
 export { createMockChannel } from './team-channel.ts'
 export type { TeamChannel, TeamMessage, Decision, MockChannel } from './team-channel.ts'
 export { createTelegramChannel } from './telegram-channel.ts'
+export { mirrorComments, channelText } from './task-mirror.ts'
 export type { TelegramChannelConfig, TelegramTransport } from './telegram-channel.ts'
 export { runDeliberation } from './deliberation.ts'
 export type { DeliberationAgent, DeliberationContext, Turn, ConvergenceResult, DeliberationOptions, DeliberationResult } from './deliberation.ts'

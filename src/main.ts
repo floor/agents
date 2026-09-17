@@ -10,7 +10,7 @@ import { createGeminiAdapter } from '@floor-agents/gemini'
 import { createGitHubAdapter } from '@floor-agents/github'
 import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
-import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, resolveAgent } from '@floor-agents/orchestrator'
+import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
 import { createDiscussionsAdapter } from '@floor-agents/github'
 import { createGateway } from '@floor-agents/gateway'
 import { mkdir } from 'node:fs/promises'
@@ -194,7 +194,22 @@ const createTask = () => {
       throw new Error(`Unknown TASK_ADAPTER: ${TASK_ADAPTER}`)
   }
 }
-const task = createTask()
+// The Telegram channel, when the environment carries a bot and a chat. Every
+// comment a run posts on its issue is repeated there, so a phone shows the run
+// without opening GitHub. Absent credentials simply mean no channel.
+const telegram = process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID
+  ? createTelegramChannel({
+      token: process.env.TELEGRAM_BOT_TOKEN,
+      chatId: process.env.TELEGRAM_CHAT_ID,
+      ...(process.env.TELEGRAM_ALLOW_FROM ? { allowFrom: process.env.TELEGRAM_ALLOW_FROM.split(',').map(s => s.trim()).filter(Boolean) } : {}),
+      log: msg => console.log(`[telegram] ${msg}`),
+    })
+  : null
+
+const withChannel = (adapter: ReturnType<typeof createTask>) =>
+  telegram ? mirrorComments(adapter, telegram, { from: company.project.name || company.name, log: msg => console.log(`[telegram] ${msg}`) }) : adapter
+
+const task = withChannel(createTask())
 
 // Create git adapter
 const github = createGitHubAdapter({
@@ -272,7 +287,7 @@ const orchestrators = [
   ...(pipelines.committee
     ? [createCommitteeOrchestrator({
         company,
-        taskAdapter: pipelines.development ? createTask() : task,
+        taskAdapter: pipelines.development ? withChannel(createTask()) : task,
         gitAdapter: github,
         llmAdapters,
         contextBuilder,

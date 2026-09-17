@@ -10,6 +10,11 @@ import { commitWorktree, createWorktree, gitText } from '../../packages/orchestr
 import { validateWorktree, verifyWorktree, runProjectCommand } from '../../packages/orchestrator/src/verification.ts'
 import { verifyAndCommit } from '../../packages/orchestrator/src/verified-commit.ts'
 
+// Project commands run inside sandbox-exec, which exists only on macOS and is
+// refused elsewhere. On macOS these tests exercise the real sandbox; on CI's
+// Linux runner they run the same pipeline uncontained, explicitly.
+if (process.platform !== 'darwin') process.env.FLOOR_AGENTS_SANDBOX = 'off'
+
 let dir: string
 let root: string
 let remote: string

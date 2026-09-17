@@ -1,0 +1,8 @@
+{
+  "name": "@floor-agents/sandbox",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "module": "src/index.ts",
+  "types": "src/index.ts"
+}

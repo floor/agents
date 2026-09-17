@@ -26,6 +26,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@floor-agents/core": "workspace:*",
+        "@floor-agents/sandbox": "workspace:*",
       },
     },
     "packages/context-builder": {
@@ -38,6 +39,14 @@
     "packages/core": {
       "name": "@floor-agents/core",
       "version": "0.0.1",
+    },
+    "packages/cursor": {
+      "name": "@floor-agents/cursor",
+      "version": "0.0.1",
+      "dependencies": {
+        "@floor-agents/core": "workspace:*",
+        "@floor-agents/sandbox": "workspace:*",
+      },
     },
     "packages/gateway": {
       "name": "@floor-agents/gateway",
@@ -78,10 +87,16 @@
         "@floor-agents/anthropic": "workspace:*",
         "@floor-agents/context-builder": "workspace:*",
         "@floor-agents/core": "workspace:*",
+        "@floor-agents/cursor": "workspace:*",
         "@floor-agents/github": "workspace:*",
         "@floor-agents/openai": "workspace:*",
+        "@floor-agents/sandbox": "workspace:*",
         "@floor-agents/task": "workspace:*",
       },
+    },
+    "packages/sandbox": {
+      "name": "@floor-agents/sandbox",
+      "version": "0.0.1",
     },
     "packages/task": {
       "name": "@floor-agents/task",
@@ -100,6 +115,8 @@
 
     "@floor-agents/core": ["@floor-agents/core@workspace:packages/core"],
 
+    "@floor-agents/cursor": ["@floor-agents/cursor@workspace:packages/cursor"],
+
     "@floor-agents/gateway": ["@floor-agents/gateway@workspace:packages/gateway"],
 
     "@floor-agents/gemini": ["@floor-agents/gemini@workspace:packages/gemini"],
@@ -111,6 +128,8 @@
     "@floor-agents/openai": ["@floor-agents/openai@workspace:packages/openai"],
 
     "@floor-agents/orchestrator": ["@floor-agents/orchestrator@workspace:packages/orchestrator"],
+
+    "@floor-agents/sandbox": ["@floor-agents/sandbox@workspace:packages/sandbox"],
 
     "@floor-agents/task": ["@floor-agents/task@workspace:packages/task"],
 

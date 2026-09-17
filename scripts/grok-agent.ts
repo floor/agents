@@ -75,7 +75,8 @@ async function reviewWithGrok(task: TaskAssignment): Promise<string> {
 
 const client = createGatewayClient({
   url: GATEWAY_URL,
-  agentId: 'grok',
+  // The manifest's agent id, passed by the committee scripts; 'grok' otherwise.
+  agentId: process.env.AGENT_ID ?? 'grok',
   name: 'Grok (local CLI)',
   capabilities: ['review_rfc', 'vote'],
   token: GATEWAY_TOKEN,

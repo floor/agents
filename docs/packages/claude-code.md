@@ -71,6 +71,7 @@ This makes it far more effective as a reviewer than an API call that only sees a
 | `model` | Claude Code default | `opus`, `sonnet`, or `haiku` |
 | `maxTurns` | 10 | Max agent turns before stopping |
 | `allowedTools` | All | Array of allowed Claude Code tools |
+| `sandbox` | none | [sandbox](./sandbox.md) the CLI starts in; committee reviewers pass `reviewerSandbox('claude')` |
 
 ## Timeouts
 
@@ -85,10 +86,16 @@ Claude Code reports actual cost in its JSON output. For Opus 4.6:
 
 ## Allowed Tools
 
-For a reviewer, restrict tools to read-only:
+A tool list is not a read-only guarantee: `Bash` can write anywhere you can. For a reviewer, keep the list short **and** start the CLI in a reviewer sandbox, which blocks every write outside Claude's own state:
 
 ```typescript
-allowedTools: ['Read', 'Glob', 'Grep', 'Bash', 'LSP']
+import { reviewerSandbox } from '@floor-agents/sandbox'
+
+createClaudeCodeAdapter({
+  cwd: repo,
+  allowedTools: ['Read', 'Glob', 'Grep', 'Bash', 'LSP'],
+  sandbox: reviewerSandbox('claude'),
+})
 ```
 
 For a dev agent (future), you might allow write tools:

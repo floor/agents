@@ -13,6 +13,7 @@ orchestrates agents, or embed the engine in your own Bun app.
 - [Agents & the Team](./agents.md) — agents are fully configurable; capabilities, modes, personas
 - [CLI](./cli.md) — the `floor-agents` binary: flags, env vars, modes, trigger tags
 - [Scripts](./scripts.md) — committee runner + gateway bridges (`scripts/`) reference
+- [Orchestrator Agent](./orchestrator-agent.md) — the LLM conductor: tool surface, the five guardrails, what is wired
 - [Known Issues](./known-issues.md) — tracked issues and their resolution status
 - [Next Steps](./next-steps.md) — prioritized roadmap after three sprints of dogfooding
 
@@ -39,7 +40,7 @@ Each package has its own documentation:
 - [First Run](./guides/first-run.md) — end-to-end setup with Gemma + Claude Code Opus
 - [Zero-Cost Committee](./guides/zero-cost-committee.md) — Claude Code + Gemma + Codex for $0/review
 - [Committee Mode](./guides/committee.md) — multi-agent proposal review with parallel voting
-- [Local Committee](./guides/local-committee.md) — Claude Code + Codex + Antigravity, event-driven, no cloud keys
+- [Local Committee](./guides/local-committee.md) — Claude Code + Codex + Grok, event-driven, no cloud keys
 - [Agent Gateway](./gateway.md) — WebSocket protocol, REST fallback, building custom agents
 - [Adding an LLM Provider](./guides/adding-llm-provider.md)
 - [Adding a Task Manager](./guides/adding-task-manager.md)

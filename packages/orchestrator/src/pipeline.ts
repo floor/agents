@@ -15,6 +15,10 @@ import { validateAgentOutput } from './guardrails.ts'
 import { runReviewAgent, MAX_REVIEW_CYCLES, type ReviewDeps } from './review.ts'
 import { NATIVE_PROVIDERS, runNativeDevAgent, runNativeReviewAgent } from './native-runner.ts'
 import type { CostTracker } from './cost-tracker.ts'
+import { commitApiWorkspace } from './api-workspace.ts'
+import { verificationSummary } from './verification.ts'
+import { requireVerification } from './verified-commit.ts'
+import { gitText } from './worktree.ts'
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -72,7 +76,7 @@ async function runApiDevAgent(
 
   if (!costTracker.canStartNewTask(company.costs)) throw new Error('Daily cost limit reached.')
 
-  const ctx = await contextBuilder.build({ agent, issue, project: company.project, reviewComments })
+  const ctx = await contextBuilder.build({ agent, issue, project: company.project, reviewComments, ref: state.commitSha ?? state.branchName ?? undefined })
   const isRevision = !!reviewComments
 
   console.log(`[${agent.id}] calling LLM (${agent.llm.model})...`)
@@ -178,13 +182,14 @@ export async function executeTask(
   const devIsNative = isNative(devAgent)
 
   try {
+    if (devIsNative || company.project.verification) requireVerification(company.project)
     // Step: pending → create branch
     if (state.step === 'pending') {
       const issueKey = issue.labels.find(l => /^[A-Z]+-\d+$/.test(l)) ?? issue.id.slice(0, 8)
       const branchName = `agent/${issueKey}-${slugify(issue.title)}`
 
       console.log(`[orchestrator] creating branch: ${branchName}`)
-      await gitAdapter.createBranch(company.project.repo, branchName)
+      await gitAdapter.createBranch(company.project.repo, branchName, company.project.baseBranch)
       state = await advanceState(state, 'building_context', { branchName }, stateStore)
 
       await taskAdapter.addComment(issue.id, [
@@ -196,7 +201,7 @@ export async function executeTask(
         '',
         `**Branch:** \`${branchName}\``,
         `**Mode:** ${devIsNative ? 'native (worktree)' : 'API (tool use)'}`,
-        `**Pipeline:** branch → code${devIsNative ? '' : ' → guardrails'} → commit → PR${reviewer ? ' → review' : ''}`,
+        `**Pipeline:** branch → code → guardrails${company.project.verification ? ' → checks' : ''} → commit → PR${reviewer ? ' → review' : ''}`,
       ].filter(Boolean).join('\n'))
     }
 
@@ -209,13 +214,14 @@ export async function executeTask(
           addComment: (id, text) => taskAdapter.addComment(id, text),
           setLabel: (id, label) => taskAdapter.setLabel(id, label),
           project: company.project,
+          guardrails,
         })
       } else {
         state = await runApiDevAgent(issue, devAgent, state, deps)
       }
     }
 
-    // Step: guardrails (API path only — native commits directly)
+    // API output validation; native validates the actual Git diff before publishing.
     if (!devIsNative && state.step === 'validating_output' && state.parsedOutput) {
       const violations = validateAgentOutput(state.parsedOutput, guardrails)
       if (violations.length > 0) {
@@ -232,17 +238,23 @@ export async function executeTask(
     // Step: commit via GitHub API (API path only — native already committed)
     if (!devIsNative && state.step === 'committing_files' && state.branchName && state.parsedOutput) {
       console.log(`[orchestrator] committing ${state.parsedOutput.files.length} files`)
-      const sha = await gitAdapter.commitFiles(
-        company.project.repo, state.branchName,
-        state.parsedOutput.files.map(f => ({ path: f.path, content: f.content })),
-        `${issue.title}\n\nAutomated by Floor Agents (${devAgent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`,
-      )
-      console.log(`[orchestrator] committed: ${sha.slice(0, 8)}`)
-      state = await advanceState(state, 'creating_pr', { commitSha: sha }, stateStore)
+      if (company.project.verification) {
+        state = await commitApiWorkspace(state, deps, `${issue.title}\n\nTask: ${issue.id}`)
+        state = await advanceState(state, 'creating_pr', {}, stateStore)
+      } else {
+        const sha = await gitAdapter.commitFiles(
+          company.project.repo, state.branchName,
+          state.parsedOutput.files.map(f => ({ path: f.path, content: f.content })),
+          `${issue.title}\n\nAutomated by Floor Agents (${devAgent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`,
+        )
+        console.log(`[orchestrator] committed: ${sha.slice(0, 8)}`)
+        state = await advanceState(state, 'creating_pr', { commitSha: sha }, stateStore)
+      }
     }
 
     // Step: create PR (both paths)
     if (state.step === 'creating_pr' && state.branchName) {
+      await assertVerified(state, deps)
       const prBody = state.parsedOutput?.prDescription || [
         'Automated PR by Floor Agents', '',
         `**Task:** ${issue.title}`,
@@ -251,7 +263,8 @@ export async function executeTask(
         `**Cost:** $${state.costUsd.toFixed(4)}`,
       ].join('\n')
 
-      const pr = await gitAdapter.createPR(company.project.repo, state.branchName, issue.title, prBody)
+      const body = state.verification ? `${prBody}\n\n${verificationSummary(state.verification)}` : prBody
+      const pr = await gitAdapter.createPR(company.project.repo, state.branchName, issue.title, body, company.project.baseBranch)
       console.log(`[orchestrator] PR created: ${pr.url}`)
       await taskAdapter.addComment(issue.id, `📝 **PR created:** ${pr.url}`)
 
@@ -261,6 +274,7 @@ export async function executeTask(
 
     // Step: review (dispatches to native or API based on reviewer's provider)
     if (state.step === 'reviewing' && reviewer && state.prId) {
+      await assertVerified(state, deps)
       state = await dispatchReview(issue, reviewer, state, deps)
     }
 
@@ -270,11 +284,12 @@ export async function executeTask(
         console.log(`[orchestrator] max review cycles (${MAX_REVIEW_CYCLES}) reached`)
         await taskAdapter.addComment(issue.id, `⚠️ **Max review cycles reached** (${MAX_REVIEW_CYCLES}). Needs human review.`)
         await taskAdapter.setLabel(issue.id, 'needs-human')
-        state = await advanceState(state, 'updating_issue', {}, stateStore)
+        state = await advanceState(state, 'failed', { error: 'Max review cycles reached; needs human review' }, stateStore)
+        return
       } else {
         const feedback = state.reviewVerdict?.comments ?? 'Changes requested.'
         console.log(`[orchestrator] revision ${state.reviewCycle}: ${devAgent.name} addressing feedback...`)
-        state = await advanceState(state, 'building_context', { parsedOutput: null, reviewVerdict: null }, stateStore)
+        state = await advanceState(state, 'building_context', { parsedOutput: null, reviewVerdict: null, verification: undefined }, stateStore)
 
         if (devIsNative) {
           state = await runNativeDevAgent(issue, devAgent, state, {
@@ -283,6 +298,7 @@ export async function executeTask(
             addComment: (id, text) => taskAdapter.addComment(id, text),
             setLabel: (id, label) => taskAdapter.setLabel(id, label),
             project: company.project,
+            guardrails,
           }, feedback)
 
           // Native already committed — skip to review
@@ -301,18 +317,24 @@ export async function executeTask(
               return
             }
             if (state.branchName) {
-              const sha = await gitAdapter.commitFiles(
-                company.project.repo, state.branchName,
-                state.parsedOutput.files.map(f => ({ path: f.path, content: f.content })),
-                `Address review feedback (cycle ${state.reviewCycle})\n\nAutomated by Floor Agents (${devAgent.name})\nTask: ${issue.id}`,
-              )
-              state = await advanceState(state, 'reviewing', { commitSha: sha }, stateStore)
+              if (company.project.verification) {
+                state = await commitApiWorkspace(state, deps, `Address review feedback (cycle ${state.reviewCycle})\n\nTask: ${issue.id}`)
+                state = await advanceState(state, 'reviewing', {}, stateStore)
+              } else {
+                const sha = await gitAdapter.commitFiles(
+                  company.project.repo, state.branchName,
+                  state.parsedOutput.files.map(f => ({ path: f.path, content: f.content })),
+                  `Address review feedback (cycle ${state.reviewCycle})\n\nAutomated by Floor Agents (${devAgent.name})\nTask: ${issue.id}`,
+                )
+                state = await advanceState(state, 'reviewing', { commitSha: sha }, stateStore)
+              }
             }
           }
         }
 
         // Re-review
         if (state.step === 'reviewing' && reviewer && state.prId) {
+          await assertVerified(state, deps)
           state = await dispatchReview(issue, reviewer, state, deps)
           if (state.step === 'revision') {
             return executeTask(issue, devAgent, deps, state)
@@ -323,6 +345,7 @@ export async function executeTask(
 
     // Step: done
     if (state.step === 'updating_issue') {
+      await assertVerified(state, deps)
       const totalDuration = formatDuration(Math.round(performance.now() - taskStart))
       const totalCost = `$${state.costUsd.toFixed(4)}`
       const cycles = state.reviewCycle > 0 ? `${state.reviewCycle} review cycle${state.reviewCycle > 1 ? 's' : ''}` : 'no review'
@@ -335,6 +358,7 @@ export async function executeTask(
         '', '| Metric | Value |', '|--------|-------|',
         `| Duration | ${totalDuration} |`, `| Cost | ${totalCost} |`, `| Review cycles | ${cycles} |`,
         state.prUrl ? `| PR | ${state.prUrl} |` : '',
+        state.verification ? verificationSummary(state.verification) : '',
       ].filter(Boolean).join('\n'))
 
       await taskAdapter.setStatus(issue.id, 'in_review')
@@ -344,10 +368,20 @@ export async function executeTask(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error(`[orchestrator] error: ${message}`)
-    state = await advanceState(state, 'failed', { error: message }, stateStore)
+    state = await advanceState(await stateStore.get(issue.id) ?? state, 'failed', { error: message }, stateStore)
     try {
       await taskAdapter.addComment(issue.id, ['❌ **Agent error**', '', '```', message, '```', '', 'This issue has been labeled `needs-human`.'].join('\n'))
       await taskAdapter.setLabel(issue.id, 'needs-human')
     } catch {}
+  }
+}
+
+async function assertVerified(state: ExecutionState, deps: PipelineDeps): Promise<void> {
+  if (deps.company.project.verification && (!state.verification?.passed || state.verification.commitSha !== state.commitSha)) {
+    throw new Error('No passing engine verification for the current commit; refusing to publish or complete')
+  }
+  if (deps.company.project.verification) {
+    const remote = await gitText(deps.company.project.root!, ['ls-remote', '--exit-code', 'origin', `refs/heads/${state.branchName}`])
+    if (remote.split(/\s/)[0] !== state.commitSha) throw new Error('Remote branch changed after verification; refusing a stale result')
   }
 }

@@ -1,84 +1,63 @@
-import { join } from 'node:path'
-import { mkdir } from 'node:fs/promises'
-
-const WORKTREE_DIR = '.worktrees'
+import { join, resolve } from 'node:path'
+import { mkdir, mkdtemp } from 'node:fs/promises'
 
 export type Worktree = {
   readonly path: string
   readonly branch: string
+  readonly initialSha: string
 }
 
-export async function createWorktree(branch: string): Promise<Worktree> {
-  const dir = join(process.cwd(), WORKTREE_DIR)
+export async function gitText(cwd: string, args: readonly string[]): Promise<string> {
+  const proc = Bun.spawn(['git', '-C', cwd, ...args], { stdout: 'pipe', stderr: 'pipe', stdin: 'ignore', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
+  const timeout = setTimeout(() => proc.kill('SIGKILL'), 60_000)
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited,
+  ]).finally(() => clearTimeout(timeout))
+  if (code !== 0) throw new Error(`git ${args[0]} failed: ${stderr.trim()}`)
+  return stdout.trimEnd()
+}
+
+export async function createWorktree(branch: string, repoPath = process.cwd()): Promise<Worktree> {
+  const root = resolve(repoPath)
+  await gitText(root, ['check-ref-format', '--branch', branch])
+  if (['main', 'master', 'develop', 'production'].includes(branch)) throw new Error(`Protected branch: ${branch}`)
+  // Refresh branches first created through the API; never reuse a stale local branch.
+  await gitText(root, ['fetch', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`])
+  const initialSha = await gitText(root, ['rev-parse', `refs/remotes/origin/${branch}`])
+  const dir = join(root, '.worktrees')
   await mkdir(dir, { recursive: true })
-
-  const safeName = branch.replace(/\//g, '-')
-  const worktreePath = join(dir, safeName)
-
-  // Remove stale worktree if it exists
-  try {
-    await Bun.$`git worktree remove ${worktreePath} --force`.quiet()
-  } catch {}
-
-  // Fetch the branch from remote
-  try {
-    await Bun.$`git fetch origin ${branch}`.quiet()
-  } catch {}
-
-  // Create the worktree
-  await Bun.$`git worktree add ${worktreePath} ${branch}`.quiet()
-
-  console.log(`[worktree] created: ${worktreePath} → ${branch}`)
-  return { path: worktreePath, branch }
+  const path = await mkdtemp(join(dir, `${branch.replace(/[^a-zA-Z0-9-]/g, '-')}-`))
+  await gitText(root, ['worktree', 'add', '--detach', path, initialSha])
+  return { path, branch, initialSha }
 }
 
-export async function commitAndPushWorktree(
-  worktree: Worktree,
-  message: string,
-): Promise<string | null> {
-  try {
-    // Check for uncommitted changes
-    const status = await Bun.$`git -C ${worktree.path} status --porcelain`.quiet()
-    const statusText = status.stdout.toString().trim()
+export async function snapshotWorktree(worktree: Worktree): Promise<string> {
+  await gitText(worktree.path, ['add', '-A'])
+  return gitText(worktree.path, ['write-tree'])
+}
 
-    if (statusText) {
-      // Stage and commit uncommitted changes
-      await Bun.$`git -C ${worktree.path} add -A`.quiet()
-      await Bun.$`git -C ${worktree.path} commit -m ${message}`.quiet()
-      console.log('[worktree] committed uncommitted changes')
-    }
+export async function commitWorktree(worktree: Worktree, message: string, expectedTree?: string): Promise<string | null> {
+  const tree = await snapshotWorktree(worktree)
+  if (expectedTree && tree !== expectedTree) throw new Error('Workspace changed after verification; refusing to commit')
+  const initialTree = await gitText(worktree.path, ['rev-parse', `${worktree.initialSha}^{tree}`])
+  if (tree === initialTree) return null
+  // Publish the validated tree, excluding agent-created intermediate commits.
+  return gitText(worktree.path, ['commit-tree', tree, '-p', worktree.initialSha, '-m', message])
+}
 
-    // Check if there are unpushed commits (Claude Code may have already committed)
-    const logResult = await Bun.$`git -C ${worktree.path} log origin/${worktree.branch}..HEAD --oneline`.quiet()
-    const unpushed = logResult.stdout.toString().trim()
+export async function pushWorktree(worktree: Worktree, sha: string): Promise<void> {
+  await gitText(worktree.path, ['push', 'origin', `${sha}:refs/heads/${worktree.branch}`])
+}
 
-    if (!unpushed && !statusText) {
-      console.log('[worktree] no changes to commit or push')
-      return null
-    }
-
-    // Get commit SHA
-    const shaResult = await Bun.$`git -C ${worktree.path} rev-parse HEAD`.quiet()
-    const sha = shaResult.stdout.toString().trim()
-
-    // Push
-    await Bun.$`git -C ${worktree.path} push origin ${worktree.branch}`.quiet()
-
-    const commitCount = unpushed ? unpushed.split('\n').length : 1
-    console.log(`[worktree] pushed ${commitCount} commit(s): ${sha.slice(0, 8)}`)
-    return sha
-  } catch (err: any) {
-    const stderr = err.stderr?.toString?.() ?? ''
-    const stdout = err.stdout?.toString?.() ?? ''
-    console.error(`[worktree] commit/push failed: ${stderr || stdout || err.message}`)
-    throw err
-  }
+export async function commitAndPushWorktree(worktree: Worktree, message: string): Promise<string | null> {
+  const sha = await commitWorktree(worktree, message)
+  if (sha) await pushWorktree(worktree, sha)
+  return sha
 }
 
 export async function removeWorktree(worktree: Worktree): Promise<void> {
   try {
-    await Bun.$`git worktree remove ${worktree.path} --force`.quiet()
-    console.log(`[worktree] removed: ${worktree.path}`)
+    await gitText(worktree.path, ['worktree', 'remove', worktree.path, '--force'])
   } catch (err) {
     console.error(`[worktree] failed to remove ${worktree.path}:`, err)
   }

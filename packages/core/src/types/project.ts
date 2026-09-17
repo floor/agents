@@ -19,6 +19,12 @@ export type ProjectStructure = {
 }
 
 export type ProjectConfig = {
+  /** Absolute checkout path after loading; YAML paths are relative to the config. */
+  readonly root?: string
+  readonly owner?: string
+  readonly baseBranch?: string
+  readonly setup?: readonly ProjectCommand[]
+  readonly verification?: readonly ProjectCommand[]
   readonly name: string
   readonly repo: string
   readonly language: string
@@ -27,4 +33,11 @@ export type ProjectConfig = {
   readonly structure: ProjectStructure
   readonly packages: readonly string[]
   readonly customInstructions: string
+}
+
+/** Commands run directly, without a shell, in the isolated checkout. */
+export type ProjectCommand = {
+  readonly name: string
+  readonly command: readonly string[]
+  readonly timeoutMs?: number
 }

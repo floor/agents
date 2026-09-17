@@ -8,63 +8,69 @@ import { createGeminiAdapter } from '@floor-agents/gemini'
 import { createGitHubAdapter } from '@floor-agents/github'
 import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
-import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore } from '@floor-agents/orchestrator'
+import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, resolveAgent } from '@floor-agents/orchestrator'
 import { createDiscussionsAdapter } from '@floor-agents/github'
 import { createGateway } from '@floor-agents/gateway'
 import { mkdir } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
+import { parseArgs } from './cli/args.ts'
+import { doctorProject, initProject } from './cli/project.ts'
 
 // ── CLI flags (handle before any startup work) ───────────────────
 const VERSION = (
   await Bun.file(new URL('../package.json', import.meta.url)).json().catch(() => ({ version: '0.0.0' }))
 ).version as string
 
-const argv = Bun.argv.slice(2)
+const args = (() => {
+  try { return parseArgs(Bun.argv.slice(2)) }
+  catch (err) { console.error(String(err)); process.exit(1) }
+})()
 
-if (argv.includes('-v') || argv.includes('--version')) {
+if (args.command === 'version') {
   console.log(VERSION)
   process.exit(0)
 }
-
-if (argv.includes('-h') || argv.includes('--help')) {
-  console.log(`floor-agents v${VERSION} — autonomous multi-agent code review & development
+if (args.command === 'help') {
+  console.log(`floor-agents v${VERSION}
 
 Usage:
-  floor-agents              Start the orchestrator (set CONFIG_PATH)
-  floor-agents --help       Show this help
-  floor-agents --version    Show the version
+  floor-agents init                     Create .agents/agents.yaml and a developer prompt
+  floor-agents doctor                   Check project setup without running an agent
+  floor-agents run --issue <id>         Implement one issue and exit (defaults to GitHub Issues)
+  floor-agents [watch]                  Watch the configured task source (defaults to Linear)
+  floor-agents --config <path>          Select a manifest (also CONFIG_PATH)
+  floor-agents --version
 
-Environment:
-  CONFIG_PATH   Path to your team config YAML (required)
-  TASK_ADAPTER  linear | things | github-issues  (default: linear)
-  STATE_DIR     Execution state directory        (default: ./data/executions)
-  Plus GITHUB_TOKEN / GITHUB_OWNER and the provider + task-manager keys your config uses.
-
+Configuration discovery: --config, CONFIG_PATH, .agents/agents.yaml, then the local dev template.
+Credentials: GITHUB_TOKEN plus keys for your task source/providers. Set TASK_ADAPTER to override
+linear | things | github-issues. GITHUB_OWNER overrides project.owner.
+Verified execution requires project.root, project.baseBranch and project.verification.
+Logs and check results are stored in STATE_DIR (default: runs/ beside the manifest).
 Requires Bun. Docs: https://github.com/floor/agents`)
+  process.exit(0)
+}
+if (args.command === 'init') {
+  try { await initProject(args.config ?? process.env.CONFIG_PATH ?? '.agents/agents.yaml') }
+  catch (err) { console.error(String(err)); process.exit(1) }
   process.exit(0)
 }
 
 // Environment
-const STATE_DIR = process.env.STATE_DIR ?? './data/executions'
-const TASK_ADAPTER = process.env.TASK_ADAPTER ?? 'linear'
+const TASK_ADAPTER = process.env.TASK_ADAPTER ?? (args.command === 'watch' ? 'linear' : 'github-issues')
 // Trigger tags the committee watches (comma-separated).
 const COMMITTEE_LABELS = (process.env.COMMITTEE_LABELS ?? 'committee,agents')
   .split(',').map(s => s.trim()).filter(Boolean)
 
-// Resolve config. Require CONFIG_PATH explicitly unless a local default template
-// is present (dev) — so the published bin fails with a clear message instead of
-// crashing on a CWD-relative default that isn't shipped.
-const CONFIG_PATH = process.env.CONFIG_PATH
-if (!CONFIG_PATH && !(await Bun.file('config/templates/default.yaml').exists())) {
-  console.error('floor-agents: no config found.\n')
-  console.error('Set CONFIG_PATH to your team config (YAML), e.g.:')
-  console.error('  CONFIG_PATH=./agents.yaml floor-agents\n')
-  console.error('Config format: https://github.com/floor/agents#configuration')
-  console.error('Run `floor-agents --help` for usage.')
-  process.exit(1)
-}
+// Discover the manifest; project and prompt paths are resolved by the loader.
+const CONFIG_PATH = args.config ?? process.env.CONFIG_PATH
+  ?? (await Bun.file('.agents/agents.yaml').exists() ? '.agents/agents.yaml' : 'config/templates/default.yaml')
+const STATE_DIR = process.env.STATE_DIR ?? join(dirname(resolve(CONFIG_PATH)), 'runs')
 
 // Load and validate config
-const company = await loadCompanyConfig(CONFIG_PATH)
+const company = await loadCompanyConfig(CONFIG_PATH).catch(err => {
+  console.error(`${String(err)}\nRun floor-agents init or pass --config <path>.`)
+  process.exit(1)
+})
 const errors = validateCompanyConfig(company)
 
 if (errors.length > 0) {
@@ -73,13 +79,24 @@ if (errors.length > 0) {
   process.exit(1)
 }
 
+if (args.command === 'run' && company.agents.some(a => a.capabilities.includes('vote'))) {
+  console.error('run implements an issue. Use a developer config without vote agents; committee review remains available through watch.')
+  process.exit(1)
+}
+if (args.command === 'doctor' || args.command === 'run' || company.project.verification) {
+  const diagnostics = await doctorProject(company, TASK_ADAPTER)
+  for (const d of diagnostics) console.log(`${d.ok ? 'PASS' : 'FAIL'} ${d.name}: ${d.detail}`)
+  if (diagnostics.some(d => !d.ok)) process.exit(1)
+  if (args.command === 'doctor') process.exit(0)
+}
+
 // Determine which LLM providers are needed from agent definitions.
 // External agents (Codex, Antigravity) run via the gateway, not an in-process
 // LLM adapter, so they don't require their provider's API key.
 const requiredProviders = computeRequiredProviders(company.agents)
 
 function requireEnv(name: string): string {
-  const value = process.env[name]
+  const value = process.env[name] ?? (name === 'GITHUB_OWNER' ? company.project.owner : undefined)
   if (!value) throw new Error(`${name} is required`)
   return value
 }
@@ -96,7 +113,7 @@ if (requiredProviders.has('anthropic')) {
 
 if (requiredProviders.has('claude-code')) {
   const adapter = createClaudeCodeAdapter({
-    cwd: process.cwd(),
+    cwd: company.project.root ?? process.cwd(),
     model: process.env.CLAUDE_CODE_MODEL,
     allowedTools: ['Read', 'Glob', 'Grep', 'Bash', 'LSP'],
   })
@@ -158,7 +175,7 @@ const task = (() => {
         githubIssues: {
           token: requireEnv('GITHUB_TOKEN'),
           owner: requireEnv('GITHUB_OWNER'),
-          repo: requireEnv('GITHUB_ISSUES_REPO'),
+          repo: process.env.GITHUB_ISSUES_REPO ?? company.project.repo,
         },
       })
     default:
@@ -187,6 +204,33 @@ const hasExternalAgents = company.agents.some(a => a.external)
 
 const stateStore = createStateStore(STATE_DIR)
 const costTracker = createCostTracker()
+
+if (args.command === 'run') {
+  try {
+    const issue = await task.getIssue(args.issue!)
+    if (!issue) throw new Error(`Issue not found: ${args.issue}`)
+    const existing = await stateStore.get(issue.id)
+    if (existing) throw new Error(`Issue already has execution state (${existing.step}). Inspect ${STATE_DIR} before retrying; run never overwrites an existing attempt.`)
+    const agent = resolveAgent(issue, company.agents)
+    if (!agent) throw new Error('No internal agent with write_code capability is configured')
+    await executeTask(issue, agent, {
+      company, taskAdapter: task, gitAdapter: github, contextBuilder, stateStore, costTracker,
+      getAdapter: provider => {
+        const adapter = llmAdapters.get(provider)
+        if (!adapter) throw new Error(`No adapter for ${provider}`)
+        return adapter
+      },
+      findReviewer: () => company.agents.find(a => a.capabilities.includes('review_pr') && !a.external),
+    })
+    const state = await stateStore.get(issue.id)
+    if (state?.step !== 'done') throw new Error(state?.error ?? `Task did not complete (${state?.step ?? 'no state'})`)
+    console.log(`Ready for human review: ${state.prUrl}\nExecution state: ${STATE_DIR}`)
+    process.exit(0)
+  } catch (err) {
+    console.error(String(err))
+    process.exit(1)
+  }
+}
 
 // Start gateway if external agents are configured
 const GATEWAY_PORT = parseInt(process.env.GATEWAY_PORT ?? '3100', 10)

@@ -10,6 +10,30 @@ export function validateCompanyConfig(config: CompanyConfig): readonly string[] 
   if (!config.project.repo) {
     errors.push('project.repo is required')
   }
+  if (config.project.root !== undefined && (typeof config.project.root !== 'string' || !config.project.root.trim())) {
+    errors.push('project.root must be a nonempty checkout path')
+  }
+  if (config.project.baseBranch !== undefined && (typeof config.project.baseBranch !== 'string' || !config.project.baseBranch.trim() || config.project.baseBranch.startsWith('-'))) {
+    errors.push('project.baseBranch must be a branch name')
+  }
+  for (const key of ['setup', 'verification'] as const) {
+    const commands = config.project[key]
+    if (commands === undefined) continue
+    if (!Array.isArray(commands) || (key === 'verification' && commands.length === 0)) {
+      errors.push(`project.${key} must be ${key === 'verification' ? 'a nonempty' : 'an'} array of commands`)
+      continue
+    }
+    for (const command of commands) {
+      if (!command || typeof command.name !== 'string' || !command.name.trim() ||
+          !Array.isArray(command.command) || !command.command.length ||
+          command.command.some((arg: unknown) => typeof arg !== 'string') || !command.command[0]?.trim()) {
+        errors.push(`project.${key} entries need a name and a nonempty command argument array`)
+      }
+      if (command?.timeoutMs !== undefined && (!Number.isFinite(command.timeoutMs) || command.timeoutMs <= 0)) {
+        errors.push(`project.${key} timeoutMs must be positive`)
+      }
+    }
+  }
 
   const agentIds = new Set(config.agents.map(a => a.id))
 

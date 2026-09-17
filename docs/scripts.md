@@ -6,22 +6,23 @@ Runnable helpers in `scripts/`. They are not part of any package — run them di
 |--------|------|------|
 | [`committee-run.ts`](#committee-runts) | Review an RFC file with the committee | by you (per round) |
 | [`codex-agent.ts`](#codex-agentts) | Codex gateway bridge → `codex exec` | by `committee-run` / pm2 |
-| [`antigravity-relay.ts`](#antigravity-relayts) | Persistent Antigravity gateway client | by `committee-run` / pm2 |
-| [`antigravity-notify.ts`](#antigravity-notifyts) | Stateless wake notifier | by Antigravity (background task) |
-| [`antigravity-mcp.ts`](#antigravity-mcpts) | File-backed MCP server | by Antigravity (MCP) |
+| [`grok-agent.ts`](#grok-agentts) | Grok gateway bridge → `grok --prompt-file` | by `committee-run` / pm2 |
 | [`committee-smoke.ts`](#committee-smokets) | 2-way smoke test | by you (manual) |
 | [`gateway-listen.ts`](#gateway-listents) | Bare gateway diagnostic | by you (manual) |
+| `antigravity-relay.ts` / `antigravity-notify.ts` / `antigravity-mcp.ts` | **Parked** — Antigravity GUI bridge (no unattended wake) | — |
+
+> The three `antigravity-*` scripts are retained for reference but are **not part of the default committee** — Antigravity cannot vote unattended. See [Appendix: why Antigravity is parked](./guides/local-committee.md#appendix-why-antigravity-is-parked).
 
 ---
 
 ## committee-run.ts
 
-Runs one committee review on an RFC **markdown file**, without `main.ts`, Linear, or GitHub. It stands up a real [gateway](./gateway.md), spawns the external-agent bridges it needs (Codex bridge, Antigravity relay), reads the RFC, runs `executeCommitteeReview`, prints the votes, and tears everything down.
+Runs one committee review on an RFC **markdown file**, without `main.ts`, Linear, or GitHub. It stands up a real [gateway](./gateway.md), spawns the external-agent bridges it needs (one per external member — Codex and Grok), reads the RFC, runs `executeCommitteeReview`, prints the votes, and tears everything down.
 
 ```bash
 RFC_FILE=~/Code/floor/vlist.io/docs/rfcs/RFC-013.md \
 CODEX_CWD=~/Code/floor/vlist \
-AGENTS=claude,codex,antigravity \
+AGENTS=claude,codex,grok \
 bun scripts/committee-run.ts
 ```
 
@@ -29,13 +30,13 @@ bun scripts/committee-run.ts
 |-----|---------|---------|
 | `RFC_FILE` | — (required) | RFC markdown; YAML frontmatter stripped, first `# heading` → title |
 | `CODEX_CWD` | `~/Code/floor/vlist` | repo the reviewers read for grounding |
-| `AGENTS` | `claude,codex` | comma-separated committee agent ids to include |
+| `AGENTS` | `claude,codex,grok` | comma-separated committee agent ids to include |
 | `GATEWAY_PORT` | `3199` | gateway port |
 | `EXTERNAL_TIMEOUT_MS` | `600000` | per-external-agent vote timeout |
 
 - Loads `~/Code/floor/.agents/projects/vlist/agents.yaml`; filters to agents with the `vote` capability that are listed in `AGENTS`.
 - Claude (`claude-code`) is wired via `createClaudeCodeAdapter` with read-only tools (`Read/Glob/Grep/Bash`), `cwd = CODEX_CWD`.
-- Spawns `codex-agent.ts` if `codex` is included, and `antigravity-relay.ts` if `antigravity` is included (the relay must run outside Antigravity).
+- Spawns `codex-agent.ts` if `codex` is included and `grok-agent.ts` if `grok` is included; waits for each external bridge to connect before dispatching.
 - `contextBuilder`/`stateStore` are unused by `executeCommitteeReview` and passed as stubs; `taskAdapter` is an in-memory stub that just logs the committee's posts.
 - Exits 0 after printing the tally; kills the bridges and stops the gateway.
 
@@ -55,6 +56,30 @@ GATEWAY_URL=ws://localhost:3199 CODEX_CWD=~/Code/floor/vlist bun scripts/codex-a
 | `CODEX_MODEL` | — | optional `--model` override |
 
 Runs `codex exec --sandbox read-only --cd <CODEX_CWD> --skip-git-repo-check --output-last-message <tmp> -`, feeding `systemPrompt + proposal` on stdin and returning the clean last message (falls back to stdout). Uses the CLI's own auth — no API key.
+
+## grok-agent.ts
+
+Gateway client for **Grok** — the third committee member, replacing the parked Antigravity seat. Registers as agent `grok`, and on each assignment runs the local Grok CLI headless in a read-only sandbox, returning stdout as the review.
+
+```bash
+GATEWAY_URL=ws://localhost:3199 GROK_CWD=~/Code/floor/vlist bun scripts/grok-agent.ts
+```
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `GATEWAY_URL` | `ws://localhost:3199` | gateway to connect to |
+| `GATEWAY_TOKEN` | — | gateway auth token (if configured) |
+| `GROK_CWD` | `process.cwd()` | working root for the review |
+| `GROK_MODEL` | — | optional `--model` override |
+| `GROK_EFFORT` | — (unset) | optional `--effort`; **leave unset for `grok-build`**, which rejects `reasoningEffort` (HTTP 400) |
+| `GROK_SANDBOX` | `read-only` | sandbox profile |
+| `GROK_BIN` | `grok` | path to the Grok binary |
+
+Writes `systemPrompt + proposal` to a temp file and runs `grok --prompt-file <tmp> --cwd <GROK_CWD> --output-format plain --permission-mode dontAsk --sandbox read-only`, returning trimmed stdout (clean final message, no tool noise). Prereq: `grok login`. Uses the CLI's own auth — no API key.
+
+## Parked: antigravity-relay.ts / antigravity-notify.ts / antigravity-mcp.ts
+
+The three-part file-backed bridge that let the **Antigravity GUI IDE** participate. Retained for reference but **not in the default committee**: Antigravity's agent (Cascade) has no external push and does not wake on background-task stdout, so it cannot vote unattended. The full mechanism and the supporting evidence are in [Appendix: why Antigravity is parked](./guides/local-committee.md#appendix-why-antigravity-is-parked). Grok (a headless CLI) took the seat.
 
 ## antigravity-relay.ts
 

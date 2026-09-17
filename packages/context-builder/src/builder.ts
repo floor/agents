@@ -17,6 +17,7 @@ export type AgentContext = {
 }
 
 export type BuildContextParams = {
+  readonly ref?: string
   readonly agent: AgentDefinition
   readonly issue: Issue
   readonly project: ProjectConfig
@@ -66,7 +67,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       const { agent, issue, project } = params
 
       // Select relevant files from the repo
-      const { files, tree } = await selectFiles(issue, project, deps.gitAdapter)
+      const { files, tree } = await selectFiles(issue, project, deps.gitAdapter, params.ref)
 
       console.log(`[context] selected ${files.length} files for "${issue.title}"`)
 

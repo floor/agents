@@ -1,6 +1,16 @@
 name: "Default Team"
 
 project:
+  root: "../.."
+  baseBranch: "main"
+  setup:
+    - name: Install dependencies
+      command: [bun, install, --frozen-lockfile]
+  verification:
+    - name: Typecheck
+      command: [bun, run, typecheck]
+    - name: Tests
+      command: [bun, test]
   name: "floor-agents"
   repo: "agents"
   language: "typescript"
@@ -19,7 +29,7 @@ project:
 agents:
   - id: backend
     name: "Backend Developer"
-    promptTemplate: "agents/backend-dev.md"
+    promptTemplate: "../../agents/backend-dev.md"
     llm:
       provider: claude-code
       model: sonnet
@@ -31,7 +41,7 @@ agents:
 
   - id: frontend
     name: "Frontend Developer"
-    promptTemplate: "agents/frontend-dev.md"
+    promptTemplate: "../../agents/frontend-dev.md"
     llm:
       provider: claude-code
       model: sonnet
@@ -43,7 +53,7 @@ agents:
 
   - id: pm
     name: "Project Manager"
-    promptTemplate: "agents/pm.md"
+    promptTemplate: "../../agents/pm.md"
     llm:
       provider: claude-code
       model: sonnet
@@ -55,7 +65,7 @@ agents:
 
   - id: cto
     name: "CTO / Tech Lead"
-    promptTemplate: "agents/cto.md"
+    promptTemplate: "../../agents/cto.md"
     llm:
       provider: claude-code
       model: opus
@@ -67,7 +77,7 @@ agents:
 
   - id: qa
     name: "QA Engineer"
-    promptTemplate: "agents/qa.md"
+    promptTemplate: "../../agents/qa.md"
     llm:
       provider: claude-code
       model: sonnet

@@ -24,6 +24,10 @@ export {
   createWorktree,
   commitAndPushWorktree,
   removeWorktree,
+  runProjectCommand,
+  validateWorktree,
+  verifyWorktree,
+  verificationSummary,
 } from '@floor-agents/orchestrator'
 export type * from '@floor-agents/orchestrator'
 

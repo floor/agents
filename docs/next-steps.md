@@ -74,6 +74,50 @@ is *extensibility*, not slimming: built-in ≠ hardcoded. Completes the "vendor-
 design goal and lets library consumers (e.g. the interactive front-end) register only the
 providers they use.
 
+### 6. Harden the team-channel / orchestrator-agent stack
+
+**Priority:** High for the channel items.
+**Status:** Reviewed Sep 17, 2026 — 261 tests green, typecheck clean. `runDeliberation` and
+`createTelegramChannel` are in production use by both committee scripts;
+`createOrchestratorAgent` has no callers yet.
+
+- ~~**The Telegram allowlist checked the chat, not the sender**~~ — fixed Sep 17, 2026.
+  Both checks read the *chat* id, and `allowFrom` defaulted to `[chatId]`, so in the
+  intended group deployment every member could interject and tap Approve. Since human
+  input is folded verbatim into the agents' next prompt and the agents hold `Bash` on a
+  private repo, that was a live injection path. `allowFrom` now authorizes the message
+  author, set from `TELEGRAM_ALLOW_FROM`; with no allowlist only the bot's private chat
+  is trusted, so a group fails closed until its operators are named.
+- ~~**The channel was unguarded on the critical path**~~ — fixed Sep 17, 2026. A Telegram
+  blip used to abort a paid multi-round run and lose every completed round. Channel calls
+  now go through `safely()` and report via `onChannelError` (default `console.warn`).
+  `onTurn` is deliberately still fatal: the channel is a window, but `onTurn` persists the
+  durable record and must not fail quietly. Both halves are covered by tests.
+- ~~**Telegram failures were silent**~~ — fixed Sep 17, 2026. `post()` now logs a rejected
+  send, and an undelivered approval prompt fails closed immediately instead of blocking
+  for the full 30-minute timeout on a button that never arrived. Both committee scripts
+  now pass a real `log`; the library default is still a no-op for embedders.
+- **Cost enforcement — partly done.** Fixed Sep 17, 2026: both scripts now gate on
+  `company.costs.maxCostPerTask` at each round boundary inside `converged`, so a run stops
+  when it has spent its allowance. Still open: external CLI agents record `costUsd: 0`, so
+  the total is knowingly understated — unknown cost is not distinguished from zero — and
+  the tracker is in-memory per process, so nothing is enforced across runs.
+- **Verification is a boolean, not a revision.** `GuardState.lastVerifyPassed` is
+  invalidated only by an `act` routed through the same handler, so an out-of-band change
+  leaves a stale pass. (The concurrency half of this — overlapping `act`/`verify` — was
+  fixed by serializing tool handlers in `llm-runner.ts`, with a regression test.)
+- **The `done` guard blocks a tool, not termination.** `runToolUseLoop` exits whenever
+  `stopReason !== 'tool_use'` (`llm-runner.ts:68`) without consulting guard state, so a
+  model can simply stop calling tools and still return a "tests pass" narration. Callers
+  must check `result.guard.lastVerifyPassed`; none do yet.
+- **`ToolKind` is self-declared.** A mutating tool registered as `inspect` or `report`
+  bypasses both guardrails, and nothing validates the classification.
+- **`awaitDecision` has no production caller**, so guardrail 3 (human approval for
+  irreversible actions) is unreachable despite the inline-button UX existing.
+- **`MAX_ROUNDS` parses without validation** (`discussion-committee.ts`); a non-numeric
+  value yields `NaN`, runs zero rounds, and posts an empty consensus table to the public
+  GitHub thread.
+
 ---
 
 ## Sprint Summary

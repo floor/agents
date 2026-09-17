@@ -211,7 +211,7 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
       return newCommit.sha
     },
 
-    async createPR(repo, branch, title, body) {
+    async createPR(repo, branch, title, body, baseBranch) {
       const existing = await api(
         `/repos/${owner}/${repo}/pulls?head=${owner}:${branch}&state=open`,
       )
@@ -228,7 +228,7 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
         }
       }
 
-      const defaultBranch = await getDefaultBranch(repo)
+      const defaultBranch = baseBranch ?? await getDefaultBranch(repo)
       const data = await api(`/repos/${owner}/${repo}/pulls`, {
         method: 'POST',
         body: JSON.stringify({

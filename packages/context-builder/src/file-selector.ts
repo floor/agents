@@ -72,9 +72,10 @@ export async function selectFiles(
   issue: Issue,
   project: ProjectConfig,
   git: GitAdapter,
+  ref?: string,
 ): Promise<FileSelection> {
   // Get directory tree for orientation
-  const rootEntries = await git.getTree(project.repo, '')
+  const rootEntries = await git.getTree(project.repo, '', ref)
   const tree = rootEntries
     .map(e => `${e.type === 'dir' ? '📁' : '  '} ${e.path}`)
     .join('\n')
@@ -122,7 +123,7 @@ export async function selectFiles(
   const fetched = new Set<string>()
 
   for (const [path, relevance] of sorted) {
-    const file = await git.getFile(project.repo, path)
+    const file = await git.getFile(project.repo, path, ref)
     if (file) {
       files.push({ path: file.path, content: file.content, relevance })
       fetched.add(file.path)
@@ -147,7 +148,7 @@ export async function selectFiles(
   const sortedImports = [...importCandidates.entries()].sort((a, b) => b[1] - a[1])
 
   for (const [path, relevance] of sortedImports) {
-    const file = await git.getFile(project.repo, path)
+    const file = await git.getFile(project.repo, path, ref)
     if (file && !fetched.has(file.path)) {
       files.push({ path: file.path, content: file.content, relevance })
       fetched.add(file.path)

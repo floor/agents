@@ -1,82 +1,60 @@
 # CLI
 
-`@floor/agents` ships a `floor-agents` binary that runs the orchestrator from a
-config + environment. Requires [Bun](https://bun.sh) ≥ 1.2.21 (for `Bun.YAML`).
+`floor-agents` requires Bun and runs from a project manifest and environment.
+See the [project pilot guide](./guides/project-pilot.md) for a complete setup.
 
-```bash
-bunx @floor/agents --help       # or, installed: floor-agents --help
+```sh
+floor-agents init
+floor-agents doctor
+floor-agents run --issue 123
 ```
 
-## Flags
+| Command | Behavior |
+|---------|----------|
+| `init` | Create `.agents/agents.yaml` and a developer prompt; infer origin, base branch and project commands; never overwrite existing files |
+| `doctor` | Check config, repository identity/access, command availability, prompts and credential presence without invoking an agent |
+| `run --issue <id>` | Implement one issue, run configured checks, create a PR, then exit; refuses an existing execution state |
+| `watch` or no command | Start the existing developer or committee watch loop |
+| `--help`, `-h` | Show usage |
+| `--version`, `-v` | Show version |
+| `--config <path>` | Select the project manifest for any command |
 
-| Flag | Description |
-|------|-------------|
-| `--help`, `-h` | Show usage and exit |
-| `--version`, `-v` | Print the version and exit |
+Config discovery: `--config`, then `CONFIG_PATH`, then `.agents/agents.yaml`, then
+`config/templates/default.yaml` for source development. Unknown arguments fail.
 
-With no flags, it loads the config, picks a mode (below), and starts watching for work.
+| Environment | Default / purpose |
+|-------------|-------------------|
+| `TASK_ADAPTER` | `github-issues` for `run`/`doctor`, `linear` for `watch`; also supports `things` |
+| `STATE_DIR` | `runs/` beside the manifest; existing installations should explicitly retain their previous state directory |
+| `GITHUB_TOKEN` | Required for GitHub API access |
+| `GITHUB_OWNER` | Overrides `project.owner` |
+| `GITHUB_ISSUES_REPO` | Overrides `project.repo` for the GitHub task source |
+| `LINEAR_API_KEY`, `LINEAR_TEAM_ID` | Required for Linear |
+| `LINEAR_PROJECT_ID` | Optional Linear project scope |
+| Provider credentials | Required only for configured internal providers |
+| `COMMITTEE_LABELS` | Comma-separated committee triggers; default `committee,agents` |
+| `GATEWAY_PORT` | External-agent gateway port; default `3100` |
+| `GATEWAY_TOKEN` | Optional gateway authentication token |
 
-## Environment
+`run` supports development configs. It requires `project.root`, `project.baseBranch`,
+and nonempty `project.verification`. It runs preflight first and exits nonzero if
+setup, execution, checks, publication or completion fails. It never merges a PR.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CONFIG_PATH` | — (**required**) | Path to the team config YAML. Without it (and no local `config/templates/default.yaml`) the CLI exits with a clear message. |
-| `TASK_ADAPTER` | `linear` | Task source: `linear` \| `things` \| `github-issues` |
-| `COMMITTEE_LABELS` | `committee,agents` | Comma-separated tags that trigger a committee review |
-| `STATE_DIR` | `./data/executions` | Where execution state is persisted |
-| `GATEWAY_PORT` | `3100` | Port for the external-agent gateway (started only when the config has external agents) |
-| `GATEWAY_TOKEN` | — | Optional gateway auth token |
+`watch` retains automatic mode detection: any agent with `vote` selects committee
+mode; otherwise it uses the developer/reviewer flow triggered by `agent`. PM and
+QA workflow integration is not active. A configured verification pipeline runs
+preflight at service startup, too.
 
-Plus credentials, **only for what your config uses**:
+Developer commands and prompt paths are project-specific; paths resolve relative
+to the manifest, not the launch directory. Missing prompts fail preflight rather
+than silently degrading the new one-shot workflow.
 
-| Variable | Needed for |
-|----------|-----------|
-| `GITHUB_TOKEN`, `GITHUB_OWNER` | always (the git adapter) |
-| `LINEAR_API_KEY`, `LINEAR_TEAM_ID` | `TASK_ADAPTER=linear` |
-| `GITHUB_ISSUES_REPO` | `TASK_ADAPTER=github-issues` |
-| `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY` / `LMSTUDIO_BASE_URL` | the providers your **internal** agents use (external agents need no key) |
-
-## Modes
-
-The mode is auto-detected from the config:
-
-- **Committee** — when any agent has the `vote` capability. Review-only: agents review a
-  proposal in parallel and vote APPROVE/REJECT; majority wins. Triggered by the
-  `COMMITTEE_LABELS` tags (default `committee`, `agents`) on a task.
-- **Dev** — otherwise. The pipeline writes code and opens PRs (PM → dev → CTO review →
-  QA). Triggered by the config's workflow trigger label.
-
-## Trigger tags
-
-In committee mode, the CLI watches your task source for any task tagged with one of
-`COMMITTEE_LABELS` (default `committee` **or** `agents`) and runs a review. Example:
-
-```bash
-COMMITTEE_LABELS=committee,agents,rfc floor-agents   # add more tags
+```sh
+TASK_ADAPTER=linear floor-agents doctor --config /path/to/project/agents.yaml
+TASK_ADAPTER=linear floor-agents run --config /path/to/project/agents.yaml --issue FLO-123
 ```
 
-## Examples
-
-Committee review with the local trio (Claude Code + Codex + Antigravity) over Things:
-
-```bash
-CONFIG_PATH=~/Code/floor/.agents/projects/vlist/agents.yaml \
-TASK_ADAPTER=things GATEWAY_PORT=3199 \
-floor-agents
-```
-
-External agents connect separately — see the [Local Committee guide](./guides/local-committee.md).
-
-Dev pipeline over Linear:
-
-```bash
-CONFIG_PATH=./.agents/agents.yaml TASK_ADAPTER=linear \
-LINEAR_API_KEY=… LINEAR_TEAM_ID=… GITHUB_TOKEN=… GITHUB_OWNER=your-org \
-floor-agents
-```
-
-## See also
-
-- [Committee Mode](./guides/committee.md) · [Local Committee](./guides/local-committee.md)
-- [Configuration](./configuration.md) — the team config YAML
-- [Scripts](./scripts.md) — the gateway bridges external agents run
+Provider preflight checks presence, not model inference or login validity. GitHub
+API repository access does not establish local Git push authentication. Detailed
+verification output and preserved failure workspaces are described in the
+[project pilot guide](./guides/project-pilot.md).

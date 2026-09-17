@@ -1,6 +1,6 @@
-# Local Committee — Claude Code + Codex + Antigravity
+# Local Committee — Claude Code + Codex + Grok
 
-Run a technical committee entirely from **local CLI/IDE tools** — no cloud API keys, no Linear/GitHub required. Each agent reviews an RFC markdown file from disk and votes; the round is **event-driven** end to end.
+Run a technical committee entirely from **local CLI tools** — no cloud API keys, no Linear/GitHub required. Each agent reviews an RFC markdown file from disk and votes; the round is **event-driven** end to end.
 
 This is the all-local variant of [Committee Mode](./committee.md). Where committee mode dispatches cloud LLM adapters and triggers off Linear labels, this setup wires the actual tools a developer already runs:
 
@@ -8,42 +8,28 @@ This is the all-local variant of [Committee Mode](./committee.md). Where committ
 |-------|------|-----------|------|
 | **claude** | Claude Code CLI | internal — orchestrator spawns `claude -p` | the CLI's own login |
 | **codex** | Codex CLI | external — gateway → `codex exec` | the CLI's own login |
-| **antigravity** | Antigravity IDE (Gemini) | external — gateway ⇄ files ⇄ MCP | the IDE's own login |
+| **grok** | Grok CLI | external — gateway → `grok --prompt-file` | the CLI's own login |
 
-> **Worked example:** on 2026-06-13 this committee reviewed `RFC-013: Spatial Navigation Model` and returned **REJECTED 2-1** (Claude APPROVE, Codex REJECT, Antigravity REJECT) — each through its real tool, $0.75, no cloud keys.
+> **Worked example:** on 2026-06-13 this committee reviewed `RFC-013: Spatial Navigation Model` — each agent through its real local tool, no cloud keys, votes tallied by strict majority.
+
+All three members are **headless CLIs**, which is the whole point: a CLI is a process the gateway fully controls — assign a task, run the binary, capture stdout, record the vote. There is no GUI session to keep warm, nothing to poll, and no human relaying messages. (Antigravity, a GUI IDE, was the original third seat; it cannot participate unattended and is now parked — see [Appendix: why Antigravity is parked](#appendix-why-antigravity-is-parked).)
 
 ---
 
-## Why Antigravity needs a special bridge
+## Why every member is a CLI
 
-Codex is easy: it's a headless CLI, so a [gateway](../gateway.md) client just runs `codex exec` and returns the output. Antigravity is not — and its constraints dictate the whole design:
-
-1. **No headless mode.** Antigravity is a GUI IDE; its agent (Cascade, Gemini) only acts inside the app.
-2. **No MCP sampling or autonomous notifications.** An MCP server *cannot* push work to Antigravity and make it act — it only exposes tools the agent calls.
-3. **It cycles its own background-task processes.** A long-lived gateway connection started *inside* Antigravity gets killed and restarted, which thrashes the connection.
-4. **It wakes on background-task stdout.** When a background task Antigravity is running prints a line, Antigravity's agent wakes and can act on it.
-
-So the bridge is split into three cooperating pieces:
+The committee is event-driven: the gateway emits a review event, and each member must **act when the event arrives**. A headless CLI does this natively:
 
 ```
-[ outside Antigravity — persistent ]            [ inside Antigravity — cycle-tolerant ]
-  antigravity-relay.ts                            antigravity-notify.ts
-  (gateway client, holds the slot)                (stateless; prints NEW_REVIEW)
-        │  gateway assigns                                │ wakes Antigravity
-        ▼                                                 ▼
-   ~/.floor-committee/pending/  ◄──── scans ────  Antigravity agent (Gemini)
-        ▲                                                 │ get_pending_review
-        │ forwards vote                                   ▼
-   ~/.floor-committee/results/  ◄──── submit_vote ──  antigravity-mcp.ts (file-backed MCP)
-        │
-        └──► relay forwards the vote back to the gateway → committee tallies
+gateway assigns task ──► external-agent bridge runs the CLI ──► captures stdout ──► posts vote
 ```
 
-- **`scripts/antigravity-relay.ts`** — the persistent gateway client. Runs **outside** Antigravity (the round harness or pm2 owns it). Receives assignments → writes `~/.floor-committee/pending/<id>.json`; polls `~/.floor-committee/results/` → forwards votes to the gateway.
-- **`scripts/antigravity-notify.ts`** — a **stateless** wake notifier, run as a background task **inside** Antigravity. Scans `pending/`, prints `NEW_REVIEW <id>` to stdout (which wakes Antigravity). A per-review `.announced` marker (written before printing) guarantees one wake per review even if Antigravity kills/restarts it — no death-loop, no duplicate reviews.
-- **`scripts/antigravity-mcp.ts`** — a **file-backed** MCP server (holds no gateway connection). `get_pending_review` reads `pending/`; `submit_vote` writes `results/`. Registered in Antigravity at `~/.gemini/config/mcp_config.json`.
+- **`scripts/codex-agent.ts`** — gateway client. On assignment, runs `codex exec --sandbox read-only` against the repo and returns the last message as the vote.
+- **`scripts/grok-agent.ts`** — gateway client. On assignment, writes the prompt to a temp file and runs `grok --prompt-file … --output-format plain --permission-mode dontAsk --sandbox read-only`, returning stdout as the vote.
 
-The relay and MCP server are decoupled through the filesystem, so the MCP server is race-free and safe to lazy-spawn, and the relay's lifecycle is independent of Antigravity's process churn.
+Both are the same ~80-line pattern: connect to the gateway with `capabilities: ['review_rfc', 'vote']`, implement `onTask`, run the local binary, return the review text (ending in `VOTE: APPROVE` / `VOTE: REJECT`). Adding a fourth CLI member is a copy of either file plus an entry in the project config.
+
+This is why the loop is robust: there is no "wake" problem. The bridge process is always connected; the CLI is spawned on demand and exits when done.
 
 ---
 
@@ -51,7 +37,7 @@ The relay and MCP server are decoupled through the filesystem, so the MCP server
 
 ### 1. Project config
 
-Central layout under `~/Code/floor/.agents/` (one folder per project). The trio config marks Codex and Antigravity `external: true`:
+Central layout under `~/Code/floor/.agents/` (one folder per project). External members are marked `external: true`:
 
 ```yaml
 # ~/Code/floor/.agents/projects/vlist/agents.yaml
@@ -69,100 +55,70 @@ agents:
     llm: { provider: openai, model: local }   # provider unused for external agents
     capabilities: [review_rfc, vote]
 
-  - id: antigravity
-    name: "Antigravity"
+  - id: grok
+    name: "Grok"
     external: true
-    promptTemplate: "/Users/you/Code/floor/.agents/prompts/antigravity-reviewer.md"
-    llm: { provider: gemini, model: local }    # provider unused for external agents
+    promptTemplate: "/Users/you/Code/floor/.agents/prompts/grok-reviewer.md"
+    llm: { provider: openai, model: local }   # provider unused for external agents
     capabilities: [review_rfc, vote]
 ```
 
-Each agent reviews through its **own** persona (`promptTemplate`) — Claude grounds in the codebase, Codex weighs migration risk, Antigravity reasons from browser internals. (External agents get their own persona too; this was a fix — previously they shared one generic prompt.)
+Each agent reviews through its **own** persona (`promptTemplate`) — Claude grounds in the codebase, Codex weighs migration risk, Grok reasons from first principles and distinguishes bounded from unbounded problems. Distinct personas are deliberate: they give the panel genuine perspective diversity instead of three takes on the same prior.
 
 No cloud keys are needed: `provider` for external agents is ignored (they run via the gateway), and the orchestrator no longer requires an API key for them.
 
-### 2. Register the Antigravity MCP server
+### 2. Log in to the CLIs
 
-Antigravity (IDE/CLI) reads MCP config from `~/.gemini/config/mcp_config.json`:
+Each member authenticates with its own tool — once, on your machine:
 
-```json
-{
-  "mcpServers": {
-    "floor-committee": {
-      "command": "/Users/you/.bun/bin/bun",
-      "args": ["/Users/you/Code/floor/agents/scripts/antigravity-mcp.ts"]
-    }
-  }
-}
+```bash
+claude   # Claude Code: already logged in if you use the CLI
+codex    # Codex: its own login
+grok login --oauth          # Grok: signs in via auth.x.ai (X / xAI account)
+grok models                 # verify: should NOT say "You are not authenticated"
 ```
 
-Use an absolute `bun` path — Antigravity spawns MCP servers with a minimal `PATH`. After saving, refresh MCP servers in Antigravity; `floor-committee` should appear with `get_pending_review` and `submit_vote`.
+> **Grok model note.** The grok.com `grok-build` model (the CLI default) **rejects the `reasoningEffort` parameter** — passing `--effort` returns HTTP 400. The bridge therefore omits `--effort` by default; only set `GROK_EFFORT` for a model that supports it.
 
-### 3. Arm Antigravity (once)
-
-In Antigravity, start the notifier as a background task and give it a standing rule:
-
-> Run this as a background task and keep it alive:
-> `bun /Users/you/Code/floor/agents/scripts/antigravity-notify.ts`
->
-> Whenever it prints a line starting with `NEW_REVIEW`, immediately: call `get_pending_review` on `floor-committee`, review the RFC from your browser-engine perspective, then call `submit_vote` with the `taskId` and your review ending in `VOTE: APPROVE` or `VOTE: REJECT`.
-
-Antigravity is now standing by for every future round.
+That's the entire external-member setup — no MCP server, no relay, no background task. The bridge is spawned by the round harness.
 
 ---
 
 ## Running a round
 
-One command spins up the gateway, the Codex bridge, and the Antigravity relay (the harness auto-spawns the relay whenever `antigravity` is in `AGENTS`):
+One command spins up the gateway and the external bridges (the harness auto-spawns a bridge for each external agent in `AGENTS`):
 
 ```bash
 cd ~/Code/floor/agents
 RFC_FILE=~/Code/floor/vlist.io/docs/rfcs/RFC-013-Spatial-Navigation-Model.md \
 CODEX_CWD=~/Code/floor/vlist \
-AGENTS=claude,codex,antigravity \
+AGENTS=claude,codex,grok \
 bun scripts/committee-run.ts
 ```
 
 | Env | Meaning |
 |-----|---------|
 | `RFC_FILE` | the RFC markdown to review (frontmatter stripped, `# heading` → title) |
-| `CODEX_CWD` | repo the reviewers read for grounding (Claude + Codex run here) |
-| `AGENTS` | which committee agents to include (default `claude,codex`) |
+| `CODEX_CWD` | repo the reviewers read for grounding (all members run here) |
+| `AGENTS` | which committee agents to include (default `claude,codex,grok`) |
 | `GATEWAY_PORT` | gateway port (default `3199`) |
 | `EXTERNAL_TIMEOUT_MS` | how long to wait for an external vote (default `600000`) |
+| `GROK_MODEL` / `GROK_EFFORT` / `GROK_SANDBOX` | optional Grok overrides (model id, effort, sandbox profile) |
 
-Flow: Claude reviews internally; Codex is pushed over the gateway and runs `codex exec --sandbox read-only`; the relay drops a pending file → Antigravity's notifier wakes it → it reviews and submits → the relay forwards the vote. Votes tally by simple majority.
+Flow: Claude reviews internally; Codex and Grok are each pushed over the gateway and run their CLI headless against `CODEX_CWD` in a **read-only** sandbox; each returns its review and the gateway records the vote. Votes tally by **strict majority** (a tie or a missing vote does not pass).
 
 ### Daemon path (pm2)
 
-For a long-running fleet, `~/Code/floor/.agents/ecosystem.config.cjs` reads `fleet.json` and starts, per enabled project: the orchestrator, the `codex-<project>` bridge, and the `antigravity-<project>` relay (the relay lives here precisely because it must run *outside* Antigravity). Antigravity still runs `antigravity-notify.ts` itself.
-
----
-
-## File protocol
-
-The relay and MCP server communicate through `~/.floor-committee/`:
-
-```
-~/.floor-committee/
-├── pending/
-│   ├── <id>.json          # the TaskAssignment (relay writes, MCP reads)
-│   └── <id>.announced     # notifier dedup marker (one wake per review)
-└── results/
-    └── <id>.json          # { taskId, content } (MCP writes, relay forwards + deletes)
-```
-
-`<id>` is the task id with non-`[A-Za-z0-9._-]` chars replaced by `_`. `submit_vote` writes results atomically (tmp + rename); the relay **polls** `results/` every 400ms (not `fs.watch` — it misses atomic renames on macOS).
+For a long-running fleet, `~/Code/floor/.agents/ecosystem.config.cjs` reads `fleet.json` and starts, per enabled project: the orchestrator and one bridge per external member (`codex-<project>`, `grok-<project>`). Because the bridges are plain CLIs, the daemon owns their whole lifecycle — there is no out-of-band process to coordinate.
 
 ---
 
 ## Troubleshooting
 
-- **Antigravity connects then disconnects in a loop** — you're running a gateway client *inside* Antigravity (e.g. an old single-process `antigravity-agent.ts`). Antigravity cycles processes; the gateway client must be the **relay**, run outside. Inside Antigravity, run only `antigravity-notify.ts`.
-- **`get_pending_review` returns "No review pending"** — the relay isn't running or isn't connected to the round's gateway. Start a round (which spawns the relay) or check `GATEWAY_URL`/port.
-- **Vote recorded but round times out** — the relay isn't polling/forwarding (check it's alive and on the same port). A stale leftover file in `pending/`/`results/` can also shadow a new review; clear `~/.floor-committee/` between manual tests.
-- **Duplicate `antigravity` rejected by gateway** — two gateway clients claimed the slot (e.g. relay + a leftover bridge). Only one process may register as `antigravity`.
-- **Antigravity re-reviews the same RFC** — the `.announced` marker was lost. The relay deletes it on successful forward; don't hand-delete `pending/` mid-review.
+- **External agent connects then the round times out** — the CLI isn't authenticated (run its login) or the review exceeded `EXTERNAL_TIMEOUT_MS`. Check the bridge's inherited stdout in the run log for the CLI's own error.
+- **Grok 400 `does not support parameter reasoningEffort`** — you set `GROK_EFFORT` (or an old build defaulted it) against `grok-build`. Unset it.
+- **Duplicate agent id rejected by gateway** — two bridges claimed the same slot (e.g. a leftover pm2 process plus the round harness). Only one process may register per agent id.
+- **Empty review / no `VOTE:` line** — the CLI printed to stderr, not stdout, or produced tool noise. Codex uses `--output-last-message`; Grok uses `--output-format plain`. Check the bridge captured the final message.
 
 ---
 
@@ -171,3 +127,16 @@ The relay and MCP server communicate through `~/.floor-committee/`:
 - [Committee Mode](./committee.md) — the Linear-triggered, cloud-adapter variant
 - [Agent Gateway](../gateway.md) — WebSocket protocol, REST fallback, building custom agents
 - [Zero-Cost Committee](./zero-cost-committee.md) — local models for $0/review
+
+---
+
+## Appendix: why Antigravity is parked
+
+Antigravity (the Gemini-backed GUI IDE) was the original third seat. We invested in a three-part file-backed bridge to let it participate, but it **cannot vote unattended**, which breaks the event-driven contract. The reasons — confirmed directly by Antigravity about its own internals on 2026-06-13:
+
+1. **No external push verb.** The `agentapi` binary (`language_server agentapi …`, reachable at the LS's local port via `ANTIGRAVITY_LS_ADDRESS`) exposes no supported command to inject a prompt or start a Cascade turn from outside.
+2. **Background-task stdout does not wake the agent.** A running task's stdout is appended to Cascade's transcript silently. Cascade only resumes on: (a) a background task **completing**, (b) a **native scheduled notification** (`/schedule`), or (c) a **user message**. So an always-alive notifier printing `NEW_REVIEW` is never seen until something else wakes the agent — which is exactly why two full committee runs timed out to abstain with every process alive.
+3. **The only unattended wake is the native scheduled poll.** `/schedule` fires a high-priority notification on a cron that genuinely wakes Cascade. That's polling, not push — it contradicts the pure event-driven design, and was declined.
+4. **Rules persist via an MCP instructions file.** `~/.gemini/antigravity/mcp/<server>/instructions.md` is auto-injected into every session where that MCP server is active — the right place for a standing rule, but it only matters once something wakes the agent.
+
+**Conclusion:** a committee member must act when the event arrives. A headless CLI does; a GUI agent with no external push does not. Grok (a CLI) replaced Antigravity in the third seat. The Antigravity bridge scripts (`antigravity-relay.ts`, `antigravity-notify.ts`, `antigravity-mcp.ts`) remain in `scripts/` for reference and for any future Antigravity build that exposes a real push/trigger, and the `antigravity` agent stays defined (but out of the default `AGENTS`) in the project config.

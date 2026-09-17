@@ -6,9 +6,12 @@ import type {
   AgentDefinition,
   ReviewVerdict,
   ProjectConfig,
+  GuardrailsConfig,
 } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
-import { createWorktree, commitAndPushWorktree, removeWorktree, type Worktree } from './worktree.ts'
+import { createWorktree, gitText, snapshotWorktree, removeWorktree } from './worktree.ts'
+import { requireVerification, prepareWorkspace, verifyAndCommit, resolveBaseSha } from './verified-commit.ts'
+import { verificationSummary } from './verification.ts'
 import type { CostTracker } from './cost-tracker.ts'
 
 export const NATIVE_PROVIDERS = new Set(['claude-code'])
@@ -68,13 +71,22 @@ async function spawnClaudeCode(
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
+    stdin: 'ignore',
+    detached: process.platform !== 'win32',
     env: { ...cleanEnv, CLAUDE_CODE_SKIP_HOOKS: '1' },
   })
 
-  const timeout = setTimeout(() => proc.kill(), timeoutMs)
-  const stdout = await new Response(proc.stdout).text()
-  const stderr = await new Response(proc.stderr).text()
-  const exitCode = await proc.exited
+  let timedOut = false
+  const timeout = setTimeout(() => {
+    timedOut = true
+    try {
+      if (process.platform !== 'win32') process.kill(-proc.pid, 'SIGKILL')
+      else proc.kill('SIGKILL')
+    } catch { proc.kill('SIGKILL') }
+  }, timeoutMs)
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited,
+  ])
   clearTimeout(timeout)
 
   const durationMs = Math.round(performance.now() - start)
@@ -89,18 +101,20 @@ async function spawnClaudeCode(
     resultText = stdout || stderr
   }
 
-  return { resultText, cost, durationMs, exitCode }
+  return { resultText, cost, durationMs, exitCode: timedOut ? 143 : exitCode }
 }
 
 // ── Dev agent: native execution on worktree ─────────────────────
 
 export type NativeAgentDeps = {
+  readonly runAgent?: typeof spawnClaudeCode
   readonly contextBuilder: ContextBuilder
   readonly stateStore: StateStore
   readonly costTracker: CostTracker
   readonly addComment: (issueId: string, text: string) => Promise<void>
   readonly setLabel: (issueId: string, label: string) => Promise<void>
   readonly project: ProjectConfig
+  readonly guardrails: GuardrailsConfig
 }
 
 export async function runNativeDevAgent(
@@ -112,9 +126,14 @@ export async function runNativeDevAgent(
 ): Promise<ExecutionState> {
   const { contextBuilder, stateStore, costTracker, addComment } = deps
 
+  requireVerification(deps.project)
+
   state = await advanceState(state, 'calling_llm', {}, stateStore)
 
-  const worktree = await createWorktree(state.branchName!)
+  const worktree = await createWorktree(state.branchName!, deps.project.root)
+  state = await advanceState(state, 'calling_llm', {
+    workspacePath: worktree.path, baseSha: await resolveBaseSha(worktree, deps.project, state), verification: undefined,
+  }, stateStore)
   const isRevision = !!reviewComments
 
   console.log(`[${agent.id}] native agent on worktree: ${worktree.path}`)
@@ -128,12 +147,14 @@ export async function runNativeDevAgent(
   ].join('\n'))
 
   try {
+    await prepareWorkspace(worktree, deps.project)
     // Build context hints
     const ctx = await contextBuilder.build({
       agent,
       issue,
       project: deps.project,
       reviewComments,
+      ref: worktree.initialSha,
     })
 
     const promptParts = [
@@ -152,40 +173,31 @@ export async function runNativeDevAgent(
       '',
       '## Instructions',
       'You are working directly on a git branch. Edit files, run tests, iterate until the code is correct.',
-      'Run `bun run typecheck` and `bun test` before finishing to make sure everything passes.',
+      `Project checks: ${deps.project.verification!.map(c => c.command.join(' ')).join('; ')}. The engine will run these independently.`,
+      'Do not commit, push, or open a PR. The engine validates and publishes the final changes.',
       'Do NOT use write_file or pr_description tools — edit files directly.',
     )
 
-    const result = await spawnClaudeCode(
+    const result = await (deps.runAgent ?? spawnClaudeCode)(
       promptParts.join('\n'),
       worktree.path,
       agent.llm.model,
     )
 
     costTracker.recordCost(issue.id, result.cost)
+    state = await advanceState(state, 'calling_llm', { costUsd: costTracker.getTaskCost(issue.id), llmResponse: result.resultText }, stateStore)
     console.log(`[${agent.id}] native agent: ${formatDuration(result.durationMs)}, $${result.cost.toFixed(4)}, exit ${result.exitCode}`)
 
-    if (result.exitCode !== 0 && result.exitCode !== 143) {
+    if (result.exitCode !== 0) {
       throw new Error(`Claude Code failed (exit ${result.exitCode}): ${result.resultText.slice(0, 500)}`)
     }
 
-    const sha = await commitAndPushWorktree(
-      worktree,
+    state = await verifyAndCommit(
+      worktree, deps.project, deps.guardrails, state, stateStore,
       `${issue.title}\n\nAutomated by Floor Agents (${agent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`,
     )
 
-    if (!sha) {
-      await addComment(issue.id, `❌ **${agent.name}** made no changes to the code.`)
-      await deps.setLabel(issue.id, 'needs-human')
-      return advanceState(state, 'failed', {
-        error: 'Native agent made no changes',
-        llmResponse: result.resultText,
-        costUsd: costTracker.getTaskCost(issue.id),
-      }, stateStore)
-    }
-
-    const diffStat = await Bun.$`git -C ${worktree.path} diff HEAD~1 --stat`.quiet()
-    const diffText = diffStat.stdout.toString().trim()
+    const diffText = await gitText(worktree.path, ['diff', state.baseSha!, state.commitSha!, '--stat'])
 
     await addComment(issue.id, [
       `✅ **${agent.name}** completed work (native mode):`,
@@ -193,15 +205,18 @@ export async function runNativeDevAgent(
       diffText,
       '```',
       `> ${formatDuration(result.durationMs)} | $${result.cost.toFixed(4)}`,
+      verificationSummary(state.verification!),
     ].join('\n'))
 
-    return advanceState(state, 'creating_pr', {
-      commitSha: sha,
+    state = await advanceState(state, 'creating_pr', {
       costUsd: costTracker.getTaskCost(issue.id),
       llmResponse: result.resultText,
     }, stateStore)
-  } finally {
     await removeWorktree(worktree)
+    return state
+  } catch (err) {
+    console.error(`[${agent.id}] workspace preserved: ${worktree.path}`)
+    throw err
   }
 }
 
@@ -227,7 +242,7 @@ export async function runNativeReviewAgent(
 
   state = await advanceState(state, 'reviewing', {}, stateStore)
 
-  const worktree = await createWorktree(state.branchName!)
+  const worktree = await createWorktree(state.branchName!, deps.project.root)
 
   console.log(`[${reviewer.id}] native review on worktree: ${worktree.path}`)
 
@@ -235,10 +250,13 @@ export async function runNativeReviewAgent(
     `🔎 **${reviewer.name}** is reviewing the PR (native mode)...`,
     `> Model: \`${reviewer.llm.model}\` via ${reviewer.llm.provider}`,
     `> Review cycle: ${state.reviewCycle + 1}/${deps.maxReviewCycles}`,
-    `> Will run \`bun run typecheck\` and \`bun test\``,
+    `> Engine checks: ${state.verification?.passed ? 'passed' : 'not recorded'}`,
   ].join('\n'))
 
   try {
+    if (state.commitSha && worktree.initialSha !== state.commitSha) throw new Error('PR branch changed since implementation; refusing a stale review')
+    await prepareWorkspace(worktree, deps.project)
+    const reviewTree = await snapshotWorktree(worktree)
     let rolePrompt = ''
     try {
       const file = Bun.file(reviewer.promptTemplate)
@@ -265,14 +283,14 @@ export async function runNativeReviewAgent(
       '',
       '## Instructions',
       'You are on the branch with the agent\'s changes. Please:',
-      '1. Run `bun run typecheck` — report the result',
-      '2. Run `bun test` — report the result',
-      '3. Review the code for correctness, security, style, and documentation',
-      '4. At the end, output your verdict as a JSON block:',
+      '1. Inspect the implementation and related tests; do not edit, commit, or push.',
+      state.verification ? verificationSummary(state.verification) : 'No engine verification recorded. Do not claim tests passed.',
+      '2. Review the code for correctness, security, style, and documentation',
+      '3. At the end, output your verdict as a JSON block:',
       '```json',
       '{ "decision": "approve" or "request_changes", "comments": "your review" }',
       '```',
-      'Only approve if typecheck AND tests pass AND the code is correct.',
+      'Only approve if the code is correct. Test claims must match the engine results above.',
     ].join('\n')
 
     const result = await spawnClaudeCode(
@@ -312,13 +330,13 @@ export async function runNativeReviewAgent(
     }
 
     // A crashed or timed-out reviewer must never count as an approval.
-    // exit 143 = killed by the timeout (SIGTERM); any nonzero exit is a failure.
-    if (result.exitCode !== 0) {
+    // exit 143 represents the runner deadline; any nonzero exit is a failure.
+    if (result.exitCode !== 0 || reviewTree !== await snapshotWorktree(worktree)) {
       verdict = {
         decision: 'request_changes',
         comments: result.exitCode === 143
           ? 'Reviewer timed out before producing a verdict — failing closed.'
-          : `Reviewer exited with code ${result.exitCode} before producing a verdict — failing closed.`,
+          : 'Reviewer failed or modified the workspace — failing closed.',
       }
     }
 
@@ -334,13 +352,13 @@ export async function runNativeReviewAgent(
         '',
         verdict.comments,
         '',
-        `*Model: ${reviewer.llm.model} | ${formatDuration(result.durationMs)} | $${result.cost.toFixed(4)} | typecheck + tests run on branch*`,
+        `*Model: ${reviewer.llm.model} | ${formatDuration(result.durationMs)} | $${result.cost.toFixed(4)}*`,
       ].join('\n'),
     )
 
     if (verdict.decision === 'approve') {
       await addComment(issue.id, [
-        `✅ **${reviewer.name}** approved the PR (typecheck + tests verified)`,
+        `✅ **${reviewer.name}** approved the PR`,
         '',
         `> ${verdict.comments.length > 200 ? verdict.comments.slice(0, 200) + '...' : verdict.comments}`,
       ].join('\n'))

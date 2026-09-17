@@ -189,6 +189,9 @@ async function loadTestConfig(): Promise<CompanyConfig> {
   // Override agents to use API providers (not claude-code) for testing
   return {
     ...config,
+    // These tests exercise the legacy API pipeline with a mocked Git adapter.
+    // Real checkout/verification integration is covered in verified-project.test.ts.
+    project: { ...config.project, root: undefined, verification: undefined, setup: undefined },
     agents: config.agents.map(a => ({
       ...a,
       llm: { ...a.llm, provider: 'anthropic' },

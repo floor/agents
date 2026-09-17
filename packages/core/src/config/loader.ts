@@ -6,6 +6,7 @@ import type { ChainOfCommand } from '../types/chain.ts'
 import type { AutonomyConfig } from '../types/autonomy.ts'
 import type { GuardrailsConfig } from '../types/guardrails.ts'
 import type { CostConfig } from '../types/costs.ts'
+import { dirname, resolve } from 'node:path'
 
 const DEFAULT_TEMPLATE_PATH = 'config/templates/default.yaml'
 
@@ -36,6 +37,11 @@ function parseAgents(raw: unknown[]): AgentDefinition[] {
 
 function parseProject(raw: any): ProjectConfig {
   return {
+    root: raw.root,
+    owner: raw.owner,
+    baseBranch: raw.baseBranch,
+    setup: raw.setup,
+    verification: raw.verification,
     name: raw.name ?? '',
     repo: raw.repo ?? '',
     language: raw.language ?? '',
@@ -122,11 +128,20 @@ export async function loadCompanyConfig(path?: string): Promise<CompanyConfig> {
       throw new Error(`Default template not found: ${DEFAULT_TEMPLATE_PATH}`)
     }
     const text = await defaultFile.text()
-    return parseConfig(text)
+    return resolvePaths(parseConfig(text), DEFAULT_TEMPLATE_PATH)
   }
 
   const text = await file.text()
-  return parseConfig(text)
+  return resolvePaths(parseConfig(text), configPath)
+}
+
+function resolvePaths(config: CompanyConfig, configPath: string): CompanyConfig {
+  const dir = dirname(resolve(configPath))
+  return {
+    ...config,
+    project: { ...config.project, root: typeof config.project.root === 'string' && config.project.root ? resolve(dir, config.project.root) : config.project.root },
+    agents: config.agents.map(agent => ({ ...agent, promptTemplate: resolve(dir, agent.promptTemplate) })),
+  }
 }
 
 function parseConfig(text: string): CompanyConfig {

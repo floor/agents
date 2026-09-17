@@ -83,13 +83,15 @@ export async function runToolUseLoop(
     }
     conversation.push({ role: 'assistant', content: assistantBlocks })
 
-    const resultBlocks: ContentBlock[] = await Promise.all(
-      response.toolCalls.map(async tc => ({
+    // Tool handlers may mutate shared workspace/guard state. Honor call order.
+    const resultBlocks: ContentBlock[] = []
+    for (const tc of response.toolCalls) {
+      resultBlocks.push({
         type: 'tool_result' as const,
         tool_use_id: tc.id,
         content: toolHandler ? await toolHandler(tc) : 'ok',
-      })),
-    )
+      })
+    }
     conversation.push({ role: 'user', content: resultBlocks })
   }
 

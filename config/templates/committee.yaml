@@ -19,7 +19,7 @@ project:
 agents:
   - id: claude
     name: "Claude"
-    promptTemplate: "agents/committee.md"
+    promptTemplate: "../../agents/committee.md"
     llm:
       provider: anthropic
       model: claude-opus-4-20250514
@@ -31,7 +31,7 @@ agents:
 
   - id: gemini
     name: "Gemini"
-    promptTemplate: "agents/committee.md"
+    promptTemplate: "../../agents/committee.md"
     llm:
       provider: gemini
       model: gemini-2.5-pro
@@ -43,7 +43,7 @@ agents:
 
   - id: gpt
     name: "GPT"
-    promptTemplate: "agents/committee.md"
+    promptTemplate: "../../agents/committee.md"
     llm:
       provider: openai
       model: gpt-4.1

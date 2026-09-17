@@ -54,14 +54,14 @@ The rest (`write_code`, `create_pr`, `write_tests`, …) describe what dev agent
 - **Internal** (`external: false`): dispatched in-process via the agent's LLM adapter
   (Anthropic, Gemini, LM Studio, OpenAI-compatible, Claude Code).
 - **External** (`external: true`): connect over the [gateway](./gateway.md) WebSocket. This
-  is how local tools join — e.g. the Codex CLI and the Antigravity IDE in the
+  is how local CLI tools join — e.g. the Codex CLI and the Grok CLI in the
   [Local Committee](./guides/local-committee.md). External agents need no provider API key.
 
 ## Personas (`promptTemplate`)
 
 Each agent reviews/works through its own prompt — its **persona**. `promptTemplate` points
 to a markdown file (e.g. `agents/codex-reviewer.md` — pragmatic, migration-risk lens;
-`agents/antigravity-reviewer.md` — browser internals). The engine loads it as the agent's
+`agents/grok-reviewer.md` — first-principles, bounded-vs-unbounded). The engine loads it as the agent's
 system prompt; if the file is missing it falls back to a generic prompt, so a `promptTemplate`
 path is never load-bearing.
 

@@ -29,3 +29,9 @@ test('parses agent definitions correctly', async () => {
   expect(backend.capabilities).toContain('write_code')
   expect(backend.autonomy).toBe('T1')
 })
+
+test('config paths resolve against the manifest instead of launch directory', async () => {
+  const config = await loadCompanyConfig('config/templates/default.yaml')
+  expect(config.project.root).toBe(process.cwd())
+  expect(config.agents[0]?.promptTemplate).toBe(`${process.cwd()}/agents/backend-dev.md`)
+})

@@ -31,9 +31,9 @@ const REPO = expand(process.env.CODEX_CWD ?? join(homedir(), 'Code/floor/vlist')
 const PORT = parseInt(process.env.GATEWAY_PORT ?? '3199', 10)
 const CONFIG = join(homedir(), 'Code/floor/.agents/projects/vlist/agents.yaml')
 const RFC_FILE = expand(process.env.RFC_FILE ?? '')
-// Comma-separated agent ids to include (default: claude + codex; add antigravity
-// once its bridge is running).
-const ONLY = (process.env.AGENTS ?? 'claude,codex').split(',').map(s => s.trim())
+// Comma-separated agent ids to include. Default trio: claude (internal) + codex +
+// grok (both external CLI bridges). Antigravity is parked (GUI has no unattended wake).
+const ONLY = (process.env.AGENTS ?? 'claude,codex,grok').split(',').map(s => s.trim())
 
 if (!RFC_FILE) {
   console.error('RFC_FILE is required')
@@ -82,6 +82,17 @@ async function main() {
       })
     : null
 
+  // Grok bridge — the third committee member. A local CLI we fully control:
+  // assign → `grok --prompt-file …` (read-only, headless) → capture → vote.
+  const needGrok = agents.some(a => a.id === 'grok')
+  const grokBridge = needGrok
+    ? Bun.spawn(['bun', join(import.meta.dir, 'grok-agent.ts')], {
+        env: { ...process.env, GATEWAY_URL: `ws://localhost:${PORT}`, GROK_CWD: REPO },
+        stdout: 'inherit',
+        stderr: 'inherit',
+      })
+    : null
+
   // Antigravity's persistent relay (the gateway side). Antigravity itself only
   // runs the stateless antigravity-notify.ts background task + reviews via MCP.
   const needAntigravity = agents.some(a => a.id === 'antigravity')
@@ -98,6 +109,13 @@ async function main() {
       await new Promise(r => setTimeout(r, 500))
     }
     console.log(`[run] codex connected: ${gateway.isAgentConnected('codex')}`)
+  }
+
+  if (needGrok) {
+    for (let i = 0; i < 30 && !gateway.isAgentConnected('grok'); i++) {
+      await new Promise(r => setTimeout(r, 500))
+    }
+    console.log(`[run] grok connected: ${gateway.isAgentConnected('grok')}`)
   }
 
   const claudeCode = createClaudeCodeAdapter({
@@ -129,6 +147,7 @@ async function main() {
   console.log('total cost: $' + result.totalCost.toFixed(4))
 
   bridge?.kill()
+  grokBridge?.kill()
   relay?.kill()
   gateway.stop()
   process.exit(0)

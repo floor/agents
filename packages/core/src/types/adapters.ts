@@ -93,7 +93,7 @@ export type GitAdapter = {
   getTree(repo: string, path: string, ref?: string): Promise<FileEntry[]>
   createBranch(repo: string, name: string, fromRef?: string): Promise<void>
   commitFiles(repo: string, branch: string, files: FileWrite[], message: string): Promise<string>
-  createPR(repo: string, branch: string, title: string, body: string): Promise<PullRequest>
+  createPR(repo: string, branch: string, title: string, body: string, baseBranch?: string): Promise<PullRequest>
   getPRDiff(repo: string, prId: string): Promise<string>
   addPRComment(repo: string, prId: string, body: string): Promise<void>
   mergePR(repo: string, prId: string): Promise<void>

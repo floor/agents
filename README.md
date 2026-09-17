@@ -30,6 +30,21 @@ bunx @floor/agents --help    # run it as a service
 bun add @floor/agents         # or embed it as a library
 ```
 
+### Run one verified task in your project
+
+From the target GitHub checkout, after configuring `GITHUB_TOKEN` and your provider:
+
+```bash
+floor-agents init                 # infer .agents/agents.yaml; review its commands
+floor-agents doctor               # check setup without running an agent
+floor-agents run --issue 123      # implement, verify, and open a PR for human review
+```
+
+Project setup and verification commands are configurable for your stack. The engine
+records check results against the exact Git tree it publishes and preserves failed
+workspaces. See the [project pilot guide](./docs/guides/project-pilot.md), including
+migration notes for existing config paths and state directories.
+
 ### Run it as a service
 
 A long-running process that watches your task source and orchestrates agents — point it at a team config and your environment:
@@ -70,11 +85,11 @@ Each agent is a different AI model chosen for its strengths:
 
 | Agent | Default Provider | Role |
 |-------|-----------------|------|
-| Backend Dev | LM Studio (Gemma) | Writes code, creates PRs |
-| Frontend Dev | LM Studio (Gemma) | Writes code, creates PRs |
+| Backend Dev | Claude Code (Sonnet) | Writes code, creates PRs |
+| Frontend Dev | Claude Code (Sonnet) | Writes code, creates PRs |
 | CTO | Claude Code (Opus 4.6) | Reviews PRs, approves or rejects |
-| PM | Anthropic API (Sonnet) | Decomposes tasks |
-| QA | Anthropic API (Sonnet) | Writes tests |
+| PM | Claude Code (Sonnet) | Task decomposition; not wired into the dev flow |
+| QA | Claude Code (Sonnet) | QA role; not wired into the dev flow |
 
 This is just the default config — **the team is 100% configurable**: swap models, rename roles, or add custom agents, all in YAML (no hardcoded agents in the engine). Use local models for free coding, cloud models for quality-critical reviews. See **[Agents & the Team](./docs/agents.md)**.
 
@@ -88,7 +103,7 @@ bun install
 cp .env.example .env
 # Edit .env with your GitHub token, Linear key, etc.
 
-# Start LM Studio with Gemma loaded, then:
+# Authenticate Claude Code locally, then:
 bun run src/main.ts
 ```
 
@@ -96,7 +111,7 @@ See [Getting Started](./docs/getting-started.md) for the full setup guide.
 
 ## Architecture
 
-A monorepo with 10 packages, each with a single responsibility:
+A monorepo with 11 packages, each with a single responsibility:
 
 ```
 packages/
@@ -191,7 +206,7 @@ See [Configuration Reference](./docs/configuration.md) for the full spec.
 ## Development
 
 ```bash
-bun test              # 116 tests across 22 files
+bun test              # unit and integration tests
 bun run typecheck     # type check all packages
 bun run src/main.ts   # start the orchestrator
 ```
@@ -205,7 +220,7 @@ bun run src/main.ts   # start the orchestrator
 - [First Run Guide](./docs/guides/first-run.md)
 - [Architecture](./docs/architecture.md)
 - [Committee Mode](./docs/guides/committee.md) — parallel multi-agent review + voting
-- [Local Committee](./docs/guides/local-committee.md) — Claude Code + Codex + Antigravity, event-driven
+- [Local Committee](./docs/guides/local-committee.md) — Claude Code + Codex + Grok, event-driven
 - [Zero-Cost Committee](./docs/guides/zero-cost-committee.md) — Claude Code + Gemma + Codex for $0/review
 - [Agent Gateway](./docs/gateway.md) — WebSocket protocol, REST fallback, building custom agents
 - [Scripts](./docs/scripts.md) — committee runner + gateway bridges

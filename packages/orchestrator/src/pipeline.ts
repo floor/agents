@@ -22,6 +22,7 @@ import { requireVerification } from './verified-commit.ts'
 import { gitText } from './worktree.ts'
 import { buildPrBody } from './pr-body.ts'
 import { costNote, metaLine } from './cost-note.ts'
+import { signComments, agentSignature } from './comment-signature.ts'
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -147,14 +148,20 @@ function isNative(agent: AgentDefinition): boolean {
   return NATIVE_PROVIDERS.has(agent.llm.provider)
 }
 
+/**
+ * The review turns, signed by the reviewer rather than by the implementer whose
+ * signature the run's adapter carries — so `unsigned` is the adapter as the
+ * caller gave it, before either signature.
+ */
 async function dispatchReview(
-  issue: Issue, reviewer: AgentDefinition, state: ExecutionState, deps: PipelineDeps,
+  issue: Issue, reviewer: AgentDefinition, state: ExecutionState, deps: PipelineDeps, unsigned: TaskAdapter,
 ): Promise<ExecutionState> {
+  const taskAdapter = signComments(unsigned, agentSignature(reviewer, 'reviewer'))
   if (isNative(reviewer)) {
     return runNativeReviewAgent(issue, reviewer, state, {
       stateStore: deps.stateStore,
       costTracker: deps.costTracker,
-      addComment: (id, text) => deps.taskAdapter.addComment(id, text),
+      addComment: (id, text) => taskAdapter.addComment(id, text),
       addPRComment: (prId, body) => deps.gitAdapter.addPRComment(deps.company.project.repo, prId, body),
       getPRDiff: (prId) => deps.gitAdapter.getPRDiff(deps.company.project.repo, prId),
       project: deps.company.project,
@@ -166,7 +173,7 @@ async function dispatchReview(
   return runReviewAgent(issue, reviewer, state, {
     company: deps.company,
     gitAdapter: deps.gitAdapter,
-    taskAdapter: deps.taskAdapter,
+    taskAdapter,
     stateStore: deps.stateStore,
     costTracker: deps.costTracker,
     getAdapter: deps.getAdapter,
@@ -179,7 +186,12 @@ export async function executeTask(
   issue: Issue, devAgent: AgentDefinition, deps: PipelineDeps, existingState?: ExecutionState,
 ): Promise<void> {
   let state = existingState ?? makeState(issue.id, devAgent.id)
-  const { company, taskAdapter, gitAdapter, stateStore } = deps
+  // Every comment this run posts is signed with the agent that is working, so
+  // the account's name is not the only thing a reader sees.
+  const { company, gitAdapter, stateStore } = deps
+  const unsigned = deps.taskAdapter
+  const taskAdapter = signComments(unsigned, agentSignature(devAgent, 'implementer'))
+  deps = { ...deps, taskAdapter }
   const { guardrails } = company
   const reviewer = deps.findReviewer()
   const taskStart = performance.now()
@@ -279,7 +291,7 @@ export async function executeTask(
     // Step: review (dispatches to native or API based on reviewer's provider)
     if (state.step === 'reviewing' && reviewer && state.prId) {
       await assertVerified(state, deps)
-      state = await dispatchReview(issue, reviewer, state, deps)
+      state = await dispatchReview(issue, reviewer, state, deps, unsigned)
     }
 
     // Step: revision loop
@@ -340,7 +352,7 @@ export async function executeTask(
         // Re-review
         if (state.step === 'reviewing' && reviewer && state.prId) {
           await assertVerified(state, deps)
-          state = await dispatchReview(issue, reviewer, state, deps)
+          state = await dispatchReview(issue, reviewer, state, deps, unsigned)
           if (state.step === 'revision') {
             return executeTask(issue, devAgent, deps, state)
           }

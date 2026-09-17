@@ -76,8 +76,9 @@ describe('buildPrBody', () => {
     expect(body).toContain('The notes name an old API.')
   })
 
-  test('names the agent, model and transport, and puts no price on a public page', () => {
-    expect(body).toContain('**Agent:** Grok (`cursor-grok-4.6-high` via cursor)')
+  test('names the agent as a person reads it, and puts no price on a public page', () => {
+    expect(body).toContain('**Agent:** Grok 4.6 high · implementer')
+    expect(body).not.toContain('via cursor')
     expect(body).not.toContain('Cost')
     expect(body).not.toContain('$0.0000')
   })

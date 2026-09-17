@@ -12,6 +12,7 @@ import { runToolUseLoop, type LLMAdapterResolver } from './llm-runner.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import type { DiscussionsAdapter } from '@floor-agents/github'
 import type { Gateway } from '@floor-agents/gateway'
+import { sign, signComments, agentSignature, ENGINE_SIGNATURE } from './comment-signature.ts'
 import { costNote } from './cost-note.ts'
 
 // ── Types ────────────────────────────────────────────────────────
@@ -271,7 +272,10 @@ export async function executeCommitteeReview(
   agents: readonly AgentDefinition[],
   deps: CommitteePipelineDeps,
 ): Promise<CommitteeResult> {
-  const { taskAdapter, costTracker, company } = deps
+  const { taskAdapter: unsigned, costTracker, company } = deps
+  // The committee's own turns are the engine speaking; a member's review is
+  // signed with that member, so the account's name is not the only attribution.
+  const taskAdapter = signComments(unsigned, ENGINE_SIGNATURE)
   const startTime = performance.now()
 
   const internalAgents = agents.filter(a => !a.external)
@@ -307,9 +311,11 @@ export async function executeCommitteeReview(
   const duration = Math.round(performance.now() - startTime)
 
   // Post individual responses
+  const byId = new Map(agents.map(a => [a.id, a]))
   for (const vote of votes) {
     if (vote.response) {
-      await taskAdapter.addComment(issue.id, vote.response)
+      const voter = byId.get(vote.agentId)
+      await unsigned.addComment(issue.id, sign(vote.response, voter ? agentSignature(voter, 'committee member') : ENGINE_SIGNATURE))
     }
   }
 

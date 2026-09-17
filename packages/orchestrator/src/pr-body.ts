@@ -1,5 +1,6 @@
 import type { AgentDefinition, ExecutionState, Issue } from '@floor-agents/core'
 import { verificationSummary } from './verification.ts'
+import { agentLabel } from './comment-signature.ts'
 
 const SUMMARY_LIMIT = 2000
 
@@ -91,7 +92,7 @@ export function buildPrBody(input: PrBodyInput): string {
     // Who wrote it and with what, and nothing else. A cost belongs to the run
     // log, not to a public page: a CLI on a subscription reports none, so this
     // line read "$0.0000" for work that was paid for.
-    `**Agent:** ${agent.name} (\`${agent.llm.model}\` via ${agent.llm.provider})`,
+    `**Agent:** ${agentLabel(agent)} · implementer`,
   )
 
   return sections.join('\n')

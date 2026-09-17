@@ -21,6 +21,8 @@ export type Issue = {
   readonly status: IssueStatus
   readonly labels: readonly string[]
   readonly parentId?: string
+  /** Where the task lives, when the task source has one (a GitHub issue URL). */
+  readonly url?: string
   readonly createdAt: Date
   readonly updatedAt: Date
 }

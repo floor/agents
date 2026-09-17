@@ -37,31 +37,33 @@ This is why the loop is robust: there is no "wake" problem. The bridge process i
 
 ### 1. Project config
 
-Central layout under `~/Code/floor/.agents/` (one folder per project). External members are marked `external: true`:
+The committee lives in the project it reviews, at `.agents/committee.yaml`, beside the developer manifest `.agents/agents.yaml`. They are separate files because `floor-agents run` refuses any manifest holding a `vote` agent. The scripts read `<CODEX_CWD>/.agents/committee.yaml`; set `COMMITTEE_CONFIG` to use another file. External members are marked `external: true`:
 
 ```yaml
-# ~/Code/floor/.agents/projects/vlist/agents.yaml
+# <repo>/.agents/committee.yaml — prompt paths resolve relative to this file
 agents:
   - id: claude
     name: "Claude"
-    promptTemplate: "/Users/you/Code/floor/.agents/prompts/claude-reviewer.md"
+    promptTemplate: "../../agents/agents/claude-reviewer.md"
     llm: { provider: claude-code, model: opus }
     capabilities: [read_code, review_rfc, vote]
 
   - id: codex
     name: "Codex"
     external: true
-    promptTemplate: "/Users/you/Code/floor/.agents/prompts/codex-reviewer.md"
+    promptTemplate: "../../agents/agents/codex-reviewer.md"
     llm: { provider: openai, model: local }   # provider unused for external agents
     capabilities: [review_rfc, vote]
 
   - id: grok
     name: "Grok"
     external: true
-    promptTemplate: "/Users/you/Code/floor/.agents/prompts/grok-reviewer.md"
-    llm: { provider: openai, model: local }   # provider unused for external agents
+    promptTemplate: "../../agents/agents/grok-reviewer.md"
+    llm: { provider: cursor, model: local }   # provider unused for external agents
     capabilities: [review_rfc, vote]
 ```
+
+The reviewer prompts ship in this repository under `agents/`.
 
 Each agent reviews through its **own** persona (`promptTemplate`) — Claude grounds in the codebase, Codex weighs migration risk, Grok reasons from first principles and distinguishes bounded from unbounded problems. Distinct personas are deliberate: they give the panel genuine perspective diversity instead of three takes on the same prior.
 
@@ -109,7 +111,7 @@ Flow: Claude reviews internally; Codex and Grok are each pushed over the gateway
 
 ### Daemon path (pm2)
 
-For a long-running fleet, `~/Code/floor/.agents/ecosystem.config.cjs` reads `fleet.json` and starts, per enabled project: the orchestrator and one bridge per external member (`codex-<project>`, `grok-<project>`). Because the bridges are plain CLIs, the daemon owns their whole lifecycle — there is no out-of-band process to coordinate.
+A long-running fleet would start, per project, the orchestrator and one bridge per external member (`codex-<project>`, `grok-<project>`). Because the bridges are plain CLIs, the daemon owns their whole lifecycle — there is no out-of-band process to coordinate. The earlier central launcher under `~/Code/floor/.agents/` is retired; a per-project pm2 config has not been written yet.
 
 ---
 

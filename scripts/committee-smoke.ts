@@ -20,10 +20,11 @@ import {
 } from '@floor-agents/orchestrator'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { committeeConfigPath } from './lib/committee-env.ts'
 
 const REPO = process.env.CODEX_CWD ?? join(homedir(), 'Code/floor/vlist')
 const PORT = parseInt(process.env.GATEWAY_PORT ?? '3199', 10)
-const CONFIG = join(homedir(), 'Code/floor/.agents/projects/vlist/agents.yaml')
+const CONFIG = committeeConfigPath(REPO)
 
 // ── The RFC under review ────────────────────────────────────────
 const issue: Issue = {

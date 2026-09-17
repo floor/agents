@@ -22,14 +22,15 @@ import {
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { mkdir } from 'node:fs/promises'
+import { committeeConfigPath, parseMaxRounds } from './lib/committee-env.ts'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 const REPO = expand(process.env.CODEX_CWD ?? join(homedir(), 'Code/floor/vlist'))
 const PORT = parseInt(process.env.GATEWAY_PORT ?? '3199', 10)
-const CONFIG = join(homedir(), 'Code/floor/.agents/projects/vlist/agents.yaml')
+const CONFIG = committeeConfigPath(REPO)
 const BRIEF_FILE = expand(process.env.BRIEF_FILE ?? join(import.meta.dir, 'lib/decision-brief.md'))
 const ONLY = (process.env.AGENTS ?? 'claude,codex,grok').split(',').map(s => s.trim())
-const MAX_ROUNDS = parseInt(process.env.MAX_ROUNDS ?? '3', 10)
+const MAX_ROUNDS = parseMaxRounds(process.env.MAX_ROUNDS)
 const TIMEOUT_MS = parseInt(process.env.EXTERNAL_TIMEOUT_MS ?? '900000', 10)
 const TITLE = process.env.DECISION_TITLE ?? 'RFC-013 v3 touch engine — Option A or B'
 // Full per-round deliberation transcript (every agent, every round) → a durable,

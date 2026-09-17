@@ -30,17 +30,18 @@ import {
 } from '@floor-agents/orchestrator'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { committeeConfigPath, parseMaxRounds, telegramSettings } from './lib/committee-env.ts'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 
 const REPO = expand(process.env.CODEX_CWD ?? join(homedir(), 'Code/floor/vlist'))
 const PORT = parseInt(process.env.GATEWAY_PORT ?? '3199', 10)
-const CONFIG = join(homedir(), 'Code/floor/.agents/projects/vlist/agents.yaml')
+const CONFIG = committeeConfigPath(REPO)
 const OWNER = process.env.REPO_OWNER ?? 'floor'
 const REPO_NAME = process.env.REPO_NAME ?? 'vlist'
 const DISCUSSION = parseInt(process.env.DISCUSSION ?? '', 10)
 const ONLY = (process.env.AGENTS ?? 'claude,codex,grok').split(',').map(s => s.trim())
-const MAX_ROUNDS = parseInt(process.env.MAX_ROUNDS ?? '3', 10)
+const MAX_ROUNDS = parseMaxRounds(process.env.MAX_ROUNDS)
 const TIMEOUT_MS = parseInt(process.env.EXTERNAL_TIMEOUT_MS ?? '900000', 10)
 const DRY_RUN = process.env.DRY_RUN === '1' || process.env.DRY_RUN === 'true'
 
@@ -234,16 +235,13 @@ async function main() {
   // to Telegram and the human can interject between rounds (folded into the prompt).
   // In a GROUP chat, set TELEGRAM_ALLOW_FROM to the operator user ids — every member's
   // messages carry the same chat id, so without it the channel hears no one.
-  const channel: TeamChannel | undefined =
-    process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID
-      ? createTelegramChannel({
-          token: process.env.TELEGRAM_BOT_TOKEN,
-          chatId: process.env.TELEGRAM_CHAT_ID,
-          allowFrom: process.env.TELEGRAM_ALLOW_FROM?.split(',').map(s => s.trim()).filter(Boolean),
-          log: msg => console.log(`[telegram] ${msg}`),
-        })
-      : undefined
+  // DRY_RUN keeps Telegram off too: a message there is publication.
+  const telegram = telegramSettings(process.env, DRY_RUN)
+  const channel: TeamChannel | undefined = telegram
+    ? createTelegramChannel({ ...telegram, log: msg => console.log(`[telegram] ${msg}`) })
+    : undefined
   if (channel) console.log('[deliberation] team channel: Telegram (live stream + human interjection)')
+  else if (DRY_RUN && process.env.TELEGRAM_BOT_TOKEN) console.log('[deliberation] DRY RUN: Telegram not used')
   const byId = new Map(agents.map(a => [a.id, a]))
 
   const { turns, stopReason, votesByAgent } = await runDeliberation<Vote>({

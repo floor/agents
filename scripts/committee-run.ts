@@ -24,12 +24,13 @@ import {
 import { parseRfc } from './lib/rfc.ts'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { committeeConfigPath } from './lib/committee-env.ts'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 
 const REPO = expand(process.env.CODEX_CWD ?? join(homedir(), 'Code/floor/vlist'))
 const PORT = parseInt(process.env.GATEWAY_PORT ?? '3199', 10)
-const CONFIG = join(homedir(), 'Code/floor/.agents/projects/vlist/agents.yaml')
+const CONFIG = committeeConfigPath(REPO)
 const RFC_FILE = expand(process.env.RFC_FILE ?? '')
 // Comma-separated agent ids to include. Default trio: claude (internal) + codex +
 // grok (both external CLI bridges). Antigravity is parked (GUI has no unattended wake).

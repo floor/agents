@@ -34,7 +34,7 @@ bun scripts/committee-run.ts
 | `GATEWAY_PORT` | `3199` | gateway port |
 | `EXTERNAL_TIMEOUT_MS` | `600000` | per-external-agent vote timeout |
 
-- Loads `~/Code/floor/.agents/projects/vlist/agents.yaml`; filters to agents with the `vote` capability that are listed in `AGENTS`.
+- Loads the committee manifest from the reviewed repository, `<CODEX_CWD>/.agents/committee.yaml` (override with `COMMITTEE_CONFIG`); filters to agents with the `vote` capability that are listed in `AGENTS`.
 - Claude (`claude-code`) is wired via `createClaudeCodeAdapter` with read-only tools (`Read/Glob/Grep/Bash`), `cwd = CODEX_CWD`.
 - Spawns `codex-agent.ts` if `codex` is included and `grok-agent.ts` if `grok` is included; waits for each external bridge to connect before dispatching.
 - `contextBuilder`/`stateStore` are unused by `executeCommitteeReview` and passed as stubs; `taskAdapter` is an in-memory stub that just logs the committee's posts.

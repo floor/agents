@@ -90,6 +90,11 @@ export type DeliberationResult<V> = {
 
 export async function runDeliberation<V>(opts: DeliberationOptions<V>): Promise<DeliberationResult<V>> {
   const { agents, maxRounds, review, converged, channel, summarize, onTurn } = opts
+  // A cap that runs no round (NaN from a mistyped env var, 0, a fraction) would
+  // return an empty result that a caller can publish as a verdict nobody reached.
+  if (!Number.isInteger(maxRounds) || maxRounds < 1) {
+    throw new Error(`maxRounds must be a positive whole number, got ${maxRounds}`)
+  }
   const onChannelError = opts.onChannelError ?? ((msg: string) => console.warn(`[deliberation] ${msg}`))
 
   let previous: Record<string, V> | null = null

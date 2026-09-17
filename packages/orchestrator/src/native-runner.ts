@@ -15,6 +15,7 @@ import { verificationSummary } from './verification.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import { implementerSandbox, reviewerSandbox, sandboxed, withDenyRead, type SandboxTool } from '@floor-agents/sandbox'
 import { buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
+import { costNote, metaLine } from './cost-note.ts'
 
 /** Providers whose CLI runs as a full agent on a worktree, rather than through tool calls. */
 export const NATIVE_PROVIDERS = new Set(['claude-code', 'cursor'])
@@ -270,7 +271,7 @@ export async function runNativeDevAgent(
       '```',
       diffText,
       '```',
-      `> ${formatDuration(result.durationMs)} | $${result.cost.toFixed(4)}`,
+      `> ${metaLine([formatDuration(result.durationMs), costNote(result.cost)])}`,
       verificationSummary(state.verification!),
     ].join('\n'))
 
@@ -420,7 +421,7 @@ export async function runNativeReviewAgent(
         '',
         verdict.comments,
         '',
-        `*Model: ${reviewer.llm.model} | ${formatDuration(result.durationMs)} | $${result.cost.toFixed(4)}*`,
+        `*${metaLine([`Model: ${reviewer.llm.model}`, formatDuration(result.durationMs), costNote(result.cost)])}*`,
       ].join('\n'),
     )
 

@@ -21,6 +21,7 @@ import { verificationSummary } from './verification.ts'
 import { requireVerification } from './verified-commit.ts'
 import { gitText } from './worktree.ts'
 import { buildPrBody } from './pr-body.ts'
+import { costNote, metaLine } from './cost-note.ts'
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -134,7 +135,7 @@ async function runApiDevAgent(
     `✅ **${agent.name}** produced ${output.files.length} file${output.files.length === 1 ? '' : 's'}:`,
     ...output.files.map(f => `- \`${f.path}\``),
     '',
-    `> ${formatBytes(totalSize)} total | ${formatDuration(result.durationMs)} | $${result.totalCost.toFixed(4)}`,
+    `> ${metaLine([`${formatBytes(totalSize)} total`, formatDuration(result.durationMs), costNote(result.totalCost)])}`,
   ].join('\n'))
 
   return advanceState(state, 'validating_output', { parsedOutput: output }, stateStore)
@@ -351,7 +352,7 @@ export async function executeTask(
     if (state.step === 'updating_issue') {
       await assertVerified(state, deps)
       const totalDuration = formatDuration(Math.round(performance.now() - taskStart))
-      const totalCost = `$${state.costUsd.toFixed(4)}`
+      const totalCost = costNote(state.costUsd)
       const cycles = state.reviewCycle > 0 ? `${state.reviewCycle} review cycle${state.reviewCycle > 1 ? 's' : ''}` : 'no review'
       const wasApproved = state.reviewVerdict?.decision === 'approve'
 
@@ -360,14 +361,14 @@ export async function executeTask(
           ? `✅ **Done** — approved by ${reviewer?.name ?? 'reviewer'} and ready for human review`
           : state.prUrl ? `✅ **Done** — PR ready for human review` : '✅ **Done**',
         '', '| Metric | Value |', '|--------|-------|',
-        `| Duration | ${totalDuration} |`, `| Cost | ${totalCost} |`, `| Review cycles | ${cycles} |`,
+        `| Duration | ${totalDuration} |`, totalCost ? `| Cost | ${totalCost} |` : '', `| Review cycles | ${cycles} |`,
         state.prUrl ? `| PR | ${state.prUrl} |` : '',
         state.verification ? verificationSummary(state.verification) : '',
       ].filter(Boolean).join('\n'))
 
       await taskAdapter.setStatus(issue.id, 'in_review')
       state = await advanceState(state, 'done', {}, stateStore)
-      console.log(`[orchestrator] done: ${issue.title} (${cycles}, ${totalDuration}, ${totalCost})`)
+      console.log(`[orchestrator] done: ${issue.title} (${metaLine([cycles, totalDuration, totalCost || 'no metered cost'])})`)
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

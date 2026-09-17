@@ -88,7 +88,10 @@ export function buildPrBody(input: PrBodyInput): string {
     '', issue.body?.trim() || '_No description._', '',
     '</details>',
     '',
-    `**Agent:** ${agent.name} (\`${agent.llm.model}\` via ${agent.llm.provider}) · **Cost:** $${state.costUsd.toFixed(4)} · Automated by Floor Agents`,
+    // Who wrote it and with what, and nothing else. A cost belongs to the run
+    // log, not to a public page: a CLI on a subscription reports none, so this
+    // line read "$0.0000" for work that was paid for.
+    `**Agent:** ${agent.name} (\`${agent.llm.model}\` via ${agent.llm.provider})`,
   )
 
   return sections.join('\n')

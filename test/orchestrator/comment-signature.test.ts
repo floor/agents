@@ -37,7 +37,7 @@ describe('signComments', () => {
     const out: string[] = []
     const signed = signComments(capture(out), agentSignature(agent('Grok', 'cursor-grok-4.6-high', 'cursor'), 'implementer'))
     await signed.addComment('210', '⏳ working on the code...')
-    expect(out[0]).toBe('⏳ working on the code...\n\n— **Agent:** Grok 4.6 high · implementer · automated by Floor Agents')
+    expect(out[0]).toBe('⏳ working on the code...\n\n**Agent:** Grok 4.6 high · implementer')
   })
 
   test('the role tells two turns of the same model apart', async () => {
@@ -54,6 +54,6 @@ describe('signComments', () => {
     const signed = signComments(capture(out), ENGINE_SIGNATURE)
     await signed.addComment('1', sign('🏛️ Committee review started', ENGINE_SIGNATURE))
     expect(out[0]!.match(/Floor Agents/g)).toHaveLength(1)
-    expect(out[0]).toContain('not a person')
+    expect(out[0]).toContain('· engine')
   })
 })

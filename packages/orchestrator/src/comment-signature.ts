@@ -49,13 +49,13 @@ export function agentLabel(agent: Signable): string {
  */
 export type AgentRole = 'implementer' | 'reviewer' | 'committee member'
 
-/** `— **Agent:** Grok 4.6 high · implementer · automated by Floor Agents` */
+/** `**Agent:** Grok 4.6 high · implementer` */
 export function agentSignature(agent: Signable, role: AgentRole): string {
-  return `— **Agent:** ${agentLabel(agent)} · ${role} · automated by Floor Agents`
+  return `**Agent:** ${agentLabel(agent)} · ${role}`
 }
 
 /** For the engine's own turns, which belong to no single agent. */
-export const ENGINE_SIGNATURE = '— **Floor Agents** · automated run, not a person'
+export const ENGINE_SIGNATURE = '**Agent:** Floor Agents · engine'
 
 /** Append the signature, unless this text already carries one. */
 export function sign(text: string, signature: string): string {

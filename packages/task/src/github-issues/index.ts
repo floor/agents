@@ -24,6 +24,7 @@ type GitHubIssue = {
   labels: { name: string }[]
   created_at: string
   updated_at: string
+  html_url?: string
 }
 
 function githubToIssue(gi: GitHubIssue): Issue {
@@ -33,6 +34,8 @@ function githubToIssue(gi: GitHubIssue): Issue {
     body: gi.body ?? '',
     status: githubStateToStatus(gi.state),
     labels: gi.labels.map(l => l.name),
+    // Lets a PR link the issue it resolves, and only when both share a repository.
+    ...(gi.html_url ? { url: gi.html_url } : {}),
     createdAt: new Date(gi.created_at),
     updatedAt: new Date(gi.updated_at),
   }

@@ -19,6 +19,7 @@ import { commitApiWorkspace } from './api-workspace.ts'
 import { verificationSummary } from './verification.ts'
 import { requireVerification } from './verified-commit.ts'
 import { gitText } from './worktree.ts'
+import { buildPrBody } from './pr-body.ts'
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -255,15 +256,14 @@ export async function executeTask(
     // Step: create PR (both paths)
     if (state.step === 'creating_pr' && state.branchName) {
       await assertVerified(state, deps)
-      const prBody = state.parsedOutput?.prDescription || [
-        'Automated PR by Floor Agents', '',
-        `**Task:** ${issue.title}`,
-        issue.body ? `\n${issue.body}` : '', '',
-        `**Agent:** ${devAgent.name} (\`${devAgent.llm.model}\`)`,
-        `**Cost:** $${state.costUsd.toFixed(4)}`,
-      ].join('\n')
-
-      const body = state.verification ? `${prBody}\n\n${verificationSummary(state.verification)}` : prBody
+      // A diff stat is available when the commit is in the local object store — the
+      // native path pushes from a worktree of project.root. The API path commits
+      // through GitHub, so its PR lists the files it wrote instead.
+      let diffStat: string | undefined
+      if (company.project.root && state.baseSha && state.commitSha) {
+        diffStat = await gitText(company.project.root, ['diff', '--stat', state.baseSha, state.commitSha]).catch(() => undefined)
+      }
+      const body = buildPrBody({ issue, agent: devAgent, state, repo: company.project.repo, ...(diffStat ? { diffStat } : {}) })
       const pr = await gitAdapter.createPR(company.project.repo, state.branchName, issue.title, body, company.project.baseBranch)
       console.log(`[orchestrator] PR created: ${pr.url}`)
       await taskAdapter.addComment(issue.id, `📝 **PR created:** ${pr.url}`)

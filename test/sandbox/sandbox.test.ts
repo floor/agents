@@ -2,7 +2,7 @@ import { test, expect, describe } from 'bun:test'
 import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { sandboxProfile, sandboxed, reviewerSandbox, implementerSandbox } from '@floor-agents/sandbox'
+import { sandboxProfile, sandboxed, reviewerSandbox, implementerSandbox, projectCommandSandbox } from '@floor-agents/sandbox'
 
 const HOME = '/Users/someone'
 
@@ -54,6 +54,22 @@ describe('sandboxProfile', () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  test('project commands may write the checkout and package caches, not the rest of home', () => {
+    const profile = sandboxProfile(projectCommandSandbox(['/Users/someone/repo/.worktrees/x'], {}, HOME))
+    expect(profile).toContain('(allow file-write* (subpath "/Users/someone/repo/.worktrees/x"))')
+    expect(profile).toContain('(allow file-write* (subpath "/Users/someone/.bun"))')
+    expect(profile).toContain('(allow file-write* (subpath "/Users/someone/.npm"))')
+    expect(profile).not.toContain('(subpath "/Users/someone/.cursor")')
+  })
+
+  test('FLOOR_AGENTS_SANDBOX_WRITABLE adds writable paths for implementers and project commands', () => {
+    const env = { FLOOR_AGENTS_SANDBOX_WRITABLE: '~/.gradle' }
+    expect(sandboxProfile(implementerSandbox('claude', [], env, HOME))).toContain('(allow file-write* (subpath "/Users/someone/.gradle"))')
+    expect(sandboxProfile(projectCommandSandbox([], env, HOME))).toContain('(allow file-write* (subpath "/Users/someone/.gradle"))')
+    // A reviewer never gains writable paths from the environment.
+    expect(sandboxProfile(reviewerSandbox('claude', env, HOME))).not.toContain('.gradle')
   })
 
   test('quotes in a path cannot break out of the profile string', () => {

@@ -29,16 +29,18 @@ const spec = implementerSandbox('claude', [worktreePath, worktreeGitDir])
 |---|---|
 | `reviewerSandbox(tool, env?, home?)` | spec with no writable folders |
 | `implementerSandbox(tool, writable, env?, home?)` | spec that may write the given folders |
+| `projectCommandSandbox(writable, env?, home?)` | spec for setup and verification commands: the given folders plus package caches |
 | `sandboxed(argv, spec, opts?)` | `['sandbox-exec', '-p', profile, ...argv]`; throws where the sandbox is unavailable unless `FLOOR_AGENTS_SANDBOX=off` |
 | `sandboxProfile(spec)` | the SBPL profile text |
 | `toolState` | writable state directories per CLI (`cursor`, `claude`) |
 | `DEFAULT_DENY_READ`, `DENY_READ_PATTERNS` | credential stores and `.env` files denied to every run |
 
-`tool` is `'cursor'` or `'claude'` and decides which state directories stay writable. Specs resolve every path with `realpath`, because the sandbox matches resolved paths and macOS symlinks `/tmp` and `/var`.
+`tool` is `'cursor'`, `'claude'` or `'project'` and decides which state directories stay writable. Specs resolve every path with `realpath`, because the sandbox matches resolved paths and macOS symlinks `/tmp` and `/var`.
 
 ## Environment
 
 | variable | effect |
 |---|---|
 | `FLOOR_AGENTS_DENY_READ` | extra unreadable paths, comma-separated, `~` expanded |
+| `FLOOR_AGENTS_SANDBOX_WRITABLE` | extra writable paths for implementers and project commands |
 | `FLOOR_AGENTS_SANDBOX=off` | return the command unwrapped |

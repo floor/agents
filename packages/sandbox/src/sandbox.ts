@@ -33,7 +33,13 @@ const real = (p: string): string => {
   try { return realpathSync(p) } catch { return p }
 }
 
-export type SandboxTool = 'cursor' | 'claude'
+/**
+ * What runs in the sandbox, which decides the state directories that stay
+ * writable. `project` is the project's own setup and verification commands:
+ * they execute code the agent may have written — its tests, a postinstall
+ * script — so they are contained like the agent.
+ */
+export type SandboxTool = 'cursor' | 'claude' | 'project'
 
 export type SandboxSpec = {
   /** The home directory whose writes are denied by default. */
@@ -58,6 +64,11 @@ export const toolState: Record<SandboxTool, { readonly dirs: readonly string[]; 
     dirs: ['.claude', 'Library/Caches'],
     // ~/.claude.json and the lock and backup files written beside it.
     filePrefixes: ['.claude.json'],
+  },
+  // Package-manager and build caches that install and test commands write.
+  project: {
+    dirs: ['.bun', '.npm', '.cache', 'Library/Caches', '.cargo/registry', '.cargo/git', 'go/pkg/mod'],
+    filePrefixes: [],
   },
 }
 
@@ -93,13 +104,23 @@ export function sandboxProfile(spec: SandboxSpec): string {
 
 type Env = Readonly<Record<string, string | undefined>>
 
-/** Extra unreadable paths from FLOOR_AGENTS_DENY_READ (comma-separated, `~` allowed). */
-function extraDenyRead(env: Env, home: string): string[] {
-  return (env.FLOOR_AGENTS_DENY_READ ?? '')
+/** A comma-separated path list from the environment, `~` expanded. */
+function pathList(raw: string | undefined, home: string): string[] {
+  return (raw ?? '')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean)
     .map(p => (p.startsWith('~') ? join(home, p.slice(1)) : p))
+}
+
+/** Extra unreadable paths from FLOOR_AGENTS_DENY_READ. */
+function extraDenyRead(env: Env, home: string): string[] {
+  return pathList(env.FLOOR_AGENTS_DENY_READ, home)
+}
+
+/** Extra writable paths from FLOOR_AGENTS_SANDBOX_WRITABLE, for builds that write elsewhere. */
+function extraWritable(env: Env, home: string): string[] {
+  return pathList(env.FLOOR_AGENTS_SANDBOX_WRITABLE, home)
 }
 
 function baseSpec(tool: SandboxTool, writable: readonly string[], env: Env, home: string): SandboxSpec {
@@ -120,7 +141,12 @@ export function reviewerSandbox(tool: SandboxTool, env: Env = process.env, home 
 
 /** An implementer may also write its worktree and that worktree's git metadata. */
 export function implementerSandbox(tool: SandboxTool, writable: readonly string[], env: Env = process.env, home = homedir()): SandboxSpec {
-  return baseSpec(tool, writable, env, home)
+  return baseSpec(tool, [...writable, ...extraWritable(env, home)], env, home)
+}
+
+/** A project setup or verification command: the checkout, plus package caches. */
+export function projectCommandSandbox(writable: readonly string[], env: Env = process.env, home = homedir()): SandboxSpec {
+  return baseSpec('project', [...writable, ...extraWritable(env, home)], env, home)
 }
 
 export type SandboxOptions = {

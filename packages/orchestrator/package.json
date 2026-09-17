@@ -11,6 +11,8 @@
     "@floor-agents/openai": "workspace:*",
     "@floor-agents/github": "workspace:*",
     "@floor-agents/task": "workspace:*",
-    "@floor-agents/context-builder": "workspace:*"
+    "@floor-agents/context-builder": "workspace:*",
+    "@floor-agents/cursor": "workspace:*",
+    "@floor-agents/sandbox": "workspace:*"
   }
 }

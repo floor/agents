@@ -116,9 +116,14 @@ by an agent are excluded. The engine checks the remote branch against the verifi
 commit before opening the PR, reviewing, and completing. This is evidence for
 that commit, not a guarantee that future human pushes remain verified.
 
-These worktrees isolate Git changes; they are not an OS security sandbox. Native
-agents and project commands still run with the service account's local access.
-The diff gate controls what the engine publishes.
+Worktrees isolate Git changes; the [agent sandbox](./sandbox.md) contains the
+processes. On macOS a native implementer may write only its worktree and that
+worktree's git metadata, a native reviewer writes nothing, and project setup and
+checks — which run code the agent wrote — may write only the worktree and package
+caches. Credential stores and `.env` files are unreadable to all of them. Reads
+elsewhere and network access are not contained, and on other platforms native
+runs are refused unless `FLOOR_AGENTS_SANDBOX=off`. The diff gate still controls
+what the engine publishes.
 
 ## Inspect a failure
 

@@ -13,7 +13,7 @@
  */
 
 import { loadCompanyConfig } from '@floor-agents/core'
-import type { TaskAdapter, Issue, ContextBuilder, StateStore, AgentDefinition } from '@floor-agents/core'
+import type { TaskAdapter, Issue, ContextBuilder, StateStore } from '@floor-agents/core'
 import { createClaudeCodeAdapter } from '@floor-agents/claude-code'
 import { createGateway } from '@floor-agents/gateway'
 import {
@@ -24,12 +24,15 @@ import {
 import { parseRfc } from './lib/rfc.ts'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { committeeConfigPath, selectVoters } from './lib/committee-env.ts'
+import { startBridges } from './lib/bridges.ts'
+import { reviewerSandbox } from '@floor-agents/sandbox'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 
 const REPO = expand(process.env.CODEX_CWD ?? join(homedir(), 'Code/floor/vlist'))
 const PORT = parseInt(process.env.GATEWAY_PORT ?? '3199', 10)
-const CONFIG = join(homedir(), 'Code/floor/.agents/projects/vlist/agents.yaml')
+const CONFIG = committeeConfigPath(REPO)
 const RFC_FILE = expand(process.env.RFC_FILE ?? '')
 // Comma-separated agent ids to include. Default trio: claude (internal) + codex +
 // grok (both external CLI bridges). Antigravity is parked (GUI has no unattended wake).
@@ -63,9 +66,7 @@ async function main() {
   } as unknown as TaskAdapter
 
   const company = await loadCompanyConfig(CONFIG)
-  const agents = company.agents.filter(
-    (a: AgentDefinition) => a.capabilities.includes('vote') && ONLY.includes(a.id),
-  )
+  const agents = selectVoters(company.agents, ONLY, CONFIG)
   console.log(`[run] RFC: ${title}`)
   console.log(`[run] repo: ${REPO}`)
   console.log(`[run] agents: ${agents.map(a => `${a.id}${a.external ? ' (external)' : ''}`).join(', ')}\n`)
@@ -73,55 +74,16 @@ async function main() {
   const gateway = createGateway({ port: PORT })
   gateway.start()
 
-  const needCodex = agents.some(a => a.id === 'codex')
-  const bridge = needCodex
-    ? Bun.spawn(['bun', join(import.meta.dir, 'codex-agent.ts')], {
-        env: { ...process.env, GATEWAY_URL: `ws://localhost:${PORT}`, CODEX_CWD: REPO },
-        stdout: 'inherit',
-        stderr: 'inherit',
-      })
-    : null
+  // One bridge per external member, chosen by its `provider` in the manifest.
+  const bridges = await startBridges(agents, { port: PORT, repo: REPO, gateway, log: m => console.log(`[run] ${m}`) })
 
-  // Grok bridge — the third committee member. A local CLI we fully control:
-  // assign → `grok --prompt-file …` (read-only, headless) → capture → vote.
-  const needGrok = agents.some(a => a.id === 'grok')
-  const grokBridge = needGrok
-    ? Bun.spawn(['bun', join(import.meta.dir, 'grok-agent.ts')], {
-        env: { ...process.env, GATEWAY_URL: `ws://localhost:${PORT}`, GROK_CWD: REPO },
-        stdout: 'inherit',
-        stderr: 'inherit',
-      })
-    : null
-
-  // Antigravity's persistent relay (the gateway side). Antigravity itself only
-  // runs the stateless antigravity-notify.ts background task + reviews via MCP.
-  const needAntigravity = agents.some(a => a.id === 'antigravity')
-  const relay = needAntigravity
-    ? Bun.spawn(['bun', join(import.meta.dir, 'antigravity-relay.ts')], {
-        env: { ...process.env, GATEWAY_URL: `ws://localhost:${PORT}` },
-        stdout: 'inherit',
-        stderr: 'inherit',
-      })
-    : null
-
-  if (needCodex) {
-    for (let i = 0; i < 30 && !gateway.isAgentConnected('codex'); i++) {
-      await new Promise(r => setTimeout(r, 500))
-    }
-    console.log(`[run] codex connected: ${gateway.isAgentConnected('codex')}`)
-  }
-
-  if (needGrok) {
-    for (let i = 0; i < 30 && !gateway.isAgentConnected('grok'); i++) {
-      await new Promise(r => setTimeout(r, 500))
-    }
-    console.log(`[run] grok connected: ${gateway.isAgentConnected('grok')}`)
-  }
-
+  // Claude reviews in-process with Bash, so it runs in a reviewer sandbox: it
+  // reads the repository and cannot write anything outside its own state.
   const claudeCode = createClaudeCodeAdapter({
     cwd: REPO,
     model: 'opus',
     allowedTools: ['Read', 'Glob', 'Grep', 'Bash'],
+    sandbox: reviewerSandbox('claude'),
   })
 
   const deps: CommitteePipelineDeps = {
@@ -146,9 +108,7 @@ async function main() {
   for (const v of result.votes) console.log(`  ${v.agentName.padEnd(12)} → ${v.vote}`)
   console.log('total cost: $' + result.totalCost.toFixed(4))
 
-  bridge?.kill()
-  grokBridge?.kill()
-  relay?.kill()
+  bridges.stop()
   gateway.stop()
   process.exit(0)
 }

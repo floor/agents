@@ -30,17 +30,20 @@ import {
 } from '@floor-agents/orchestrator'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { committeeConfigPath, parseMaxRounds, selectVoters, telegramSettings } from './lib/committee-env.ts'
+import { startBridges } from './lib/bridges.ts'
+import { reviewerSandbox } from '@floor-agents/sandbox'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 
 const REPO = expand(process.env.CODEX_CWD ?? join(homedir(), 'Code/floor/vlist'))
 const PORT = parseInt(process.env.GATEWAY_PORT ?? '3199', 10)
-const CONFIG = join(homedir(), 'Code/floor/.agents/projects/vlist/agents.yaml')
+const CONFIG = committeeConfigPath(REPO)
 const OWNER = process.env.REPO_OWNER ?? 'floor'
 const REPO_NAME = process.env.REPO_NAME ?? 'vlist'
 const DISCUSSION = parseInt(process.env.DISCUSSION ?? '', 10)
 const ONLY = (process.env.AGENTS ?? 'claude,codex,grok').split(',').map(s => s.trim())
-const MAX_ROUNDS = parseInt(process.env.MAX_ROUNDS ?? '3', 10)
+const MAX_ROUNDS = parseMaxRounds(process.env.MAX_ROUNDS)
 const TIMEOUT_MS = parseInt(process.env.EXTERNAL_TIMEOUT_MS ?? '900000', 10)
 const DRY_RUN = process.env.DRY_RUN === '1' || process.env.DRY_RUN === 'true'
 
@@ -174,9 +177,7 @@ async function reviewOnce(
 
 async function main() {
   const company = await loadCompanyConfig(CONFIG)
-  const agents = company.agents.filter(
-    (a: AgentDefinition) => a.capabilities.includes('vote') && ONLY.includes(a.id),
-  )
+  const agents = selectVoters(company.agents, ONLY, CONFIG)
 
   const discussions: DiscussionsAdapter = createDiscussionsAdapter({
     token: await githubToken(),
@@ -206,16 +207,11 @@ async function main() {
   const gateway = createGateway({ port: PORT })
   gateway.start()
 
-  const bridges: { kill(): void }[] = []
-  for (const id of ['codex', 'grok'] as const) {
-    if (!agents.some(a => a.id === id && a.external)) continue
-    const env = { ...process.env, GATEWAY_URL: `ws://localhost:${PORT}`, CODEX_CWD: REPO, GROK_CWD: REPO }
-    bridges.push(Bun.spawn(['bun', join(import.meta.dir, `${id}-agent.ts`)], { env, stdout: 'inherit', stderr: 'inherit' }))
-    for (let i = 0; i < 30 && !gateway.isAgentConnected(id); i++) await new Promise(r => setTimeout(r, 500))
-    console.log(`[deliberation] ${id} connected: ${gateway.isAgentConnected(id)}`)
-  }
+  // One bridge per external member, chosen by its `provider` in the manifest.
+  const bridges = await startBridges(agents, { port: PORT, repo: REPO, gateway, log: m => console.log(`[deliberation] ${m}`) })
 
-  const claudeCode = createClaudeCodeAdapter({ cwd: REPO, model: 'opus', allowedTools: ['Read', 'Glob', 'Grep', 'Bash'] })
+  // Claude reviews in-process with Bash, so it runs in a reviewer sandbox.
+  const claudeCode = createClaudeCodeAdapter({ cwd: REPO, model: 'opus', allowedTools: ['Read', 'Glob', 'Grep', 'Bash'], sandbox: reviewerSandbox('claude') })
   const getAdapter = (provider: string) => {
     if (provider === 'claude-code') return claudeCode
     throw new Error(`only claude-code is wired internally, got: ${provider}`)
@@ -234,16 +230,13 @@ async function main() {
   // to Telegram and the human can interject between rounds (folded into the prompt).
   // In a GROUP chat, set TELEGRAM_ALLOW_FROM to the operator user ids — every member's
   // messages carry the same chat id, so without it the channel hears no one.
-  const channel: TeamChannel | undefined =
-    process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID
-      ? createTelegramChannel({
-          token: process.env.TELEGRAM_BOT_TOKEN,
-          chatId: process.env.TELEGRAM_CHAT_ID,
-          allowFrom: process.env.TELEGRAM_ALLOW_FROM?.split(',').map(s => s.trim()).filter(Boolean),
-          log: msg => console.log(`[telegram] ${msg}`),
-        })
-      : undefined
+  // DRY_RUN keeps Telegram off too: a message there is publication.
+  const telegram = telegramSettings(process.env, DRY_RUN)
+  const channel: TeamChannel | undefined = telegram
+    ? createTelegramChannel({ ...telegram, log: msg => console.log(`[telegram] ${msg}`) })
+    : undefined
   if (channel) console.log('[deliberation] team channel: Telegram (live stream + human interjection)')
+  else if (DRY_RUN && process.env.TELEGRAM_BOT_TOKEN) console.log('[deliberation] DRY RUN: Telegram not used')
   const byId = new Map(agents.map(a => [a.id, a]))
 
   const { turns, stopReason, votesByAgent } = await runDeliberation<Vote>({
@@ -306,7 +299,7 @@ async function main() {
   // Cost stays in the operator console, never in the public thread.
   console.log(`cost (Claude API only; CLIs unmetered): $${costTracker.getTaskCost(`disc-${DISCUSSION}`).toFixed(4)}`)
 
-  for (const b of bridges) b.kill()
+  bridges.stop()
   gateway.stop()
   process.exit(0)
 }

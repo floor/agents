@@ -1,6 +1,7 @@
 import type { CommandResult, GuardrailsConfig, ProjectCommand, VerificationResult } from '@floor-agents/core'
 import { validateAgentOutput } from './guardrails.ts'
 import { gitText, snapshotWorktree, type Worktree } from './worktree.ts'
+import { projectCommandSandbox, sandboxed } from '@floor-agents/sandbox'
 
 const OUTPUT_LIMIT = 32_768
 
@@ -23,7 +24,11 @@ export async function runProjectCommand(cwd: string, check: ProjectCommand): Pro
   const start = performance.now()
   let timedOut = false
   try {
-    const proc = Bun.spawn([...check.command], { cwd, stdout: 'pipe', stderr: 'pipe', stdin: 'ignore', detached: process.platform !== 'win32' })
+    // Setup and checks execute code the agent may have written — its tests, a
+    // postinstall script — so they are contained like the agent: writes only to
+    // the checkout and package caches. Refused where the sandbox is unavailable.
+    const argv = sandboxed([...check.command], projectCommandSandbox([cwd]))
+    const proc = Bun.spawn(argv, { cwd, stdout: 'pipe', stderr: 'pipe', stdin: 'ignore', detached: process.platform !== 'win32' })
     const timeout = setTimeout(() => {
       timedOut = true
       // Test runners commonly spawn children which keep output pipes open.

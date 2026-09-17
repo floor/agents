@@ -1,4 +1,5 @@
 import type { LLMAdapter, LLMConfig, LLMResponse, ToolCall } from '@floor-agents/core'
+import { sandboxed, type SandboxSpec } from '@floor-agents/sandbox'
 
 /**
  * Cursor CLI adapter.
@@ -13,15 +14,17 @@ export type CursorAdapterConfig = {
   readonly cwd?: string
   readonly model?: string
   /**
-   * Allow the agent to modify files and run commands.
+   * Allow the agent to run shell commands.
    *
-   * The CLI refuses to start in an untrusted directory, so one of the two flags
-   * is always required. `--trust` consents to the directory alone, which is what
-   * a reviewer needs; `--force` additionally approves tool execution, which is
-   * what an implementer needs. Defaults to read-only: a reviewer that can write
-   * is a worse failure than an implementer that cannot.
+   * The CLI refuses to start in an untrusted directory, so one consent flag is
+   * always passed. Measured: `--trust` lets the file-edit tool write — including
+   * outside the working directory — while shell commands are refused. `--force`
+   * also approves shell commands. Neither flag confines writes: containment comes
+   * from `sandbox`, never from the flag.
    */
-  readonly writable?: boolean
+  readonly allowShell?: boolean
+  /** The operating-system sandbox every run starts in. Required: there is no uncontained mode here. */
+  readonly sandbox: SandboxSpec
   readonly timeoutMs?: number
   readonly bin?: string
 }
@@ -63,7 +66,7 @@ export type CursorResult = {
 export function buildCursorArgs(opts: {
   readonly prompt: string
   readonly model?: string
-  readonly writable?: boolean
+  readonly allowShell?: boolean
 }): string[] {
   const args = [
     // Without -p the first positional argument is still treated as a prompt, but
@@ -71,7 +74,7 @@ export function buildCursorArgs(opts: {
     '-p', opts.prompt,
     '--output-format', 'json',
   ]
-  args.push(opts.writable ? '--force' : '--trust')
+  args.push(opts.allowShell ? '--force' : '--trust')
   if (opts.model) args.push('--model', opts.model)
   return args
 }
@@ -96,7 +99,7 @@ export function parseCursorResult(stdout: string): CursorResult {
   throw new Error(`Cursor returned no JSON result: ${stdout.slice(0, 500)}`)
 }
 
-export function createCursorAdapter(config: CursorAdapterConfig = {}): LLMAdapter {
+export function createCursorAdapter(config: CursorAdapterConfig): LLMAdapter {
   return {
     async run(llmConfig: LLMConfig): Promise<LLMResponse> {
       const start = performance.now()
@@ -111,7 +114,7 @@ export function createCursorAdapter(config: CursorAdapterConfig = {}): LLMAdapte
       const args = buildCursorArgs({
         prompt,
         ...(config.model ? { model: config.model } : {}),
-        ...(config.writable ? { writable: true } : {}),
+        ...(config.allowShell ? { allowShell: true } : {}),
       })
 
       // Strip CURSOR_API_KEY so the CLI uses the logged-in subscription rather
@@ -119,7 +122,7 @@ export function createCursorAdapter(config: CursorAdapterConfig = {}): LLMAdapte
       // ANTHROPIC_API_KEY. With the key present the run bills separately.
       const { CURSOR_API_KEY, ...cleanEnv } = process.env
 
-      const proc = Bun.spawn([config.bin ?? 'cursor-agent', ...args], {
+      const proc = Bun.spawn(sandboxed([config.bin ?? 'cursor-agent', ...args], config.sandbox), {
         cwd: config.cwd ?? process.cwd(),
         stdout: 'pipe',
         stderr: 'pipe',

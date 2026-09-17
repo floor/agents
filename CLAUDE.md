@@ -19,6 +19,8 @@ AI engineering team as a service. Connects to GitHub + Linear + LLM providers â†
 | `@floor-agents/context-builder` | context assembly + prompt rendering |
 | `@floor-agents/anthropic` | Anthropic adapter (tool use) |
 | `@floor-agents/claude-code` | Claude Code adapter (spawns CLI, full codebase access) |
+| `@floor-agents/cursor` | Cursor CLI adapter â€” any Cursor-hosted model on the subscription |
+| `@floor-agents/sandbox` | `sandbox-exec` containment for agent CLIs (see `docs/guides/sandbox.md`) |
 | `@floor-agents/lmstudio` | Local model adapter (Gemma, Llama, Qwen, etc.) |
 | `@floor-agents/gemini` | Google Gemini adapter |
 | `@floor-agents/openai` | OpenAI-compatible adapter (OpenAI, Ollama, Together, Groq) |
@@ -27,6 +29,8 @@ AI engineering team as a service. Connects to GitHub + Linear + LLM providers â†
 | `@floor-agents/gateway` | WebSocket server for external agents (auth, validation, reconnection) |
 
 **Entry point:** `src/main.ts` (the orchestrator lives in `src/`, not under `packages/`)
+
+**Agent containment:** agent CLIs cannot be trusted to stay in their folder â€” measured, `cursor-agent --trust` writes to absolute paths outside its working directory, and `Bash` in a Claude tool list can write anywhere. Any code that spawns an agent CLI starts it through `sandboxed()` from `@floor-agents/sandbox`. Never add an uncontained spawn path; `FLOOR_AGENTS_SANDBOX=off` exists for developing this repo only.
 
 ## Commands
 

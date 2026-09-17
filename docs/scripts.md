@@ -5,13 +5,25 @@ Runnable helpers in `scripts/`. They are not part of any package — run them di
 | Script | Role | Runs |
 |--------|------|------|
 | [`committee-run.ts`](#committee-runts) | Review an RFC file with the committee | by you (per round) |
+| [`cursor-agent-bridge.ts`](#cursor-agent-bridgets) | Cursor gateway bridge → sandboxed `cursor-agent -p` (any Cursor model) | by the committee scripts |
 | [`codex-agent.ts`](#codex-agentts) | Codex gateway bridge → `codex exec` | by `committee-run` / pm2 |
-| [`grok-agent.ts`](#grok-agentts) | Grok gateway bridge → `grok --prompt-file` | by `committee-run` / pm2 |
+| [`grok-agent.ts`](#grok-agentts) | Grok gateway bridge → xAI's `grok --prompt-file` | by `committee-run` / pm2 |
 | [`committee-smoke.ts`](#committee-smokets) | 2-way smoke test | by you (manual) |
 | [`gateway-listen.ts`](#gateway-listents) | Bare gateway diagnostic | by you (manual) |
 | `antigravity-relay.ts` / `antigravity-notify.ts` / `antigravity-mcp.ts` | **Parked** — Antigravity GUI bridge (no unattended wake) | — |
 
 > The three `antigravity-*` scripts are retained for reference but are **not part of the default committee** — Antigravity cannot vote unattended. See [Appendix: why Antigravity is parked](./guides/local-committee.md#appendix-why-antigravity-is-parked).
+
+**Which bridge runs** is decided by each external agent's `llm.provider` in the manifest (`scripts/lib/bridges.ts`), and every bridge registers under the manifest's agent id:
+
+| `provider` | bridge | model from `llm.model` |
+|---|---|---|
+| `cursor` | `cursor-agent-bridge.ts` | required, e.g. `cursor-grok-4.6-high`, `gpt-5` |
+| `codex-cli` | `codex-agent.ts` | optional, as `CODEX_MODEL` |
+| `grok-cli` | `grok-agent.ts` (xAI's CLI) | optional, as `GROK_MODEL` |
+| `antigravity` | `antigravity-relay.ts` | — |
+
+Manifests that still name a vendor (`openai`, `gemini`) for `codex`, `grok` or `antigravity` resolve by agent id. Any other provider on an external agent stops the run before a process starts.
 
 ---
 
@@ -34,7 +46,7 @@ bun scripts/committee-run.ts
 | `GATEWAY_PORT` | `3199` | gateway port |
 | `EXTERNAL_TIMEOUT_MS` | `600000` | per-external-agent vote timeout |
 
-- Loads `~/Code/floor/.agents/projects/vlist/agents.yaml`; filters to agents with the `vote` capability that are listed in `AGENTS`.
+- Loads the reviewed repository's manifest, `<CODEX_CWD>/.agents/agents.yaml` (override with `COMMITTEE_CONFIG`); the committee is the agents with the `vote` capability that are listed in `AGENTS`, and an empty committee stops the run.
 - Claude (`claude-code`) is wired via `createClaudeCodeAdapter` with read-only tools (`Read/Glob/Grep/Bash`), `cwd = CODEX_CWD`.
 - Spawns `codex-agent.ts` if `codex` is included and `grok-agent.ts` if `grok` is included; waits for each external bridge to connect before dispatching.
 - `contextBuilder`/`stateStore` are unused by `executeCommitteeReview` and passed as stubs; `taskAdapter` is an in-memory stub that just logs the committee's posts.
@@ -76,6 +88,28 @@ GATEWAY_URL=ws://localhost:3199 GROK_CWD=~/Code/floor/vlist bun scripts/grok-age
 | `GROK_BIN` | `grok` | path to the Grok binary |
 
 Writes `systemPrompt + proposal` to a temp file and runs `grok --prompt-file <tmp> --cwd <GROK_CWD> --output-format plain --permission-mode dontAsk --sandbox read-only`, returning trimmed stdout (clean final message, no tool noise). Prereq: `grok login`. Uses the CLI's own auth — no API key.
+
+## cursor-agent-bridge.ts
+
+Gateway client for **any Cursor-hosted model**. Registers under the manifest's agent id and, on each assignment, runs one headless `cursor-agent -p` turn with the manifest's model against the repository, on the Cursor subscription.
+
+```bash
+GATEWAY_URL=ws://localhost:3199 AGENT_ID=grok CURSOR_MODEL=cursor-grok-4.6-high \
+REVIEW_CWD=~/Code/floor/vlist bun scripts/cursor-agent-bridge.ts
+```
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `AGENT_ID` | — (required) | gateway agent id, from the manifest |
+| `CURSOR_MODEL` | — (required) | model identifier, from the manifest |
+| `REVIEW_CWD` | `process.cwd()` | repository the review reads |
+| `AGENT_NAME` | `<id> (Cursor)` | display name |
+| `GATEWAY_URL` / `GATEWAY_TOKEN` | `ws://localhost:3100` / — | gateway |
+| `EXTERNAL_TIMEOUT_MS` | 600000 | per-turn timeout |
+
+- **Sandboxed.** Every turn runs in a [reviewer sandbox](./guides/sandbox.md): it reads the repository directly and cannot write anything outside Cursor's own state, nor read credential stores or `.env` files. Without it, `cursor-agent`'s edit tool writes outside its working directory even under `--trust`.
+- **No verdict, one retry.** A reply without `VOTE:` or `RECOMMEND:` is retried once; a second empty reply is returned as-is, so the committee records an abstention rather than a vote nobody cast.
+- Prereq: `cursor-agent login`.
 
 ## Parked: antigravity-relay.ts / antigravity-notify.ts / antigravity-mcp.ts
 

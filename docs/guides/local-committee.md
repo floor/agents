@@ -8,7 +8,9 @@ This is the all-local variant of [Committee Mode](./committee.md). Where committ
 |-------|------|-----------|------|
 | **claude** | Claude Code CLI | internal — orchestrator spawns `claude -p` | the CLI's own login |
 | **codex** | Codex CLI | external — gateway → `codex exec` | the CLI's own login |
-| **grok** | Grok CLI | external — gateway → `grok --prompt-file` | the CLI's own login |
+| **grok** | Cursor CLI (`provider: cursor`) or xAI's Grok CLI (`provider: grok-cli`) | external — gateway → sandboxed `cursor-agent -p`, or `grok --prompt-file` | that CLI's own login |
+
+Each external member's `provider` picks its bridge, so a project chooses per agent how a model is reached. Through Cursor, the same bridge can seat GPT or Gemini too.
 
 > **Worked example:** on 2026-06-13 this committee reviewed `RFC-013: Spatial Navigation Model` — each agent through its real local tool, no cloud keys, votes tallied by strict majority.
 
@@ -37,35 +39,41 @@ This is why the loop is robust: there is no "wake" problem. The bridge process i
 
 ### 1. Project config
 
-Central layout under `~/Code/floor/.agents/` (one folder per project). External members are marked `external: true`:
+The committee lives in the manifest of the project it reviews, `.agents/agents.yaml`, beside the agents that implement: its members are the agents with the `vote` capability. The scripts read `<CODEX_CWD>/.agents/agents.yaml`; set `COMMITTEE_CONFIG` to use another file. External members are marked `external: true`:
 
 ```yaml
-# ~/Code/floor/.agents/projects/vlist/agents.yaml
+# <repo>/.agents/agents.yaml — prompt paths resolve relative to this file
 agents:
   - id: claude
     name: "Claude"
-    promptTemplate: "/Users/you/Code/floor/.agents/prompts/claude-reviewer.md"
+    promptTemplate: "../../agents/agents/claude-reviewer.md"
     llm: { provider: claude-code, model: opus }
     capabilities: [read_code, review_rfc, vote]
 
   - id: codex
     name: "Codex"
     external: true
-    promptTemplate: "/Users/you/Code/floor/.agents/prompts/codex-reviewer.md"
-    llm: { provider: openai, model: local }   # provider unused for external agents
+    promptTemplate: "../../agents/agents/codex-reviewer.md"
+    llm: { provider: codex-cli, model: local }            # bridge: codex-agent.ts
     capabilities: [review_rfc, vote]
 
   - id: grok
     name: "Grok"
     external: true
-    promptTemplate: "/Users/you/Code/floor/.agents/prompts/grok-reviewer.md"
-    llm: { provider: openai, model: local }   # provider unused for external agents
+    promptTemplate: "../../agents/agents/grok-reviewer.md"
+    llm: { provider: cursor, model: cursor-grok-4.6-high } # bridge: cursor-agent-bridge.ts
     capabilities: [review_rfc, vote]
 ```
 
+For an external member, `provider` chooses the bridge and `model` is handed to it — see [Scripts](../scripts.md) for the table. Older manifests that name a vendor there (`openai`, `gemini`) still resolve for the ids `codex`, `grok` and `antigravity`.
+
+The reviewer prompts ship in this repository under `agents/`.
+
 Each agent reviews through its **own** persona (`promptTemplate`) — Claude grounds in the codebase, Codex weighs migration risk, Grok reasons from first principles and distinguishes bounded from unbounded problems. Distinct personas are deliberate: they give the panel genuine perspective diversity instead of three takes on the same prior.
 
-No cloud keys are needed: `provider` for external agents is ignored (they run via the gateway), and the orchestrator no longer requires an API key for them.
+No cloud keys are needed: external members run through their CLI's own login via the gateway, and the orchestrator requires no API key for them.
+
+Claude and every Cursor member review inside a [reviewer sandbox](./sandbox.md): they read the repository directly, and every write to it — or anywhere else under your home directory — fails. A tool list or a CLI flag is not enough on its own: `Bash` can write anywhere, and `cursor-agent --trust` measurably writes outside its working directory.
 
 ### 2. Log in to the CLIs
 
@@ -74,7 +82,9 @@ Each member authenticates with its own tool — once, on your machine:
 ```bash
 claude   # Claude Code: already logged in if you use the CLI
 codex    # Codex: its own login
-grok login --oauth          # Grok: signs in via auth.x.ai (X / xAI account)
+cursor-agent login          # provider: cursor — the Cursor subscription
+cursor-agent --list-models  # verify, and find model ids (cursor-grok-4.6-high, gpt-5, …)
+grok login --oauth          # provider: grok-cli — signs in via auth.x.ai (X / xAI account)
 grok models                 # verify: should NOT say "You are not authenticated"
 ```
 
@@ -105,17 +115,19 @@ bun scripts/committee-run.ts
 | `EXTERNAL_TIMEOUT_MS` | how long to wait for an external vote (default `600000`) |
 | `GROK_MODEL` / `GROK_EFFORT` / `GROK_SANDBOX` | optional Grok overrides (model id, effort, sandbox profile) |
 
-Flow: Claude reviews internally; Codex and Grok are each pushed over the gateway and run their CLI headless against `CODEX_CWD` in a **read-only** sandbox; each returns its review and the gateway records the vote. Votes tally by **strict majority** (a tie or a missing vote does not pass).
+Flow: Claude reviews internally in a reviewer sandbox; each external member is pushed over the gateway to the bridge its `provider` names, and runs its CLI headless against `CODEX_CWD` — Codex in its own `--sandbox read-only`, Cursor members in the reviewer sandbox. Each returns its review and the gateway records the vote. Votes tally by **strict majority** (a tie or a missing vote does not pass).
 
 ### Daemon path (pm2)
 
-For a long-running fleet, `~/Code/floor/.agents/ecosystem.config.cjs` reads `fleet.json` and starts, per enabled project: the orchestrator and one bridge per external member (`codex-<project>`, `grok-<project>`). Because the bridges are plain CLIs, the daemon owns their whole lifecycle — there is no out-of-band process to coordinate.
+A long-running fleet would start, per project, the orchestrator and one bridge per external member (`codex-<project>`, `grok-<project>`). Because the bridges are plain CLIs, the daemon owns their whole lifecycle — there is no out-of-band process to coordinate. The earlier central launcher under `~/Code/floor/.agents/` is retired; a per-project pm2 config has not been written yet.
 
 ---
 
 ## Troubleshooting
 
 - **External agent connects then the round times out** — the CLI isn't authenticated (run its login) or the review exceeded `EXTERNAL_TIMEOUT_MS`. Check the bridge's inherited stdout in the run log for the CLI's own error.
+- **`Refusing to run … without a sandbox`** — `sandbox-exec` is unavailable (not macOS). Agents are refused rather than run uncontained; see [Agent Sandbox](./sandbox.md).
+- **`No bridge for external agent "…"`** — its `provider` names no bridge. Use `cursor`, `codex-cli`, `grok-cli` or `antigravity`.
 - **Grok 400 `does not support parameter reasoningEffort`** — you set `GROK_EFFORT` (or an old build defaulted it) against `grok-build`. Unset it.
 - **Duplicate agent id rejected by gateway** — two bridges claimed the same slot (e.g. a leftover pm2 process plus the round harness). Only one process may register per agent id.
 - **Empty review / no `VOTE:` line** — the CLI printed to stderr, not stdout, or produced tool noise. Codex uses `--output-last-message`; Grok uses `--output-format plain`. Check the bridge captured the final message.

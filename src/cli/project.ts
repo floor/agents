@@ -126,9 +126,22 @@ export async function doctorProject(company: CompanyConfig, taskAdapter: string,
     if (taskAdapter === 'things' && process.platform !== 'darwin') throw new Error('Things requires macOS')
     return `${taskAdapter}: configuration present; issue access checked on run`
   })
+  // Every native agent run and project command starts inside sandbox-exec, and is
+  // refused where it is missing — so a missing sandbox would fail mid-run.
+  if (pipelinesFor(company.agents).development) await check('Sandbox', async () => {
+    if (env.FLOOR_AGENTS_SANDBOX === 'off') return 'disabled by FLOOR_AGENTS_SANDBOX=off — agents run uncontained'
+    if (process.platform !== 'darwin' || !Bun.which('sandbox-exec')) {
+      throw new Error('sandbox-exec is unavailable, so agent runs are refused; see docs/guides/sandbox.md')
+    }
+    return 'sandbox-exec available; agents and project commands run contained'
+  })
   for (const provider of computeRequiredProviders(company.agents)) await check(`Provider: ${provider}`, async () => {
     if (provider === 'claude-code') {
       if (!Bun.which('claude')) throw new Error('claude executable not found; install and authenticate it')
+      return 'CLI available; existing login is used during execution'
+    }
+    if (provider === 'cursor') {
+      if (!Bun.which('cursor-agent')) throw new Error('cursor-agent executable not found; install it and run cursor-agent login')
       return 'CLI available; existing login is used during execution'
     }
     const keys: Record<string, string> = { anthropic: 'ANTHROPIC_API_KEY', gemini: 'GEMINI_API_KEY', openai: 'OPENAI_API_KEY' }

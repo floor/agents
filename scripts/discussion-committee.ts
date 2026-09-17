@@ -31,6 +31,8 @@ import {
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { committeeConfigPath, parseMaxRounds, selectVoters, telegramSettings } from './lib/committee-env.ts'
+import { startBridges } from './lib/bridges.ts'
+import { reviewerSandbox } from '@floor-agents/sandbox'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 
@@ -205,16 +207,11 @@ async function main() {
   const gateway = createGateway({ port: PORT })
   gateway.start()
 
-  const bridges: { kill(): void }[] = []
-  for (const id of ['codex', 'grok'] as const) {
-    if (!agents.some(a => a.id === id && a.external)) continue
-    const env = { ...process.env, GATEWAY_URL: `ws://localhost:${PORT}`, CODEX_CWD: REPO, GROK_CWD: REPO }
-    bridges.push(Bun.spawn(['bun', join(import.meta.dir, `${id}-agent.ts`)], { env, stdout: 'inherit', stderr: 'inherit' }))
-    for (let i = 0; i < 30 && !gateway.isAgentConnected(id); i++) await new Promise(r => setTimeout(r, 500))
-    console.log(`[deliberation] ${id} connected: ${gateway.isAgentConnected(id)}`)
-  }
+  // One bridge per external member, chosen by its `provider` in the manifest.
+  const bridges = await startBridges(agents, { port: PORT, repo: REPO, gateway, log: m => console.log(`[deliberation] ${m}`) })
 
-  const claudeCode = createClaudeCodeAdapter({ cwd: REPO, model: 'opus', allowedTools: ['Read', 'Glob', 'Grep', 'Bash'] })
+  // Claude reviews in-process with Bash, so it runs in a reviewer sandbox.
+  const claudeCode = createClaudeCodeAdapter({ cwd: REPO, model: 'opus', allowedTools: ['Read', 'Glob', 'Grep', 'Bash'], sandbox: reviewerSandbox('claude') })
   const getAdapter = (provider: string) => {
     if (provider === 'claude-code') return claudeCode
     throw new Error(`only claude-code is wired internally, got: ${provider}`)
@@ -302,7 +299,7 @@ async function main() {
   // Cost stays in the operator console, never in the public thread.
   console.log(`cost (Claude API only; CLIs unmetered): $${costTracker.getTaskCost(`disc-${DISCUSSION}`).toFixed(4)}`)
 
-  for (const b of bridges) b.kill()
+  bridges.stop()
   gateway.stop()
   process.exit(0)
 }

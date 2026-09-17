@@ -1,10 +1,17 @@
 import type { LLMAdapter, LLMConfig, LLMResponse, ToolCall } from '@floor-agents/core'
+import { sandboxed, type SandboxSpec } from '@floor-agents/sandbox'
 
 export type ClaudeCodeAdapterConfig = {
   readonly cwd?: string
   readonly model?: string
   readonly maxTurns?: number
   readonly allowedTools?: string[]
+  /**
+   * The operating-system sandbox the CLI starts in. With `Bash` in allowedTools
+   * the agent can write anywhere the user can; a sandbox is what stops it.
+   * Committee reviewers pass `reviewerSandbox('claude')`.
+   */
+  readonly sandbox?: SandboxSpec
 }
 
 const DEFAULT_MAX_TURNS = 10
@@ -81,7 +88,7 @@ export function createClaudeCodeAdapter(config: ClaudeCodeAdapterConfig = {}): L
       // routes through the API and charges per token instead of using the plan.
       const { ANTHROPIC_API_KEY, ...cleanEnv } = process.env
 
-      const proc = Bun.spawn(args, {
+      const proc = Bun.spawn(config.sandbox ? sandboxed(args, config.sandbox) : args, {
         cwd: config.cwd ?? process.cwd(),
         stdout: 'pipe',
         stderr: 'pipe',

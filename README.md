@@ -111,13 +111,15 @@ See [Getting Started](./docs/getting-started.md) for the full setup guide.
 
 ## Architecture
 
-A monorepo with 11 packages, each with a single responsibility:
+A monorepo with 13 packages, each with a single responsibility:
 
 ```
 packages/
 ├── core/              Types, config loader, validation
 ├── anthropic/         Claude API adapter
 ├── claude-code/       Claude Code CLI adapter (native worktree execution)
+├── cursor/            Cursor CLI adapter (Grok, GPT, Gemini on the Cursor subscription)
+├── sandbox/           macOS sandbox-exec containment for agent CLIs
 ├── lmstudio/          LM Studio adapter (local models)
 ├── openai/            OpenAI-compatible adapter (OpenAI, Ollama, etc.)
 ├── gemini/            Google Gemini adapter

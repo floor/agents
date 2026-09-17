@@ -54,7 +54,8 @@ async function reviewWithCodex(task: TaskAssignment): Promise<string> {
 
 const client = createGatewayClient({
   url: GATEWAY_URL,
-  agentId: 'codex',
+  // The manifest's agent id, passed by the committee scripts; 'codex' otherwise.
+  agentId: process.env.AGENT_ID ?? 'codex',
   name: 'Codex (local CLI)',
   capabilities: ['review_rfc', 'vote'],
   token: GATEWAY_TOKEN,

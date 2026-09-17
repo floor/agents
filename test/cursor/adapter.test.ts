@@ -1,8 +1,9 @@
 import { test, expect } from 'bun:test'
 import { createCursorAdapter, buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
+import { reviewerSandbox, implementerSandbox } from '@floor-agents/sandbox'
 
-test('creates adapter with default config', () => {
-  const adapter = createCursorAdapter()
+test('creates adapter with a reviewer sandbox', () => {
+  const adapter = createCursorAdapter({ sandbox: reviewerSandbox('cursor', {}) })
   expect(typeof adapter.run).toBe('function')
 })
 
@@ -10,7 +11,8 @@ test('creates adapter with custom config', () => {
   const adapter = createCursorAdapter({
     cwd: '/tmp',
     model: 'cursor-grok-4.6-high',
-    writable: true,
+    allowShell: true,
+    sandbox: implementerSandbox('cursor', ['/tmp'], {}),
     timeoutMs: 60_000,
   })
   expect(typeof adapter.run).toBe('function')
@@ -19,7 +21,8 @@ test('creates adapter with custom config', () => {
 // ── Arguments ───────────────────────────────────────────────────────
 //
 // The CLI refuses to start in an untrusted directory, so exactly one consent
-// flag is always present. Which one decides whether the agent can write.
+// flag is always present. Measured: `--trust` still lets the edit tool write
+// anywhere, and only refuses shell commands. Neither flag is containment.
 
 test('runs headless with a machine-readable envelope', () => {
   const args = buildCursorArgs({ prompt: 'hello' })
@@ -28,14 +31,14 @@ test('runs headless with a machine-readable envelope', () => {
   expect(args[args.indexOf('--output-format') + 1]).toBe('json')
 })
 
-test('is read-only by default', () => {
+test('refuses shell commands by default', () => {
   const args = buildCursorArgs({ prompt: 'review this' })
   expect(args).toContain('--trust')
   expect(args).not.toContain('--force')
 })
 
-test('asks for write access only when writable', () => {
-  const args = buildCursorArgs({ prompt: 'fix this', writable: true })
+test('approves shell commands only when allowShell is set', () => {
+  const args = buildCursorArgs({ prompt: 'fix this', allowShell: true })
   expect(args).toContain('--force')
   expect(args).not.toContain('--trust')
 })

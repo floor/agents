@@ -21,6 +21,8 @@ import {
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { committeeConfigPath } from './lib/committee-env.ts'
+import { startBridges } from './lib/bridges.ts'
+import { reviewerSandbox } from '@floor-agents/sandbox'
 
 const REPO = process.env.CODEX_CWD ?? join(homedir(), 'Code/floor/vlist')
 const PORT = parseInt(process.env.GATEWAY_PORT ?? '3199', 10)
@@ -69,23 +71,15 @@ async function main() {
   gateway.start()
   console.log(`[smoke] gateway up on :${PORT}`)
 
-  // Spawn the local Codex bridge pointed at our gateway.
-  const bridge = Bun.spawn(['bun', join(import.meta.dir, 'codex-agent.ts')], {
-    env: { ...process.env, GATEWAY_URL: `ws://localhost:${PORT}`, CODEX_CWD: REPO },
-    stdout: 'inherit',
-    stderr: 'inherit',
-  })
+  // The Codex bridge, chosen by the manifest like every other external member.
+  const bridges = await startBridges(agents, { port: PORT, repo: REPO, gateway, log: m => console.log(`[smoke] ${m}`) })
 
-  // Wait for Codex to register (up to ~15s).
-  for (let i = 0; i < 30 && !gateway.isAgentConnected('codex'); i++) {
-    await new Promise(r => setTimeout(r, 500))
-  }
-  console.log(`[smoke] codex connected: ${gateway.isAgentConnected('codex')}`)
-
+  // Claude reviews in-process with Bash, so it runs in a reviewer sandbox.
   const claudeCode = createClaudeCodeAdapter({
     cwd: REPO,
     model: 'opus',
     allowedTools: ['Read', 'Glob', 'Grep', 'Bash'],
+    sandbox: reviewerSandbox('claude'),
   })
 
   const deps: CommitteePipelineDeps = {
@@ -112,7 +106,7 @@ async function main() {
   }
   console.log('total cost: $' + result.totalCost.toFixed(4))
 
-  bridge.kill()
+  bridges.stop()
   gateway.stop()
   process.exit(0)
 }

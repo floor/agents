@@ -13,7 +13,7 @@ import { createWorktree, gitText, snapshotWorktree, removeWorktree } from './wor
 import { requireVerification, prepareWorkspace, verifyAndCommit, resolveBaseSha } from './verified-commit.ts'
 import { verificationSummary } from './verification.ts'
 import type { CostTracker } from './cost-tracker.ts'
-import { implementerSandbox, reviewerSandbox, sandboxed, type SandboxTool } from '@floor-agents/sandbox'
+import { implementerSandbox, reviewerSandbox, sandboxed, withDenyRead, type SandboxTool } from '@floor-agents/sandbox'
 import { buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
 
 /** Providers whose CLI runs as a full agent on a worktree, rather than through tool calls. */
@@ -116,6 +116,8 @@ export async function spawnNativeAgent(opts: {
   readonly writable: readonly string[]
   readonly maxTurns?: number
   readonly timeoutMs?: number
+  /** Paths the agent may not read: the private sources its provider is not trusted with. */
+  readonly denyRead?: readonly string[]
   /** For tests: the home directory the sandbox protects. */
   readonly home?: string
 }): Promise<NativeRunResult> {
@@ -123,9 +125,9 @@ export async function spawnNativeAgent(opts: {
   // subscription session instead of metered per-token API billing.
   const { ANTHROPIC_API_KEY, CURSOR_API_KEY, ...cleanEnv } = process.env
   const tool = sandboxTool(opts.provider)
-  const spec = opts.role === 'implement'
+  const spec = withDenyRead(opts.role === 'implement'
     ? implementerSandbox(tool, opts.writable, process.env, opts.home)
-    : reviewerSandbox(tool, process.env, opts.home)
+    : reviewerSandbox(tool, process.env, opts.home), opts.denyRead ?? [])
   const args = sandboxed(nativeAgentArgv(opts), spec)
   const timeoutMs = opts.timeoutMs ?? 600_000
 
@@ -171,6 +173,8 @@ export type NativeAgentDeps = {
   readonly setLabel: (issueId: string, label: string) => Promise<void>
   readonly project: ProjectConfig
   readonly guardrails: GuardrailsConfig
+  /** Private sources this agent's provider is not trusted with. */
+  readonly denyRead?: readonly string[]
 }
 
 export async function runNativeDevAgent(
@@ -238,7 +242,7 @@ export async function runNativeDevAgent(
     // (index, locks) — nothing else, including the main checkout it came from.
     const gitDir = await gitText(worktree.path, ['rev-parse', '--absolute-git-dir'])
     const runAgent = deps.runAgent ?? ((prompt: string, cwd: string, model?: string) => spawnNativeAgent({
-      provider: agent.llm.provider, role: 'implement', prompt, cwd, writable: [cwd, gitDir], ...(model ? { model } : {}),
+      provider: agent.llm.provider, role: 'implement', prompt, cwd, writable: [cwd, gitDir], denyRead: deps.denyRead ?? [], ...(model ? { model } : {}),
     }))
     const result = await runAgent(
       promptParts.join('\n'),
@@ -292,6 +296,8 @@ export type NativeReviewDeps = {
   readonly getPRDiff: (prId: string) => Promise<string>
   readonly project: ProjectConfig
   readonly maxReviewCycles: number
+  /** Private sources this reviewer's provider is not trusted with. */
+  readonly denyRead?: readonly string[]
 }
 
 export async function runNativeReviewAgent(
@@ -358,7 +364,7 @@ export async function runNativeReviewAgent(
     // A reviewer writes nothing: the sandbox denies every write outside its CLI's
     // state, and the snapshot check below still fails closed on any change.
     const result = await spawnNativeAgent({
-      provider: reviewer.llm.provider, role: 'review', prompt, cwd: worktree.path, writable: [], model: reviewer.llm.model,
+      provider: reviewer.llm.provider, role: 'review', prompt, cwd: worktree.path, writable: [], denyRead: deps.denyRead ?? [], model: reviewer.llm.model,
     })
 
     costTracker.recordCost(issue.id, result.cost)

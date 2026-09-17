@@ -1,11 +1,11 @@
-import { loadCompanyConfig, validateCompanyConfig, computeRequiredProviders } from '@floor-agents/core'
+import { loadCompanyConfig, validateCompanyConfig, computeRequiredProviders, privateSourceDenials } from '@floor-agents/core'
 import type { LLMAdapter } from '@floor-agents/core'
 import { createAnthropicAdapter } from '@floor-agents/anthropic'
 import { createOpenAIAdapter } from '@floor-agents/openai'
 import { createLMStudioAdapter } from '@floor-agents/lmstudio'
 import { createClaudeCodeAdapter } from '@floor-agents/claude-code'
 import { createCursorAdapter } from '@floor-agents/cursor'
-import { reviewerSandbox } from '@floor-agents/sandbox'
+import { reviewerSandbox, withDenyRead } from '@floor-agents/sandbox'
 import { createGeminiAdapter } from '@floor-agents/gemini'
 import { createGitHubAdapter } from '@floor-agents/github'
 import { createTaskAdapter } from '@floor-agents/task'
@@ -112,13 +112,14 @@ if (requiredProviders.has('anthropic')) {
 
 // In-process CLI adapters serve agents that read and decide — committee voters,
 // the PM — so they run in a reviewer sandbox. Implementers do not use them: they
-// run through the native runner, in an implementer sandbox on a worktree.
+// run through the native runner, in an implementer sandbox on a worktree. Either
+// way the sandbox denies the private sources a provider is not trusted with.
 if (requiredProviders.has('claude-code')) {
   const adapter = createClaudeCodeAdapter({
     cwd: company.project.root ?? process.cwd(),
     model: process.env.CLAUDE_CODE_MODEL,
     allowedTools: ['Read', 'Glob', 'Grep', 'Bash', 'LSP'],
-    sandbox: reviewerSandbox('claude'),
+    sandbox: withDenyRead(reviewerSandbox('claude'), privateSourceDenials(company, 'claude-code')),
   })
   llmAdapters.set('claude-code', adapter)
 }
@@ -126,7 +127,7 @@ if (requiredProviders.has('claude-code')) {
 if (requiredProviders.has('cursor')) {
   llmAdapters.set('cursor', createCursorAdapter({
     cwd: company.project.root ?? process.cwd(),
-    sandbox: reviewerSandbox('cursor'),
+    sandbox: withDenyRead(reviewerSandbox('cursor'), privateSourceDenials(company, 'cursor')),
   }))
 }
 

@@ -2,7 +2,7 @@ import { test, expect, describe } from 'bun:test'
 import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { sandboxProfile, sandboxed, reviewerSandbox, implementerSandbox, projectCommandSandbox } from '@floor-agents/sandbox'
+import { sandboxProfile, sandboxed, reviewerSandbox, implementerSandbox, projectCommandSandbox, withDenyRead, denyReadEnv } from '@floor-agents/sandbox'
 
 const HOME = '/Users/someone'
 
@@ -72,6 +72,31 @@ describe('sandboxProfile', () => {
     expect(sandboxProfile(reviewerSandbox('claude', env, HOME))).not.toContain('.gradle')
   })
 
+  test('private sources join the read denials, after every write allowance', () => {
+    const spec = withDenyRead(implementerSandbox('cursor', ['/Users/someone/repo'], {}, HOME), ['/Users/someone/docs/findings.html'])
+    const lines = sandboxProfile(spec).split('\n')
+    const denial = lines.indexOf('(deny file-read* (subpath "/Users/someone/docs/findings.html"))')
+    expect(denial).toBeGreaterThan(-1)
+    expect(denial).toBeGreaterThan(Math.max(...lines.map((l, i) => (l.startsWith('(allow') ? i : -1))))
+    // The credential denials are kept, not replaced.
+    expect(spec.denyRead).toContain('/Users/someone/.ssh')
+    expect(withDenyRead(spec, [])).toBe(spec)
+  })
+
+  test('Codex may write its own state and nothing else under home', () => {
+    const profile = sandboxProfile(reviewerSandbox('codex', {}, HOME))
+    expect(profile).toContain('(allow file-write* (subpath "/Users/someone/.codex"))')
+    expect(profile).not.toContain('.cursor')
+  })
+
+  test('a child sandbox receives the denials through FLOOR_AGENTS_DENY_READ, merged with any set', () => {
+    expect(denyReadEnv(['/docs/a.html', '/docs/b.md'], {})).toBe('/docs/a.html,/docs/b.md')
+    expect(denyReadEnv(['/docs/a.html'], { FLOOR_AGENTS_DENY_READ: '~/private' })).toBe('~/private,/docs/a.html')
+    expect(denyReadEnv([], {})).toBeUndefined()
+    // Split on the comma, this path would deny two paths that do not exist.
+    expect(() => denyReadEnv(['/docs/a,b.html'], {})).toThrow(/comma/)
+  })
+
   test('quotes in a path cannot break out of the profile string', () => {
     const profile = sandboxProfile(implementerSandbox('cursor', ['/tmp/a"b'], {}, HOME))
     expect(profile).toContain('(subpath "/tmp/a\\"b")')
@@ -122,6 +147,27 @@ describe.skipIf(process.platform !== 'darwin' || !Bun.which('sandbox-exec'))('sa
       expect(out).not.toContain('OUTSIDE_WRITTEN')
       expect(out).not.toContain('SECRET_READ')
       expect(await Bun.file(join(home, 'outside.txt')).exists()).toBe(false)
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  test('a denied private source cannot be read, while the repository beside it can', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'floor-sandbox-private-'))
+    try {
+      const repo = join(home, 'repo')
+      const docs = join(home, 'docs')
+      await mkdir(repo)
+      await mkdir(docs)
+      await Bun.write(join(repo, 'README.md'), 'PUBLIC_TEXT')
+      await Bun.write(join(docs, 'findings.html'), 'PRIVATE_TEXT')
+      const spec = withDenyRead(reviewerSandbox('codex', {}, home), [join(docs, 'findings.html')])
+      const script = `cat ${JSON.stringify(join(repo, 'README.md'))}; cat ${JSON.stringify(join(docs, 'findings.html'))}`
+      const proc = Bun.spawn(sandboxed(['sh', '-c', script], spec, { env: {} }), { stdout: 'pipe', stderr: 'pipe' })
+      const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
+      expect(out).toContain('PUBLIC_TEXT')
+      expect(out).not.toContain('PRIVATE_TEXT')
+      expect(err).toContain('Operation not permitted')
     } finally {
       await rm(home, { recursive: true, force: true })
     }

@@ -1,7 +1,8 @@
 import { dirname, join, relative, resolve } from 'node:path'
-import { mkdir, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import type { CompanyConfig, ProjectCommand } from '@floor-agents/core'
-import { computeRequiredProviders, validateCompanyConfig } from '@floor-agents/core'
+import { computeRequiredProviders, privateSourceDenials, trustedWithPrivateSources, validateCompanyConfig } from '@floor-agents/core'
+import { bridgeFor } from '../../scripts/lib/bridges.ts'
 import { gitText } from '../../packages/orchestrator/src/worktree.ts'
 import { pipelinesFor } from './modes.ts'
 
@@ -58,6 +59,10 @@ export async function initProject(configPath: string, cwd = process.cwd()): Prom
   await writeFile(config, Bun.YAML.stringify(manifest), { flag: 'wx' })
   console.log(`Created ${config}\nReview the inferred base branch, setup and verification commands. Add .worktrees/ and local run state to your project's .gitignore.`)
   if (!verification.length) console.log('No checks inferred. Add project.verification before running doctor or a task.')
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  try { return (await stat(path)).isDirectory() } catch { return false }
 }
 
 export type Diagnostic = { readonly name: string; readonly ok: boolean; readonly detail: string }
@@ -134,6 +139,22 @@ export async function doctorProject(company: CompanyConfig, taskAdapter: string,
       throw new Error('sandbox-exec is unavailable, so agent runs are refused; see docs/guides/sandbox.md')
     }
     return 'sandbox-exec available; agents and project commands run contained'
+  })
+  // Private sources are denied by the sandbox to every agent whose provider the
+  // manifest does not trust. A denial on a mistyped path protects nothing while
+  // the real file stays readable, so each path must exist.
+  const privateSources = Object.entries(company.sources ?? {}).filter(([, source]) => source.visibility !== 'public')
+  if (privateSources.length) await check('Private sources', async () => {
+    const missing: string[] = []
+    for (const [key, source] of privateSources) if (!(await Bun.file(source.path).exists()) && !(await isDirectory(source.path))) missing.push(`${key} (${source.path})`)
+    if (missing.length) throw new Error(`Private source not found, so its denial would protect nothing: ${missing.join(', ')}`)
+    const denied = company.agents.filter(a => privateSourceDenials(company, a.llm.provider).length)
+    if (denied.length && env.FLOOR_AGENTS_SANDBOX === 'off') {
+      throw new Error(`FLOOR_AGENTS_SANDBOX=off, so ${denied.map(a => a.id).join(', ')} could read private sources their provider is not trusted with`)
+    }
+    for (const agent of denied.filter(a => a.external)) bridgeFor(agent, root ?? '.', privateSourceDenials(company, agent.llm.provider), env)
+    const trusted = [...new Set(company.agents.map(a => a.llm.provider).filter(p => trustedWithPrivateSources(company, p)))]
+    return `${privateSources.length} private; readable by ${trusted.join(', ') || 'no provider'}; denied to ${denied.map(a => a.id).join(', ') || 'no agent'}`
   })
   for (const provider of computeRequiredProviders(company.agents)) await check(`Provider: ${provider}`, async () => {
     if (provider === 'claude-code') {

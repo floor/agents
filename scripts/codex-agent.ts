@@ -2,7 +2,13 @@
 /**
  * Codex external agent — connects to the Floor Agents gateway via WebSocket,
  * receives RFC review assignments, reviews them with the LOCAL Codex CLI
- * (`codex exec`, read-only sandbox), and sends back its vote.
+ * (`codex exec`), and sends back its vote.
+ *
+ * Codex runs inside a reviewer sandbox: it cannot write under the home directory
+ * beyond ~/.codex, and cannot read credential stores, .env files, or the paths in
+ * FLOOR_AGENTS_DENY_READ — the project's private sources when its provider is not
+ * trusted with them. Codex's own sandbox cannot nest inside ours, so it is turned
+ * off there; with FLOOR_AGENTS_SANDBOX=off Codex keeps its read-only sandbox.
  *
  * Usage:
  *   GATEWAY_URL=ws://localhost:3100 CODEX_CWD=~/Code/floor/vlist bun scripts/codex-agent.ts
@@ -11,6 +17,7 @@
 import type { TaskAssignment } from '@floor-agents/gateway'
 import { createGatewayClient } from '@floor-agents/gateway'
 import { buildCodexPrompt, buildCodexArgs } from './lib/codex.ts'
+import { reviewerSandbox, sandboxed } from '@floor-agents/sandbox'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rm } from 'node:fs/promises'
@@ -23,13 +30,15 @@ const CODEX_MODEL = process.env.CODEX_MODEL // optional override (e.g. o3, gpt-5
 async function reviewWithCodex(task: TaskAssignment): Promise<string> {
   const prompt = buildCodexPrompt(task)
   const outFile = join(tmpdir(), `codex-review-${crypto.randomUUID()}.txt`)
+  const contained = process.env.FLOOR_AGENTS_SANDBOX !== 'off'
   const args = buildCodexArgs({
     cwd: CODEX_CWD,
     outFile,
+    sandbox: contained ? 'danger-full-access' : 'read-only',
     ...(CODEX_MODEL ? { model: CODEX_MODEL } : {}),
   })
 
-  const proc = Bun.spawn(['codex', ...args], {
+  const proc = Bun.spawn(sandboxed(['codex', ...args], reviewerSandbox('codex')), {
     stdin: new TextEncoder().encode(prompt),
     stdout: 'pipe',
     stderr: 'pipe',

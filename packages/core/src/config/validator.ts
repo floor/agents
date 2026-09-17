@@ -131,6 +131,17 @@ export function validateCompanyConfig(config: CompanyConfig): readonly string[] 
     errors.push('guardrails.maxTotalOutputBytes must be positive')
   }
 
+  for (const [key, source] of Object.entries(config.sources ?? {})) {
+    if (typeof source.path !== 'string' || !source.path.trim()) errors.push(`sources.${key}.path is required`)
+    if (source.visibility !== 'public' && source.visibility !== 'private') {
+      errors.push(`sources.${key}.visibility must be public or private`)
+    }
+  }
+  const trusted = config.guardrails.privateSourceProviders
+  if (trusted !== undefined && (!Array.isArray(trusted) || trusted.some(p => typeof p !== 'string' || !p.trim()))) {
+    errors.push('guardrails.privateSourceProviders must be a list of provider names')
+  }
+
   // Validate costs
   if (config.costs.maxCostPerTask <= 0) {
     errors.push('costs.maxCostPerTask must be positive')

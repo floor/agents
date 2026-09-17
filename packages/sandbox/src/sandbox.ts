@@ -39,7 +39,7 @@ const real = (p: string): string => {
  * they execute code the agent may have written — its tests, a postinstall
  * script — so they are contained like the agent.
  */
-export type SandboxTool = 'cursor' | 'claude' | 'project'
+export type SandboxTool = 'cursor' | 'claude' | 'codex' | 'project'
 
 export type SandboxSpec = {
   /** The home directory whose writes are denied by default. */
@@ -64,6 +64,11 @@ export const toolState: Record<SandboxTool, { readonly dirs: readonly string[]; 
     dirs: ['.claude', 'Library/Caches'],
     // ~/.claude.json and the lock and backup files written beside it.
     filePrefixes: ['.claude.json'],
+  },
+  // Codex keeps sessions, logs and auth refreshes under ~/.codex.
+  codex: {
+    dirs: ['.codex', 'Library/Caches'],
+    filePrefixes: [],
   },
   // Package-manager and build caches that install and test commands write.
   project: {
@@ -147,6 +152,29 @@ export function implementerSandbox(tool: SandboxTool, writable: readonly string[
 /** A project setup or verification command: the checkout, plus package caches. */
 export function projectCommandSandbox(writable: readonly string[], env: Env = process.env, home = homedir()): SandboxSpec {
   return baseSpec('project', [...writable, ...extraWritable(env, home)], env, home)
+}
+
+/**
+ * The same sandbox with more paths it may not read — the project's private
+ * sources, for an agent whose provider is not trusted with them. A read denial
+ * comes after every write allowance in the profile, so nothing reopens it.
+ */
+export function withDenyRead(spec: SandboxSpec, paths: readonly string[]): SandboxSpec {
+  if (paths.length === 0) return spec
+  return { ...spec, denyRead: [...spec.denyRead, ...paths.map(real)] }
+}
+
+/**
+ * FLOOR_AGENTS_DENY_READ for a child process that builds its own sandbox, such
+ * as a committee bridge: the paths already set, plus `paths`. The variable is
+ * comma-separated, so a path containing a comma cannot be carried and is refused
+ * rather than split into two paths that deny nothing.
+ */
+export function denyReadEnv(paths: readonly string[], env: Env = process.env): string | undefined {
+  const bad = paths.find(p => p.includes(','))
+  if (bad) throw new Error(`Cannot pass a read denial containing a comma to a child sandbox: ${bad}`)
+  const all = [env.FLOOR_AGENTS_DENY_READ, ...paths].filter((p): p is string => Boolean(p && p.trim()))
+  return all.length ? all.join(',') : undefined
 }
 
 export type SandboxOptions = {

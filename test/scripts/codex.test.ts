@@ -30,6 +30,11 @@ describe('buildCodexArgs', () => {
     ])
   })
 
+  test('turns off the Codex sandbox when ours contains it, since the two cannot nest', () => {
+    const args = buildCodexArgs({ cwd: '/r', outFile: '/o', sandbox: 'danger-full-access' })
+    expect(args[args.indexOf('--sandbox') + 1]).toBe('danger-full-access')
+  })
+
   test('reads the prompt from stdin (trailing "-")', () => {
     expect(buildCodexArgs({ cwd: '/r', outFile: '/o' }).at(-1)).toBe('-')
   })

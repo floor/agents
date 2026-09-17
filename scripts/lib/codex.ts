@@ -21,11 +21,24 @@ export function buildCodexPrompt(task: CodexTask): string {
   ].join('\n')
 }
 
-/** Build the `codex exec` argv for a read-only review writing its last message to `outFile`. */
-export function buildCodexArgs(opts: { cwd: string; outFile: string; model?: string }): string[] {
+/**
+ * Build the `codex exec` argv for a review writing its last message to `outFile`.
+ *
+ * `sandbox` is Codex's own sandbox. Measured on macOS, it cannot run inside ours:
+ * Codex applies its sandbox with sandbox-exec for each shell command, a sandboxed
+ * process may not apply another, and every command then fails with
+ * "sandbox_apply: Operation not permitted". So a bridge that runs Codex in our
+ * reviewer sandbox turns Codex's off, and ours does the containing.
+ */
+export function buildCodexArgs(opts: {
+  cwd: string
+  outFile: string
+  model?: string
+  sandbox?: 'read-only' | 'danger-full-access'
+}): string[] {
   const args = [
     'exec',
-    '--sandbox', 'read-only',
+    '--sandbox', opts.sandbox ?? 'read-only',
     '--cd', opts.cwd,
     '--skip-git-repo-check',
     '--output-last-message', opts.outFile,

@@ -31,6 +31,7 @@ export type {
 
 export type { ProjectConventions, ProjectStructure, ProjectConfig, ProjectCommand } from './types/project.ts'
 export type { CompanyConfig } from './types/company.ts'
+export type { SourceDefinition, SourceVisibility } from './types/sources.ts'
 export type { GuardrailsConfig, GuardrailViolation } from './types/guardrails.ts'
 export type { CostConfig } from './types/costs.ts'
 export type { WorkflowDefinition, WorkflowStateDefinition, TransitionDefinition, TransitionTrigger } from './types/workflow.ts'
@@ -48,3 +49,5 @@ export { slugify } from './utils/slugify.ts'
 export { retry } from './utils/retry.ts'
 export type { RetryOptions } from './utils/retry.ts'
 export { computeRequiredProviders } from './utils/providers.ts'
+export { privateSourceDenials, trustedWithPrivateSources } from './utils/private-sources.ts'
+export type { PrivateSourcePolicy } from './utils/private-sources.ts'

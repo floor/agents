@@ -9,6 +9,7 @@ import type {
   AgentDefinition,
 } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
+import { privateSourceDenials } from '@floor-agents/core'
 import { runToolUseLoop, type LLMAdapterResolver } from './llm-runner.ts'
 import { parseToolCallOutput } from './output-parser.ts'
 import { validateAgentOutput } from './guardrails.ts'
@@ -157,6 +158,7 @@ async function dispatchReview(
       getPRDiff: (prId) => deps.gitAdapter.getPRDiff(deps.company.project.repo, prId),
       project: deps.company.project,
       maxReviewCycles: MAX_REVIEW_CYCLES,
+      denyRead: privateSourceDenials(deps.company, reviewer.llm.provider),
     })
   }
 
@@ -216,6 +218,7 @@ export async function executeTask(
           setLabel: (id, label) => taskAdapter.setLabel(id, label),
           project: company.project,
           guardrails,
+          denyRead: privateSourceDenials(company, devAgent.llm.provider),
         })
       } else {
         state = await runApiDevAgent(issue, devAgent, state, deps)
@@ -299,6 +302,7 @@ export async function executeTask(
             setLabel: (id, label) => taskAdapter.setLabel(id, label),
             project: company.project,
             guardrails,
+            denyRead: privateSourceDenials(company, devAgent.llm.provider),
           }, feedback)
 
           // Native already committed — skip to review

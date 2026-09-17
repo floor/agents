@@ -41,6 +41,7 @@ workflow: { ... }        # State machine (Phase 1: defined only)
 chain: { ... }           # Chain of command (Phase 1: defined only)
 autonomy: { ... }        # Autonomy rules (Phase 1: defined only)
 guardrails: { ... }      # Safety boundaries
+sources: { ... }         # Material beside the repository, public or private
 costs: { ... }           # Spending limits
 statusMapping: { ... }   # Internal → task manager status mapping
 ```
@@ -116,7 +117,24 @@ guardrails:
     - ".pem"
     - ".key"
     - ".exe"
+  privateSourceProviders:            # Providers trusted with private sources (absent: none)
+    - claude-code
+    - cursor
 ```
+
+### `sources`
+
+Named material agents consult beside the repository. Paths are relative to the manifest.
+
+```yaml
+sources:
+  findings:
+    path: "../../docs/projects/vlist/findings.html"
+    format: "html"
+    visibility: "private"            # public | private; omitted means private
+```
+
+An agent whose `llm.provider` is not in `guardrails.privateSourceProviders` cannot read a private source: its sandbox denies the path. See [Private sources](./guides/sandbox.md#private-sources).
 
 ### `costs`
 

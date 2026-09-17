@@ -43,6 +43,30 @@ describe('bridgeFor — provider picks the bridge', () => {
   })
 })
 
+describe('bridgeFor — private sources', () => {
+  const denied = ['/docs/findings.html', '/docs/vlist.md']
+
+  test('the Cursor and Codex bridges carry the denials into their sandbox', () => {
+    expect(bridgeFor(agent('grok', 'cursor', 'cursor-grok-4.6-high'), '/r', denied, {}).env.FLOOR_AGENTS_DENY_READ).toBe('/docs/findings.html,/docs/vlist.md')
+    expect(bridgeFor(agent('codex', 'codex-cli'), '/r', denied, {}).env.FLOOR_AGENTS_DENY_READ).toBe('/docs/findings.html,/docs/vlist.md')
+  })
+
+  test('denials already set for the run are kept', () => {
+    expect(bridgeFor(agent('codex', 'codex-cli'), '/r', denied, { FLOOR_AGENTS_DENY_READ: '/srv/x' }).env.FLOOR_AGENTS_DENY_READ)
+      .toBe('/srv/x,/docs/findings.html,/docs/vlist.md')
+  })
+
+  test('with nothing to deny, the bridge environment is unchanged', () => {
+    expect(bridgeFor(agent('codex', 'codex-cli'), '/r', [], {}).env).toEqual({ AGENT_ID: 'codex', CODEX_CWD: '/r' })
+  })
+
+  test('a bridge that cannot be sandboxed is refused for an untrusted provider', () => {
+    expect(() => bridgeFor(agent('grok', 'grok-cli'), '/r', denied, {})).toThrow(/cannot be sandboxed/)
+    expect(() => bridgeFor(agent('antigravity', 'antigravity'), '/r', denied, {})).toThrow(/cannot be sandboxed/)
+    expect(bridgeFor(agent('antigravity', 'antigravity'), '/r', [], {}).script).toBe('antigravity-relay.ts')
+  })
+})
+
 describe('cursor review', () => {
   test('recognises both committees\' verdict lines', () => {
     expect(hasVerdict('analysis…\n**VOTE: APPROVE**')).toBe(true)

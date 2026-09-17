@@ -6,6 +6,7 @@ import type { ChainOfCommand } from '../types/chain.ts'
 import type { AutonomyConfig } from '../types/autonomy.ts'
 import type { GuardrailsConfig } from '../types/guardrails.ts'
 import type { CostConfig } from '../types/costs.ts'
+import type { SourceDefinition } from '../types/sources.ts'
 import { dirname, resolve } from 'node:path'
 
 const DEFAULT_TEMPLATE_PATH = 'config/templates/default.yaml'
@@ -103,7 +104,21 @@ function parseGuardrails(raw: any): GuardrailsConfig {
     blockedPaths: raw?.blockedPaths ?? [],
     allowedPaths: raw?.allowedPaths ?? [],
     blockedExtensions: raw?.blockedExtensions ?? [],
+    ...(raw?.privateSourceProviders !== undefined ? { privateSourceProviders: raw.privateSourceProviders } : {}),
   }
+}
+
+function parseSources(raw: any): Record<string, SourceDefinition> {
+  const sources: Record<string, SourceDefinition> = {}
+  for (const [key, s] of Object.entries(raw ?? {}) as [string, any][]) {
+    sources[key] = {
+      path: s?.path,
+      ...(s?.format !== undefined ? { format: s.format } : {}),
+      // Fail closed: an unmarked source is treated as private.
+      visibility: s?.visibility ?? 'private',
+    }
+  }
+  return sources
 }
 
 function parseCosts(raw: any): CostConfig {
@@ -141,6 +156,9 @@ function resolvePaths(config: CompanyConfig, configPath: string): CompanyConfig 
     ...config,
     project: { ...config.project, root: typeof config.project.root === 'string' && config.project.root ? resolve(dir, config.project.root) : config.project.root },
     agents: config.agents.map(agent => ({ ...agent, promptTemplate: resolve(dir, agent.promptTemplate) })),
+    sources: Object.fromEntries(Object.entries(config.sources ?? {}).map(([key, source]) => [
+      key, typeof source.path === 'string' && source.path ? { ...source, path: resolve(dir, source.path) } : source,
+    ])),
   }
 }
 
@@ -160,6 +178,7 @@ function parseConfig(text: string): CompanyConfig {
     chain: parseChain(raw.chain),
     autonomy: parseAutonomy(raw.autonomy),
     guardrails: parseGuardrails(raw.guardrails),
+    sources: parseSources(raw.sources),
     costs: parseCosts(raw.costs),
     statusMapping: raw.statusMapping ?? {},
     createdAt: now,

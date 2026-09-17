@@ -54,7 +54,7 @@ bun scripts/committee-run.ts
 
 ## codex-agent.ts
 
-Gateway client for **Codex**. Registers as agent `codex`, and on each assignment runs the local Codex CLI in a read-only sandbox, returning the final message as the review.
+Gateway client for **Codex**. Registers as agent `codex`, and on each assignment runs the local Codex CLI in a [reviewer sandbox](./guides/sandbox.md), returning the final message as the review.
 
 ```bash
 GATEWAY_URL=ws://localhost:3199 CODEX_CWD=~/Code/floor/vlist bun scripts/codex-agent.ts
@@ -67,7 +67,7 @@ GATEWAY_URL=ws://localhost:3199 CODEX_CWD=~/Code/floor/vlist bun scripts/codex-a
 | `CODEX_CWD` | `process.cwd()` | working root for `codex exec` |
 | `CODEX_MODEL` | — | optional `--model` override |
 
-Runs `codex exec --sandbox read-only --cd <CODEX_CWD> --skip-git-repo-check --output-last-message <tmp> -`, feeding `systemPrompt + proposal` on stdin and returning the clean last message (falls back to stdout). Uses the CLI's own auth — no API key.
+Runs `sandbox-exec -p <reviewer profile> codex exec --sandbox danger-full-access --cd <CODEX_CWD> --skip-git-repo-check --output-last-message <tmp> -` — Codex's own sandbox cannot nest inside ours, so ours contains it, denying the paths in `FLOOR_AGENTS_DENY_READ` (the manifest's private sources, when `codex-cli` is not trusted with them). With `FLOOR_AGENTS_SANDBOX=off` it runs `codex exec --sandbox read-only` instead. It feeds `systemPrompt + proposal` on stdin and returning the clean last message (falls back to stdout). Uses the CLI's own auth — no API key.
 
 ## grok-agent.ts
 

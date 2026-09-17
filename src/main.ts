@@ -15,6 +15,7 @@ import { mkdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { parseArgs } from './cli/args.ts'
 import { doctorProject, initProject } from './cli/project.ts'
+import { pipelinesFor, pipelinesLabel } from './cli/modes.ts'
 
 // ── CLI flags (handle before any startup work) ───────────────────
 const VERSION = (
@@ -79,10 +80,6 @@ if (errors.length > 0) {
   process.exit(1)
 }
 
-if (args.command === 'run' && company.agents.some(a => a.capabilities.includes('vote'))) {
-  console.error('run implements an issue. Use a developer config without vote agents; committee review remains available through watch.')
-  process.exit(1)
-}
 if (args.command === 'doctor' || args.command === 'run' || company.project.verification) {
   const diagnostics = await doctorProject(company, TASK_ADAPTER)
   for (const d of diagnostics) console.log(`${d.ok ? 'PASS' : 'FAIL'} ${d.name}: ${d.detail}`)
@@ -155,8 +152,9 @@ for (const provider of requiredProviders) {
   }
 }
 
-// Create task adapter — driven by env var
-const task = (() => {
+// Create task adapter — driven by env var. A factory, because each adapter keeps
+// its record of seen issues per instance: two watchers must not share one.
+const createTask = () => {
   switch (TASK_ADAPTER) {
     case 'linear':
       return createTaskAdapter({
@@ -181,7 +179,8 @@ const task = (() => {
     default:
       throw new Error(`Unknown TASK_ADAPTER: ${TASK_ADAPTER}`)
   }
-})()
+}
+const task = createTask()
 
 // Create git adapter
 const github = createGitHubAdapter({
@@ -198,8 +197,9 @@ const contextBuilder = createContextBuilder({
 // Ensure state directory exists
 await mkdir(STATE_DIR, { recursive: true })
 
-// Detect mode: committee if any agent has 'vote' capability, dev otherwise
-const isCommitteeMode = company.agents.some(a => a.capabilities.includes('vote'))
+// Each role brings its own pipeline: implementers run development, voters run the
+// committee, and a manifest holding both runs both. `run` always implements.
+const pipelines = pipelinesFor(company.agents)
 const hasExternalAgents = company.agents.some(a => a.external)
 
 const stateStore = createStateStore(STATE_DIR)
@@ -241,37 +241,43 @@ const gateway = hasExternalAgents
 
 if (gateway) gateway.start()
 
-const orchestrator = isCommitteeMode
-  ? createCommitteeOrchestrator({
-      company,
-      taskAdapter: task,
-      gitAdapter: github,
-      llmAdapters,
-      contextBuilder,
-      stateStore,
-      costTracker,
-      gateway,
-      labels: COMMITTEE_LABELS,
-      discussions: company.project.repo
-        ? createDiscussionsAdapter({
-            token: requireEnv('GITHUB_TOKEN'),
-            owner: requireEnv('GITHUB_OWNER'),
-            repo: company.project.repo,
-          })
-        : undefined,
-    })
-  : createOrchestrator({
-      company,
-      taskAdapter: task,
-      gitAdapter: github,
-      llmAdapters,
-      contextBuilder,
-      stateStore,
-      costTracker,
-    })
+// Each pipeline watches its own labels. When both run, the committee gets its own
+// task adapter so the two watchers do not overwrite each other's seen-issue record.
+const orchestrators = [
+  ...(pipelines.development
+    ? [createOrchestrator({
+        company,
+        taskAdapter: task,
+        gitAdapter: github,
+        llmAdapters,
+        contextBuilder,
+        stateStore,
+        costTracker,
+      })]
+    : []),
+  ...(pipelines.committee
+    ? [createCommitteeOrchestrator({
+        company,
+        taskAdapter: pipelines.development ? createTask() : task,
+        gitAdapter: github,
+        llmAdapters,
+        contextBuilder,
+        stateStore,
+        costTracker,
+        gateway,
+        labels: COMMITTEE_LABELS,
+        discussions: company.project.repo
+          ? createDiscussionsAdapter({
+              token: requireEnv('GITHUB_TOKEN'),
+              owner: requireEnv('GITHUB_OWNER'),
+              repo: company.project.repo,
+            })
+          : undefined,
+      })]
+    : []),
+]
 
-const mode = isCommitteeMode ? 'committee' : 'dev'
-console.log(`[floor-agents] starting (${mode} mode)`)
+console.log(`[floor-agents] starting (${pipelinesLabel(pipelines)} mode)`)
 console.log(`  company:   ${company.name}`)
 console.log(`  project:   ${company.project.name} (${company.project.repo})`)
 console.log(`  agents:    ${company.agents.map(a => `${a.id} (${a.llm.provider})`).join(', ')}`)
@@ -283,14 +289,14 @@ console.log()
 process.on('SIGINT', async () => {
   console.log('\nShutting down...')
   gateway?.stop()
-  await orchestrator.stop()
+  await Promise.all(orchestrators.map(o => o.stop()))
   process.exit(0)
 })
 
 process.on('SIGTERM', async () => {
   gateway?.stop()
-  await orchestrator.stop()
+  await Promise.all(orchestrators.map(o => o.stop()))
   process.exit(0)
 })
 
-await orchestrator.start()
+await Promise.all(orchestrators.map(o => o.start()))

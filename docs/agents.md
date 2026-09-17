@@ -40,9 +40,9 @@ agents:
 
 Capabilities declare an agent's role. Two of them **drive behavior** today:
 
-- **`vote`** — putting any agent in `vote` switches the orchestrator into **committee mode**
-  (parallel review + majority vote). That agent participates in reviews. Also use
-  `review_rfc`.
+- **`vote`** — any agent with `vote` brings the **committee pipeline** (parallel review +
+  majority vote) and sits on it. If the manifest also holds implementers (`write_code`),
+  development runs alongside, each pipeline watching its own labels. Also use `review_rfc`.
 - **`review_pr`** — in **dev mode**, the agent with `review_pr` is the PR reviewer (the CTO).
 
 The rest (`write_code`, `create_pr`, `write_tests`, …) describe what dev agents do.

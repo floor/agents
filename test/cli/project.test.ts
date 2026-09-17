@@ -53,6 +53,21 @@ test('doctor reports missing credentials and checks without launching agents', a
   expect(diagnostics.find(d => d.name === 'Task source')?.detail).toContain('LINEAR_API_KEY')
 })
 
+test('doctor still requires verification when implementers share a manifest with voters', async () => {
+  const config = await loadCompanyConfig('config/templates/default.yaml')
+  const voter = { ...config.agents[0]!, id: 'reviewer', capabilities: ['review_rfc', 'vote'] as const, external: true }
+  const mixed = { ...config, agents: [...config.agents, voter], project: { ...config.project, root: undefined, verification: undefined } }
+  const diagnostics = await doctorProject(mixed, 'linear', {})
+  expect(diagnostics.find(d => d.name === 'Verification')?.ok).toBe(false)
+})
+
+test('doctor skips verification for a committee-only manifest', async () => {
+  const config = await loadCompanyConfig('config/templates/default.yaml')
+  const voters = config.agents.map(a => ({ ...a, capabilities: ['review_rfc', 'vote'] as const }))
+  const diagnostics = await doctorProject({ ...config, agents: voters, project: { ...config.project, root: undefined, verification: undefined } }, 'linear', {})
+  expect(diagnostics.find(d => d.name === 'Verification')).toBeUndefined()
+})
+
 test('rejects invalid commands and missing issue arguments before startup', () => {
   expect(parseArgs(['run', '--issue', '123', '--config', '/tmp/project.yaml'])).toEqual({ command: 'run', issue: '123', config: '/tmp/project.yaml' })
   expect(() => parseArgs(['run'])).toThrow('Usage:')

@@ -89,7 +89,7 @@ The orchestrator will:
 Floor Agents auto-detects the mode from your config:
 
 - **Dev mode** (default) — agents write code, open PRs, review. Triggered by issues with the `agent` label.
-- **Committee mode** — agents review proposals in parallel, vote, sync to GitHub Discussions. Triggered by issues with the `committee` label. Activated when any agent has the `vote` capability.
+- **Committee mode** — agents review proposals in parallel, vote, sync to GitHub Discussions. Triggered by issues with the `committee` label. Runs when any agent has the `vote` capability; a manifest with both implementers and voters runs both modes, each on its own label.
 
 See [Committee Mode](./guides/committee.md) for setup instructions.
 

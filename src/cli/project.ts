@@ -3,6 +3,7 @@ import { mkdir, realpath, writeFile } from 'node:fs/promises'
 import type { CompanyConfig, ProjectCommand } from '@floor-agents/core'
 import { computeRequiredProviders, validateCompanyConfig } from '@floor-agents/core'
 import { gitText } from '../../packages/orchestrator/src/worktree.ts'
+import { pipelinesFor } from './modes.ts'
 
 export function githubRemote(url: string): { owner: string; repo: string } | null {
   const match = url.trim().match(/^(?:https:\/\/(?:[^/@]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+)\/([^/]+?)(?:\.git)?$/)
@@ -74,8 +75,9 @@ export async function doctorProject(company: CompanyConfig, taskAdapter: string,
   })
   const root = company.project.root
   const owner = env.GITHUB_OWNER ?? company.project.owner
-  const committee = company.agents.some(a => a.capabilities.includes('vote'))
-  if (!committee) await check('Verification', async () => {
+  // Verification guards the code an implementer writes, so it is required whenever
+  // development runs — including a manifest that also seats a committee.
+  if (pipelinesFor(company.agents).development) await check('Verification', async () => {
     if (!root || !company.project.verification?.length) throw new Error('Set project.root and at least one project.verification command')
     return `${company.project.verification.length} engine checks configured`
   })

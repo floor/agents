@@ -109,7 +109,7 @@ GATEWAY_TOKEN=your-secret-token
 bun run src/main.ts
 ```
 
-The entry point auto-detects committee mode when any agent has the `vote` capability. You'll see:
+The entry point starts the committee pipeline when any agent has the `vote` capability, and the development pipeline as well if the manifest also holds implementers — the banner then reads `dev + committee mode`. For a committee-only manifest you'll see:
 
 ```
 [floor-agents] starting (committee mode)

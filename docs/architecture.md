@@ -423,7 +423,7 @@ floor-agents/
 │   ├── orchestrator/         Dev pipeline, committee pipeline, guardrails, cost tracking
 │   └── gateway/              WebSocket server + client for external agents
 │
-├── src/main.ts               Entry point (auto-detects dev vs committee mode)
+├── src/main.ts               Entry point (runs dev, committee, or both, from agent roles)
 ├── scripts/codex-agent.ts    Standalone Codex external agent
 ├── config/templates/         YAML config templates
 ├── agents/                   Prompt templates

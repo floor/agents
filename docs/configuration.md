@@ -23,6 +23,9 @@ Floor Agents is configured through two layers: a YAML config file and environmen
 | `STATE_DIR` | No | `./data/executions` | Directory for execution state files |
 | `GATEWAY_PORT` | No | `3100` | WebSocket gateway port (external agents) |
 | `GATEWAY_TOKEN` | No | — | Shared secret for gateway auth (WS + REST) |
+| `TELEGRAM_BOT_TOKEN` | No | — | Bot token; with `TELEGRAM_CHAT_ID`, every comment a run posts on its issue is repeated in that chat |
+| `TELEGRAM_CHAT_ID` | No | — | Chat or channel the run posts to |
+| `TELEGRAM_ALLOW_FROM` | No | — | Comma-separated user ids allowed to interject; in a group, required before anyone is trusted |
 
 **Key principle:** only providers referenced by your agent definitions require their env vars. If all agents use `provider: lmstudio`, you don't need `ANTHROPIC_API_KEY`.
 

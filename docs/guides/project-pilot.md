@@ -65,6 +65,11 @@ needed. Each command defaults to a five-minute timeout. Use one-shot test comman
 watch mode will reach the timeout. Setup runs before the agent and again in a
 reviewer's checkout when a reviewer is configured.
 
+Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to watch a run from a phone: each
+comment the run posts on its issue — picked up, working, the diffstat, the
+verification results, the PR — is repeated in that chat. The issue stays the
+record; a chat that cannot be reached is logged and the run continues.
+
 Add `.worktrees/` and `.agents/runs/` to the project's `.gitignore`. Commit the
 manifest and developer prompt if your team should share them. Keep credentials
 in your environment. The generated manifest starts with one developer; add a

@@ -71,7 +71,8 @@ comment the run posts on its issue — picked up, working, the diffstat, the
 verification results, the PR — is repeated in that chat. The issue stays the
 record; a chat that cannot be reached is logged and the run continues.
 
-Add `.worktrees/` and `.agents/runs/` to the project's `.gitignore`. Commit the
+Add `.agents/*` to the project's `.gitignore`, with `!.agents/agents.yaml` to keep the
+manifest: agent worktrees (`.agents/worktrees/`) and run state (`.agents/runs/`) live there. Commit the
 manifest and developer prompt if your team should share them. Keep credentials
 in your environment. The generated manifest starts with one developer; add a
 `review_pr` agent for an independent model review after engine verification.

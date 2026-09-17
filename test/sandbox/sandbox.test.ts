@@ -8,9 +8,9 @@ const HOME = '/Users/someone'
 
 describe('sandboxProfile', () => {
   test('denies writes under home, then allows only what the run needs', () => {
-    const profile = sandboxProfile(implementerSandbox('cursor', ['/Users/someone/repo/.worktrees/x'], {}, HOME))
+    const profile = sandboxProfile(implementerSandbox('cursor', ['/Users/someone/repo/.agents/worktrees/x'], {}, HOME))
     const deny = profile.indexOf('(deny file-write* (subpath "/Users/someone"))')
-    const allow = profile.indexOf('(allow file-write* (subpath "/Users/someone/repo/.worktrees/x"))')
+    const allow = profile.indexOf('(allow file-write* (subpath "/Users/someone/repo/.agents/worktrees/x"))')
     expect(deny).toBeGreaterThan(-1)
     // Last match wins, so an allowance must come after the broad denial.
     expect(allow).toBeGreaterThan(deny)
@@ -57,8 +57,8 @@ describe('sandboxProfile', () => {
   })
 
   test('project commands may write the checkout and package caches, not the rest of home', () => {
-    const profile = sandboxProfile(projectCommandSandbox(['/Users/someone/repo/.worktrees/x'], {}, HOME))
-    expect(profile).toContain('(allow file-write* (subpath "/Users/someone/repo/.worktrees/x"))')
+    const profile = sandboxProfile(projectCommandSandbox(['/Users/someone/repo/.agents/worktrees/x'], {}, HOME))
+    expect(profile).toContain('(allow file-write* (subpath "/Users/someone/repo/.agents/worktrees/x"))')
     expect(profile).toContain('(allow file-write* (subpath "/Users/someone/.bun"))')
     expect(profile).toContain('(allow file-write* (subpath "/Users/someone/.npm"))')
     expect(profile).not.toContain('(subpath "/Users/someone/.cursor")')

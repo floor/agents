@@ -11,7 +11,7 @@ export async function commitApiWorkspace(state: ExecutionState, deps: PipelineDe
   await deps.stateStore.save(state)
   await prepareWorkspace(worktree, deps.company.project)
   for (const file of state.parsedOutput!.files) {
-    if (file.path.split('/').some(part => part === '.git' || part === '.worktrees')) throw new Error(`Refusing Git metadata/worktree path: ${file.path}`)
+    if (file.path.split('/').some(part => part === '.git' || part === '.agents')) throw new Error(`Refusing Git metadata/worktree path: ${file.path}`)
     // Paths have passed validateAgentOutput. Refuse symlinks at every component
     // so a write cannot escape through a pre-existing repository symlink.
     let cursor = worktree.path

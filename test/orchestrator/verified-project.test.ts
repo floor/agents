@@ -35,7 +35,7 @@ beforeEach(async () => {
   await gitText(root, ['config', 'user.name', 'Test'])
   await Bun.write(join(root, 'answer.txt'), 'wrong')
   await Bun.write(join(root, '.env.secret'), 'fixture')
-  await Bun.write(join(root, '.gitignore'), '.worktrees/\n')
+  await Bun.write(join(root, '.gitignore'), '.agents/*\n!.agents/agents.yaml\n')
   await Bun.write(join(root, 'check.mjs'), 'import { readFileSync } from "node:fs"; console.log("checking answer"); process.exit(readFileSync("answer.txt", "utf8") === "42" ? 0 : 1)')
   await gitText(root, ['add', '-A'])
   await gitText(root, ['commit', '-m', 'initial'])

@@ -53,11 +53,11 @@ export async function initProject(configPath: string, cwd = process.cwd()): Prom
     name: remote.repo,
     project: { ...remote, name: remote.repo, root: relative(await realpath(dir), root) || '.', baseBranch, language, runtime, setup, verification },
     agents: [{ id: 'developer', name: 'Developer', promptTemplate: './developer.md', llm: { provider: 'claude-code', model: 'sonnet', maxTokens: 16000 }, capabilities: ['read_code', 'write_code', 'write_tests', 'create_pr'], autonomy: 'T1' }],
-    guardrails: { maxFilesPerTask: 20, maxFileSizeBytes: 102400, maxTotalOutputBytes: 512000, blockedPaths: ['.env*', '**/.env*', '**/*.pem', '**/*.key', '.github/workflows/**', '.git/**', '.agents/**', '.worktrees/**'], allowedPaths: [], blockedExtensions: [] },
+    guardrails: { maxFilesPerTask: 20, maxFileSizeBytes: 102400, maxTotalOutputBytes: 512000, blockedPaths: ['.env*', '**/.env*', '**/*.pem', '**/*.key', '.github/workflows/**', '.git/**', '.agents/**'], allowedPaths: [], blockedExtensions: [] },
     costs: { maxCostPerTask: 5, maxCostPerDay: 50, warnCostThreshold: 2 },
   }
   await writeFile(config, Bun.YAML.stringify(manifest), { flag: 'wx' })
-  console.log(`Created ${config}\nReview the inferred base branch, setup and verification commands. Add .worktrees/ and local run state to your project's .gitignore.`)
+  console.log(`Created ${config}\nReview the inferred base branch, setup and verification commands. Add .agents/* (keeping agents.yaml) to your project's .gitignore: worktrees and run state live there.`)
   if (!verification.length) console.log('No checks inferred. Add project.verification before running doctor or a task.')
 }
 

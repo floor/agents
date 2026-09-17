@@ -98,7 +98,7 @@ Ships with: Linear. Next: GitHub Issues, Jira.
 createGitAdapter({ type: 'github', token, owner, repo })
 ```
 
-Interface: `getFile`, `getTree`, `createBranch` (idempotent — 422 = already exists → success), `commitFiles`, `createPR` (checks for existing open PR first), `getPRDiff`, `addPRComment`, `mergePR`
+Interface: `getFile`, `getTree`, `createBranch` (a branch that already exists is moved to the base: a new attempt starts from the base, never from a previous attempt's stale tip), `commitFiles`, `createPR` (checks for existing open PR first), `getPRDiff`, `addPRComment`, `mergePR`
 
 Ships with: GitHub. Next: GitLab, Bitbucket.
 

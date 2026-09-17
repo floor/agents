@@ -151,9 +151,17 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
           }),
         })
       } catch (err) {
-        // Idempotent: 422 means branch already exists
-        if (err instanceof GitHubError && err.status === 422) return
-        throw err
+        if (!(err instanceof GitHubError && err.status === 422)) throw err
+        // 422: the branch exists — a previous attempt at this task left it. A new
+        // attempt asked for a branch *from the base*, and got the stale one:
+        // measured on floor/vlist#218–#220, three retries verified on a tree
+        // that lacked a fix merged into next an hour earlier, and failed on it.
+        // So the ref is moved to the base. The old tip is unreachable afterwards;
+        // a run that must not lose it is a run that must not be retried.
+        await api(`/repos/${owner}/${repo}/git/refs/heads/${name}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ sha, force: true }),
+        })
       }
     },
 

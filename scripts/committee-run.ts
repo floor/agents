@@ -13,7 +13,7 @@
  */
 
 import { loadCompanyConfig } from '@floor-agents/core'
-import type { TaskAdapter, Issue, ContextBuilder, StateStore, AgentDefinition } from '@floor-agents/core'
+import type { TaskAdapter, Issue, ContextBuilder, StateStore } from '@floor-agents/core'
 import { createClaudeCodeAdapter } from '@floor-agents/claude-code'
 import { createGateway } from '@floor-agents/gateway'
 import {
@@ -24,7 +24,7 @@ import {
 import { parseRfc } from './lib/rfc.ts'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { committeeConfigPath } from './lib/committee-env.ts'
+import { committeeConfigPath, selectVoters } from './lib/committee-env.ts'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 
@@ -64,9 +64,7 @@ async function main() {
   } as unknown as TaskAdapter
 
   const company = await loadCompanyConfig(CONFIG)
-  const agents = company.agents.filter(
-    (a: AgentDefinition) => a.capabilities.includes('vote') && ONLY.includes(a.id),
-  )
+  const agents = selectVoters(company.agents, ONLY, CONFIG)
   console.log(`[run] RFC: ${title}`)
   console.log(`[run] repo: ${REPO}`)
   console.log(`[run] agents: ${agents.map(a => `${a.id}${a.external ? ' (external)' : ''}`).join(', ')}\n`)

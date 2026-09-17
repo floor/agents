@@ -11,11 +11,30 @@ type Env = Readonly<Record<string, string | undefined>>
 export const expandHome = (p: string): string => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 
 /**
- * The committee manifest lives in the project it reviews, beside the developer
- * manifest: `<repo>/.agents/committee.yaml`. COMMITTEE_CONFIG overrides it.
+ * The committee sits in the project's own manifest, `<repo>/.agents/agents.yaml`,
+ * beside the agents that implement: the members are the agents with the `vote`
+ * capability. COMMITTEE_CONFIG overrides the path.
  */
 export function committeeConfigPath(repo: string, env: Env = process.env): string {
-  return env.COMMITTEE_CONFIG ? expandHome(env.COMMITTEE_CONFIG) : join(expandHome(repo), '.agents', 'committee.yaml')
+  return env.COMMITTEE_CONFIG ? expandHome(env.COMMITTEE_CONFIG) : join(expandHome(repo), '.agents', 'agents.yaml')
+}
+
+type Candidate = { readonly id: string; readonly capabilities: readonly string[] }
+
+/**
+ * The committee for this run: agents that can vote and are named in AGENTS.
+ *
+ * An empty committee is refused. Deliberating with no members would publish a
+ * result no one reached, which is the same failure as a zero-round cap.
+ */
+export function selectVoters<A extends Candidate>(agents: readonly A[], only: readonly string[], source: string): A[] {
+  const voters = agents.filter(a => a.capabilities.includes('vote') && only.includes(a.id))
+  if (voters.length === 0) {
+    throw new Error(
+      `No committee members in ${source}: no agent has the vote capability and an id in AGENTS=${only.join(',')}`,
+    )
+  }
+  return voters
 }
 
 /**

@@ -37,10 +37,10 @@ This is why the loop is robust: there is no "wake" problem. The bridge process i
 
 ### 1. Project config
 
-The committee lives in the project it reviews, at `.agents/committee.yaml`, beside the developer manifest `.agents/agents.yaml`. They are separate files because `floor-agents run` refuses any manifest holding a `vote` agent. The scripts read `<CODEX_CWD>/.agents/committee.yaml`; set `COMMITTEE_CONFIG` to use another file. External members are marked `external: true`:
+The committee lives in the manifest of the project it reviews, `.agents/agents.yaml`, beside the agents that implement: its members are the agents with the `vote` capability. The scripts read `<CODEX_CWD>/.agents/agents.yaml`; set `COMMITTEE_CONFIG` to use another file. External members are marked `external: true`:
 
 ```yaml
-# <repo>/.agents/committee.yaml — prompt paths resolve relative to this file
+# <repo>/.agents/agents.yaml — prompt paths resolve relative to this file
 agents:
   - id: claude
     name: "Claude"

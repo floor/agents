@@ -30,7 +30,7 @@ import {
 } from '@floor-agents/orchestrator'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { committeeConfigPath, parseMaxRounds, telegramSettings } from './lib/committee-env.ts'
+import { committeeConfigPath, parseMaxRounds, selectVoters, telegramSettings } from './lib/committee-env.ts'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 
@@ -175,9 +175,7 @@ async function reviewOnce(
 
 async function main() {
   const company = await loadCompanyConfig(CONFIG)
-  const agents = company.agents.filter(
-    (a: AgentDefinition) => a.capabilities.includes('vote') && ONLY.includes(a.id),
-  )
+  const agents = selectVoters(company.agents, ONLY, CONFIG)
 
   const discussions: DiscussionsAdapter = createDiscussionsAdapter({
     token: await githubToken(),

@@ -22,7 +22,7 @@ import {
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { mkdir } from 'node:fs/promises'
-import { committeeConfigPath, parseMaxRounds } from './lib/committee-env.ts'
+import { committeeConfigPath, parseMaxRounds, selectVoters } from './lib/committee-env.ts'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 const REPO = expand(process.env.CODEX_CWD ?? join(homedir(), 'Code/floor/vlist'))
@@ -117,9 +117,7 @@ async function decideOnce(
 
 async function main() {
   const company = await loadCompanyConfig(CONFIG)
-  const agents = company.agents.filter(
-    (a: AgentDefinition) => a.capabilities.includes('vote') && ONLY.includes(a.id),
-  )
+  const agents = selectVoters(company.agents, ONLY, CONFIG)
   const brief = await Bun.file(BRIEF_FILE).text()
 
   console.log(`[decision] "${TITLE}"`)

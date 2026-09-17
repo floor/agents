@@ -1,19 +1,40 @@
 import { test, expect, describe } from 'bun:test'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { committeeConfigPath, parseMaxRounds, telegramSettings } from '../../scripts/lib/committee-env.ts'
+import { committeeConfigPath, parseMaxRounds, selectVoters, telegramSettings } from '../../scripts/lib/committee-env.ts'
 
 describe('committeeConfigPath', () => {
-  test('reads the committee manifest from the reviewed repository', () => {
-    expect(committeeConfigPath('/code/vlist', {})).toBe('/code/vlist/.agents/committee.yaml')
+  test("reads the committee from the reviewed repository's manifest", () => {
+    expect(committeeConfigPath('/code/vlist', {})).toBe('/code/vlist/.agents/agents.yaml')
   })
 
   test('expands a home-relative repository path', () => {
-    expect(committeeConfigPath('~/Code/floor/vlist', {})).toBe(join(homedir(), 'Code/floor/vlist/.agents/committee.yaml'))
+    expect(committeeConfigPath('~/Code/floor/vlist', {})).toBe(join(homedir(), 'Code/floor/vlist/.agents/agents.yaml'))
   })
 
   test('COMMITTEE_CONFIG overrides the default', () => {
     expect(committeeConfigPath('/code/vlist', { COMMITTEE_CONFIG: '/elsewhere/c.yaml' })).toBe('/elsewhere/c.yaml')
+  })
+})
+
+describe('selectVoters', () => {
+  const agents = [
+    { id: 'cto', capabilities: ['read_code', 'create_pr'] },
+    { id: 'grok', capabilities: ['read_code', 'write_code'] },
+    { id: 'claude', capabilities: ['review_rfc', 'vote'] },
+    { id: 'codex', capabilities: ['review_rfc', 'vote'] },
+  ]
+
+  test('keeps agents that can vote and are named in AGENTS', () => {
+    expect(selectVoters(agents, ['claude', 'codex', 'grok'], 'm.yaml').map(a => a.id)).toEqual(['claude', 'codex'])
+  })
+
+  test('an implementer named in AGENTS does not join the committee', () => {
+    expect(selectVoters(agents, ['claude', 'grok'], 'm.yaml').map(a => a.id)).toEqual(['claude'])
+  })
+
+  test('refuses an empty committee rather than deliberating with no one', () => {
+    expect(() => selectVoters(agents, ['cto', 'grok'], 'm.yaml')).toThrow(/No committee members in m\.yaml/)
   })
 })
 

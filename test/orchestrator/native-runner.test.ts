@@ -2,7 +2,7 @@ import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import { mkdtemp, mkdir, rm, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { NATIVE_PROVIDERS, DEFAULT_TURN_TIMEOUT_MS, turnTimeoutMs, nativeAgentArgv, parseNativeResult, spawnNativeAgent } from '../../packages/orchestrator/src/native-runner.ts'
+import { NATIVE_PROVIDERS, DEFAULT_TURN_TIMEOUT_MS, DEFAULT_MAX_TURNS, turnTimeoutMs, failureReason, nativeAgentArgv, parseNativeResult, spawnNativeAgent } from '../../packages/orchestrator/src/native-runner.ts'
 
 describe('nativeAgentArgv', () => {
   test('cursor is a native provider alongside claude-code', () => {
@@ -40,7 +40,7 @@ describe('parseNativeResult', () => {
 
   test('reads the Cursor envelope after progress output and reports its error flag', () => {
     const out = 'working…\n{"type":"result","subtype":"success","is_error":true,"duration_ms":1,"result":"boom"}'
-    expect(parseNativeResult('cursor', out, '')).toEqual({ resultText: 'boom', cost: 0, isError: true })
+    expect(parseNativeResult('cursor', out, '')).toEqual({ resultText: 'boom', cost: 0, isError: true, subtype: 'success' })
   })
 
   test('Cursor output with no envelope is an error, not a success', () => {
@@ -133,5 +133,28 @@ describe("turnTimeoutMs", () => {
     for (const raw of ["", "soon", "0", "-1", "NaN"]) {
       expect(turnTimeoutMs(undefined, { FLOOR_AGENTS_AGENT_TIMEOUT_MS: raw })).toBe(DEFAULT_TURN_TIMEOUT_MS)
     }
+  })
+})
+
+describe("turn caps", () => {
+  test("the cap fits the role, and the manifest can raise it", () => {
+    const cap = (argv: string[]) => argv[argv.indexOf('--max-turns') + 1]
+    expect(cap(nativeAgentArgv({ provider: 'claude-code', role: 'implement', prompt: 'p' }))).toBe(String(DEFAULT_MAX_TURNS.implement))
+    expect(cap(nativeAgentArgv({ provider: 'claude-code', role: 'review', prompt: 'p' }))).toBe(String(DEFAULT_MAX_TURNS.review))
+    expect(cap(nativeAgentArgv({ provider: 'claude-code', role: 'implement', prompt: 'p', maxTurns: 500 }))).toBe('500')
+    // An implementer edits, runs tests and iterates; 25 ran out four minutes into floor/vlist#220.
+    expect(DEFAULT_MAX_TURNS.implement).toBeGreaterThan(100)
+  })
+
+  test("a capped turn is reported as capped, not as a crash", () => {
+    const parsed = parseNativeResult('claude-code', JSON.stringify({ type: 'result', subtype: 'error_max_turns', is_error: true, num_turns: 25 }), '')
+    expect(parsed.isError).toBe(true)
+    expect(parsed.subtype).toBe('error_max_turns')
+    const budget = { timeoutMs: 600_000, maxTurns: 25 }
+    expect(failureReason(1, parsed.subtype, budget)).toContain('cap of 25 tool calls')
+    expect(failureReason(1, parsed.subtype, budget)).toContain('maxTurns')
+    expect(failureReason(143, undefined, budget)).toContain('did not finish within 10 minutes')
+    expect(failureReason(2, undefined, budget)).toBe('failed (exit 2)')
+    expect(failureReason(1, 'error_during_execution', budget)).toBe('failed (exit 1, error_during_execution)')
   })
 })

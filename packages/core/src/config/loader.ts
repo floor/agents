@@ -33,6 +33,7 @@ function parseAgents(raw: unknown[]): AgentDefinition[] {
     autonomy: (a.autonomy ?? 'T1') as AutonomyTier,
     customInstructions: a.customInstructions ?? '',
     ...(a.timeoutMs !== undefined ? { timeoutMs: a.timeoutMs } : {}),
+    ...(a.maxTurns !== undefined ? { maxTurns: a.maxTurns } : {}),
     external: a.external ?? false,
   }))
 }

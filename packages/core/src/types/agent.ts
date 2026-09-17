@@ -36,5 +36,12 @@ export type AgentDefinition = {
    * a small fix; a project raises it for an agent that works on more.
    */
   readonly timeoutMs?: number
+  /**
+   * How many tool calls one turn may make, for a CLI that counts them
+   * (claude-code). The default fits the role: an implementer edits, runs tests
+   * and iterates, a reviewer reads. A turn that reaches the cap ends with no
+   * result, so the cap is a size of task, like timeoutMs.
+   */
+  readonly maxTurns?: number
   readonly external?: boolean
 }

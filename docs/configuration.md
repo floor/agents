@@ -93,6 +93,7 @@ agents:
       - write_tests
     autonomy: T1                     # T1: fully autonomous, T2: recommends, T3: presents options
     timeoutMs: 1800000               # How long one turn may run (default 600000, ten minutes)
+    maxTurns: 500                    # Tool calls one turn may make (claude-code; default 300 implementing, 60 reviewing)
     customInstructions: ""           # Per-agent instructions appended to prompt
     external: false                  # If true, agent connects via gateway WebSocket
 ```
@@ -107,6 +108,11 @@ that agent is given, not a property of the engine — a small fix finishes in mi
 across several plugins with tests does not. A turn that reaches the limit is killed and the task
 fails; its worktree is preserved. `FLOOR_AGENTS_AGENT_TIMEOUT_MS` overrides it for one run,
 without editing the manifest.
+
+**`maxTurns`** caps the tool calls in one turn, for a CLI that counts them (`claude-code`: every
+Read, Edit or Bash call is a turn). The defaults fit the role — 300 implementing, 60 reviewing —
+and a turn that reaches the cap ends with no result, reported as such. The time budget already
+bounds a runaway turn, so the cap only needs to be larger than honest work.
 
 ### `guardrails`
 

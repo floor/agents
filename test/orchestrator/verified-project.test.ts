@@ -157,7 +157,7 @@ test('a terminated native agent cannot publish partial work', async () => {
       await Bun.write(join(cwd, 'answer.txt'), '42')
       return { resultText: 'partial work', cost: 0, durationMs: 1, exitCode: 143 }
     },
-  })).rejects.toThrow('exit 143')
+  })).rejects.toThrow('did not finish within')
   expect(await remoteHead()).toBe(before)
 })
 

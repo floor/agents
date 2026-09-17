@@ -28,5 +28,13 @@ export type AgentDefinition = {
   readonly capabilities: readonly AgentCapability[]
   readonly autonomy: AutonomyTier
   readonly customInstructions: string
+  /**
+   * How long one turn of this agent may run, in milliseconds.
+   *
+   * A native CLI turn is one call that reads, edits and runs tests until it is
+   * done, so the budget is the task's size, not the engine's. The default suits
+   * a small fix; a project raises it for an agent that works on more.
+   */
+  readonly timeoutMs?: number
   readonly external?: boolean
 }

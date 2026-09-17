@@ -51,6 +51,7 @@ agents:
       maxTokens: 16000
     capabilities: [read_code, write_code, write_tests, create_pr]
     autonomy: T1
+    timeoutMs: 1800000          # one turn's budget; default is ten minutes
 
 guardrails:
   maxFilesPerTask: 20

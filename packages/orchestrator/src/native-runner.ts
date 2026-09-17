@@ -100,6 +100,20 @@ export function parseNativeResult(provider: string, stdout: string, stderr: stri
 
 const sandboxTool = (provider: string): SandboxTool => (provider === 'cursor' ? 'cursor' : 'claude')
 
+/** The default turn budget, when the manifest names none. */
+export const DEFAULT_TURN_TIMEOUT_MS = 600_000
+
+/**
+ * How long one turn may run: the agent's own `timeoutMs`, else the default.
+ * FLOOR_AGENTS_AGENT_TIMEOUT_MS overrides both, for extending a single run
+ * without editing the manifest.
+ */
+export function turnTimeoutMs(agentTimeoutMs?: number, env: Readonly<Record<string, string | undefined>> = process.env): number {
+  const override = Number(env.FLOOR_AGENTS_AGENT_TIMEOUT_MS)
+  if (Number.isFinite(override) && override > 0) return override
+  return agentTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS
+}
+
 /**
  * Run one native turn inside the operating-system sandbox.
  *
@@ -129,7 +143,7 @@ export async function spawnNativeAgent(opts: {
     ? implementerSandbox(tool, opts.writable, process.env, opts.home)
     : reviewerSandbox(tool, process.env, opts.home), opts.denyRead ?? [])
   const args = sandboxed(nativeAgentArgv(opts), spec)
-  const timeoutMs = opts.timeoutMs ?? 600_000
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TURN_TIMEOUT_MS
 
   const start = performance.now()
 
@@ -242,7 +256,8 @@ export async function runNativeDevAgent(
     // (index, locks) — nothing else, including the main checkout it came from.
     const gitDir = await gitText(worktree.path, ['rev-parse', '--absolute-git-dir'])
     const runAgent = deps.runAgent ?? ((prompt: string, cwd: string, model?: string) => spawnNativeAgent({
-      provider: agent.llm.provider, role: 'implement', prompt, cwd, writable: [cwd, gitDir], denyRead: deps.denyRead ?? [], ...(model ? { model } : {}),
+      provider: agent.llm.provider, role: 'implement', prompt, cwd, writable: [cwd, gitDir], denyRead: deps.denyRead ?? [],
+      timeoutMs: turnTimeoutMs(agent.timeoutMs), ...(model ? { model } : {}),
     }))
     const result = await runAgent(
       promptParts.join('\n'),
@@ -255,7 +270,12 @@ export async function runNativeDevAgent(
     console.log(`[${agent.id}] native agent: ${formatDuration(result.durationMs)}, $${result.cost.toFixed(4)}, exit ${result.exitCode}`)
 
     if (result.exitCode !== 0) {
-      throw new Error(`${agent.llm.provider} agent failed (exit ${result.exitCode}): ${result.resultText.slice(0, 500)}`)
+      // 143 is the runner's own deadline: say so, since the agent's output is
+      // empty and "failed (exit 143)" reads like a crash.
+      const why = result.exitCode === 143
+        ? `did not finish within ${Math.round(turnTimeoutMs(agent.timeoutMs) / 60_000)} minutes (raise the agent's timeoutMs in the manifest)`
+        : `failed (exit ${result.exitCode})`
+      throw new Error(`${agent.llm.provider} agent ${why}: ${result.resultText.slice(0, 500)}`)
     }
 
     state = await verifyAndCommit(
@@ -364,7 +384,8 @@ export async function runNativeReviewAgent(
     // A reviewer writes nothing: the sandbox denies every write outside its CLI's
     // state, and the snapshot check below still fails closed on any change.
     const result = await spawnNativeAgent({
-      provider: reviewer.llm.provider, role: 'review', prompt, cwd: worktree.path, writable: [], denyRead: deps.denyRead ?? [], model: reviewer.llm.model,
+      provider: reviewer.llm.provider, role: 'review', prompt, cwd: worktree.path, writable: [], denyRead: deps.denyRead ?? [],
+      timeoutMs: turnTimeoutMs(reviewer.timeoutMs), model: reviewer.llm.model,
     })
 
     costTracker.recordCost(issue.id, result.cost)

@@ -2,7 +2,7 @@ import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import { mkdtemp, mkdir, rm, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { NATIVE_PROVIDERS, nativeAgentArgv, parseNativeResult, spawnNativeAgent } from '../../packages/orchestrator/src/native-runner.ts'
+import { NATIVE_PROVIDERS, DEFAULT_TURN_TIMEOUT_MS, turnTimeoutMs, nativeAgentArgv, parseNativeResult, spawnNativeAgent } from '../../packages/orchestrator/src/native-runner.ts'
 
 describe('nativeAgentArgv', () => {
   test('cursor is a native provider alongside claude-code', () => {
@@ -118,6 +118,20 @@ describe.skipIf(process.platform !== 'darwin' || !Bun.which('sandbox-exec'))('sp
     } finally {
       delete process.env.FLOOR_TEST_PRIVATE
       delete process.env.FLOOR_TEST_LEAK
+    }
+  })
+})
+
+describe("turnTimeoutMs", () => {
+  test("a manifest timeout replaces the default, and the environment replaces both", () => {
+    expect(turnTimeoutMs(undefined, {})).toBe(DEFAULT_TURN_TIMEOUT_MS)
+    expect(turnTimeoutMs(1_800_000, {})).toBe(1_800_000)
+    expect(turnTimeoutMs(1_800_000, { FLOOR_AGENTS_AGENT_TIMEOUT_MS: "60000" })).toBe(60_000)
+  })
+
+  test("a value that is not a positive number is ignored rather than cutting every turn short", () => {
+    for (const raw of ["", "soon", "0", "-1", "NaN"]) {
+      expect(turnTimeoutMs(undefined, { FLOOR_AGENTS_AGENT_TIMEOUT_MS: raw })).toBe(DEFAULT_TURN_TIMEOUT_MS)
     }
   })
 })

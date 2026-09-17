@@ -76,8 +76,10 @@ describe('buildPrBody', () => {
     expect(body).toContain('The notes name an old API.')
   })
 
-  test('names the agent, model, transport and cost', () => {
-    expect(body).toContain('**Agent:** Grok (`cursor-grok-4.6-high` via cursor) · **Cost:** $0.0000')
+  test('names the agent, model and transport, and puts no price on a public page', () => {
+    expect(body).toContain('**Agent:** Grok (`cursor-grok-4.6-high` via cursor)')
+    expect(body).not.toContain('Cost')
+    expect(body).not.toContain('$0.0000')
   })
 
   test('prefers the agent-written PR description on the API path, and lists its files without a diff stat', () => {

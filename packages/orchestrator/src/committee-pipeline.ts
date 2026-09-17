@@ -12,6 +12,7 @@ import { runToolUseLoop, type LLMAdapterResolver } from './llm-runner.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import type { DiscussionsAdapter } from '@floor-agents/github'
 import type { Gateway } from '@floor-agents/gateway'
+import { costNote } from './cost-note.ts'
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -323,8 +324,8 @@ export async function executeCommitteeReview(
     `**Outcome: ${outcome.toUpperCase()}**`,
     '',
     `> Duration: ${duration < 60_000 ? `${(duration / 1000).toFixed(1)}s` : `${Math.floor(duration / 60_000)}m ${Math.round((duration % 60_000) / 1000)}s`}`,
-    `> Total cost: $${totalCost.toFixed(4)}`,
-  ].join('\n')
+    costNote(totalCost) ? `> Total cost: ${costNote(totalCost)}` : '',
+  ].filter(Boolean).join('\n')
 
   await taskAdapter.addComment(issue.id, tallyComment)
 

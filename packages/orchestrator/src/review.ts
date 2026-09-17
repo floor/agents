@@ -12,6 +12,7 @@ import type {
 } from '@floor-agents/core'
 import { runToolUseLoop, type LLMAdapterResolver } from './llm-runner.ts'
 import type { CostTracker } from './cost-tracker.ts'
+import { costNote, metaLine } from './cost-note.ts'
 
 export const MAX_REVIEW_CYCLES = 3
 
@@ -184,7 +185,7 @@ export async function runReviewAgent(
       '',
       verdict.comments,
       '',
-      `*Model: ${reviewer.llm.model} | Cost: $${result.totalCost.toFixed(4)} | ${formatDuration(result.durationMs)}*`,
+      `*${metaLine([`Model: ${reviewer.llm.model}`, costNote(result.totalCost) && `Cost: ${costNote(result.totalCost)}`, formatDuration(result.durationMs)])}*`,
     ].join('\n'),
   )
 

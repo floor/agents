@@ -39,3 +39,25 @@ test('allows agent branches (past the protection guard, no network)', async () =
     globalThis.fetch = realFetch
   }
 })
+
+test('a branch that already exists is moved to the base, so a retry starts fresh', async () => {
+  const realFetch = globalThis.fetch
+  const calls: Array<{ method: string; url: string; body?: unknown }> = []
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET'
+    calls.push({ method, url: String(url), body: init?.body ? JSON.parse(String(init.body)) : undefined })
+    if (method === 'GET') return new Response(JSON.stringify({ object: { sha: 'base-sha' } }), { status: 200 })
+    // The branch is left over from a previous attempt.
+    if (method === 'POST') return new Response('{"message":"Reference already exists"}', { status: 422 })
+    return new Response('{}', { status: 200 })
+  }) as unknown as typeof fetch
+  try {
+    const adapter = createGitHubAdapter({ token: 'test', owner: 'test' })
+    await adapter.createBranch('repo', 'agent/218-retry', 'next')
+    const patch = calls.find(c => c.method === 'PATCH')
+    expect(patch?.url).toContain('/git/refs/heads/agent/218-retry')
+    expect(patch?.body).toEqual({ sha: 'base-sha', force: true })
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})

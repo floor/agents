@@ -131,7 +131,7 @@ GitAdapter:
   getRecentCommits(repo, path, n) → commits[]
 ```
 
-Key behaviors: `createBranch` is idempotent (422 = exists → success). `createPR` checks for existing open PR on branch before creating. `commitFiles` always creates a fresh tree and force-updates the ref for crash recovery.
+Key behaviors: `createBranch` moves an existing branch to the base (422 = exists → force-update the ref), so a retried task starts from the current base rather than a previous attempt's stale tip. `createPR` checks for existing open PR on branch before creating. `commitFiles` always creates a fresh tree and force-updates the ref for crash recovery.
 
 **Ships with:** GitHub
 **Next:** GitLab, Bitbucket
@@ -370,7 +370,7 @@ If any violations → PR is not created, issue is commented with violations, iss
 
 ### 7.4 Crash Recovery
 
-On startup, the orchestrator loads all execution states from disk. Incomplete tasks (not `done` or `failed`) are resumed from their current step. Steps are idempotent: `createBranch` handles 422 (exists), `createPR` checks for existing PR, `commitFiles` force-updates the ref.
+On startup, the orchestrator loads all execution states from disk. Incomplete tasks (not `done` or `failed`) are resumed from their current step. Steps are idempotent: `createBranch` handles 422 (exists → the ref is reset to the base), `createPR` checks for existing PR, `commitFiles` force-updates the ref.
 
 ---
 

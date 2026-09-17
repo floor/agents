@@ -24,7 +24,8 @@ import { join, dirname } from 'node:path'
 import { mkdir } from 'node:fs/promises'
 import { committeeConfigPath, parseMaxRounds, selectVoters } from './lib/committee-env.ts'
 import { startBridges } from './lib/bridges.ts'
-import { reviewerSandbox } from '@floor-agents/sandbox'
+import { reviewerSandbox, withDenyRead } from '@floor-agents/sandbox'
+import { privateSourceDenials } from '@floor-agents/core'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 const REPO = expand(process.env.CODEX_CWD ?? join(homedir(), 'Code/floor/vlist'))
@@ -128,10 +129,10 @@ async function main() {
   const gateway = createGateway({ port: PORT })
   gateway.start()
   // One bridge per external member, chosen by its `provider` in the manifest.
-  const bridges = await startBridges(agents, { port: PORT, repo: REPO, gateway, log: m => console.log(`[decision] ${m}`) })
+  const bridges = await startBridges(agents, { port: PORT, repo: REPO, gateway, log: m => console.log(`[decision] ${m}`), manifest: company })
 
   // Claude reviews in-process with Bash, so it runs in a reviewer sandbox.
-  const claudeCode = createClaudeCodeAdapter({ cwd: REPO, model: 'opus', allowedTools: ['Read', 'Glob', 'Grep', 'Bash'], sandbox: reviewerSandbox('claude') })
+  const claudeCode = createClaudeCodeAdapter({ cwd: REPO, model: 'opus', allowedTools: ['Read', 'Glob', 'Grep', 'Bash'], sandbox: withDenyRead(reviewerSandbox('claude'), privateSourceDenials(company, 'claude-code')) })
   const getAdapter = (p: string) => {
     if (p === 'claude-code') return claudeCode
     throw new Error(`only claude-code wired internally, got: ${p}`)

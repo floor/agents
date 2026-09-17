@@ -4,6 +4,8 @@ export {
   reviewerSandbox,
   implementerSandbox,
   projectCommandSandbox,
+  withDenyRead,
+  denyReadEnv,
   toolState,
   DEFAULT_DENY_READ,
   DENY_READ_PATTERNS,

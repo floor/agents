@@ -26,7 +26,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { committeeConfigPath, selectVoters } from './lib/committee-env.ts'
 import { startBridges } from './lib/bridges.ts'
-import { reviewerSandbox } from '@floor-agents/sandbox'
+import { reviewerSandbox, withDenyRead } from '@floor-agents/sandbox'
+import { privateSourceDenials } from '@floor-agents/core'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 
@@ -75,7 +76,7 @@ async function main() {
   gateway.start()
 
   // One bridge per external member, chosen by its `provider` in the manifest.
-  const bridges = await startBridges(agents, { port: PORT, repo: REPO, gateway, log: m => console.log(`[run] ${m}`) })
+  const bridges = await startBridges(agents, { port: PORT, repo: REPO, gateway, log: m => console.log(`[run] ${m}`), manifest: company })
 
   // Claude reviews in-process with Bash, so it runs in a reviewer sandbox: it
   // reads the repository and cannot write anything outside its own state.
@@ -83,7 +84,7 @@ async function main() {
     cwd: REPO,
     model: 'opus',
     allowedTools: ['Read', 'Glob', 'Grep', 'Bash'],
-    sandbox: reviewerSandbox('claude'),
+    sandbox: withDenyRead(reviewerSandbox('claude'), privateSourceDenials(company, 'claude-code')),
   })
 
   const deps: CommitteePipelineDeps = {

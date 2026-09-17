@@ -22,7 +22,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { committeeConfigPath } from './lib/committee-env.ts'
 import { startBridges } from './lib/bridges.ts'
-import { reviewerSandbox } from '@floor-agents/sandbox'
+import { reviewerSandbox, withDenyRead } from '@floor-agents/sandbox'
+import { privateSourceDenials } from '@floor-agents/core'
 
 const REPO = process.env.CODEX_CWD ?? join(homedir(), 'Code/floor/vlist')
 const PORT = parseInt(process.env.GATEWAY_PORT ?? '3199', 10)
@@ -72,14 +73,14 @@ async function main() {
   console.log(`[smoke] gateway up on :${PORT}`)
 
   // The Codex bridge, chosen by the manifest like every other external member.
-  const bridges = await startBridges(agents, { port: PORT, repo: REPO, gateway, log: m => console.log(`[smoke] ${m}`) })
+  const bridges = await startBridges(agents, { port: PORT, repo: REPO, gateway, log: m => console.log(`[smoke] ${m}`), manifest: company })
 
   // Claude reviews in-process with Bash, so it runs in a reviewer sandbox.
   const claudeCode = createClaudeCodeAdapter({
     cwd: REPO,
     model: 'opus',
     allowedTools: ['Read', 'Glob', 'Grep', 'Bash'],
-    sandbox: reviewerSandbox('claude'),
+    sandbox: withDenyRead(reviewerSandbox('claude'), privateSourceDenials(company, 'claude-code')),
   })
 
   const deps: CommitteePipelineDeps = {

@@ -66,6 +66,7 @@ describe.skipIf(process.platform !== 'darwin' || !Bun.which('sandbox-exec'))('sp
       '#!/bin/sh',
       'echo x > "$FLOOR_TEST_HOME/outside.txt" 2>/dev/null',
       'echo x > ./inside.txt 2>/dev/null',
+      '[ -n "$FLOOR_TEST_PRIVATE" ] && cat "$FLOOR_TEST_PRIVATE" > "$FLOOR_TEST_LEAK" 2>/dev/null',
     ]
     await Bun.write(join(bin, 'cursor-agent'), [...attempt, `echo '{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"result":"cursor done"}'`].join('\n'))
     await Bun.write(join(bin, 'claude'), [...attempt, `echo '{"result":"claude done","total_cost_usd":0}'`].join('\n'))
@@ -96,5 +97,27 @@ describe.skipIf(process.platform !== 'darwin' || !Bun.which('sandbox-exec'))('sp
     expect(result.resultText).toBe('claude done')
     expect(await Bun.file(join(work, 'inside.txt')).exists()).toBe(false)
     expect(await Bun.file(join(home, 'outside.txt')).exists()).toBe(false)
+  })
+
+  test('a private source its provider is not trusted with cannot be read', async () => {
+    // The leak file sits outside home, where the sandbox allows writes, so only
+    // the read denial can keep the private text out of it.
+    const secret = join(home, 'findings.html')
+    const leak = join(bin, 'leak.txt')
+    await Bun.write(secret, 'PRIVATE_TEXT')
+    process.env.FLOOR_TEST_PRIVATE = secret
+    process.env.FLOOR_TEST_LEAK = leak
+    try {
+      const open = await spawnNativeAgent({ provider: 'cursor', role: 'implement', prompt: 'p', cwd: work, writable: [work], home, timeoutMs: 20_000 })
+      expect(open.exitCode).toBe(0)
+      expect(await Bun.file(leak).text()).toBe('PRIVATE_TEXT')
+      await rm(leak, { force: true })
+      const denied = await spawnNativeAgent({ provider: 'cursor', role: 'implement', prompt: 'p', cwd: work, writable: [work], denyRead: [secret], home, timeoutMs: 20_000 })
+      expect(denied.exitCode).toBe(0)
+      expect(await Bun.file(leak).exists() ? await Bun.file(leak).text() : '').toBe('')
+    } finally {
+      delete process.env.FLOOR_TEST_PRIVATE
+      delete process.env.FLOOR_TEST_LEAK
+    }
   })
 })

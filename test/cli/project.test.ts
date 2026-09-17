@@ -89,6 +89,35 @@ test('doctor skips verification for a committee-only manifest', async () => {
   expect(diagnostics.find(d => d.name === 'Verification')).toBeUndefined()
 })
 
+test('doctor checks that private sources exist and can be denied to untrusted agents', async () => {
+  const config = await loadCompanyConfig('config/templates/default.yaml')
+  const findings = join(dir, 'findings.html')
+  await Bun.write(findings, 'private')
+  const codex = { ...config.agents[0]!, id: 'codex', external: true, llm: { ...config.agents[0]!.llm, provider: 'codex-cli' }, capabilities: ['review_rfc', 'vote'] as const }
+  const base = { ...config, agents: [...config.agents, codex], project: { ...config.project, root: undefined }, guardrails: { ...config.guardrails, privateSourceProviders: ['claude-code'] } }
+  const privateCheck = async (overrides: Partial<typeof base>, env: NodeJS.ProcessEnv = {}) =>
+    (await doctorProject({ ...base, ...overrides }, 'linear', env)).find(d => d.name === 'Private sources')
+
+  const ok = await privateCheck({ sources: { findings: { path: findings, visibility: 'private' } } })
+  expect(ok).toMatchObject({ ok: true })
+  expect(ok?.detail).toContain('readable by claude-code')
+  expect(ok?.detail).toContain('denied to codex')
+
+  const missing = await privateCheck({ sources: { findings: { path: join(dir, 'typo.html'), visibility: 'private' } } })
+  expect(missing).toMatchObject({ ok: false })
+  expect(missing?.detail).toContain('would protect nothing')
+
+  const off = await privateCheck({ sources: { findings: { path: findings, visibility: 'private' } } }, { FLOOR_AGENTS_SANDBOX: 'off' })
+  expect(off).toMatchObject({ ok: false })
+
+  const grok = { ...codex, id: 'grok', llm: { ...codex.llm, provider: 'grok-cli' } }
+  const uncontained = await privateCheck({ agents: [...config.agents, grok], sources: { findings: { path: findings, visibility: 'private' } } })
+  expect(uncontained).toMatchObject({ ok: false })
+  expect(uncontained?.detail).toContain('cannot be sandboxed')
+
+  expect(await privateCheck({ sources: {} })).toBeUndefined()
+})
+
 test('rejects invalid commands and missing issue arguments before startup', () => {
   expect(parseArgs(['run', '--issue', '123', '--config', '/tmp/project.yaml'])).toEqual({ command: 'run', issue: '123', config: '/tmp/project.yaml' })
   expect(() => parseArgs(['run'])).toThrow('Usage:')

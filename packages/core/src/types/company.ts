@@ -4,6 +4,7 @@ import type { ChainOfCommand } from './chain.ts'
 import type { CostConfig } from './costs.ts'
 import type { GuardrailsConfig } from './guardrails.ts'
 import type { ProjectConfig } from './project.ts'
+import type { SourceDefinition } from './sources.ts'
 import type { WorkflowDefinition } from './workflow.ts'
 
 export type CompanyConfig = {
@@ -15,6 +16,8 @@ export type CompanyConfig = {
   readonly chain: ChainOfCommand
   readonly autonomy: AutonomyConfig
   readonly guardrails: GuardrailsConfig
+  /** Named sources beside the repository, by key. */
+  readonly sources?: Readonly<Record<string, SourceDefinition>>
   readonly costs: CostConfig
   readonly statusMapping: Record<string, string>
   readonly createdAt: Date

@@ -30,7 +30,7 @@ AI engineering team as a service. Connects to GitHub + Linear + LLM providers �
 
 **Entry point:** `src/main.ts` (the orchestrator lives in `src/`, not under `packages/`)
 
-**Agent containment:** agent CLIs cannot be trusted to stay in their folder — measured, `cursor-agent --trust` writes to absolute paths outside its working directory, and `Bash` in a Claude tool list can write anywhere. Any code that spawns an agent CLI starts it through `sandboxed()` from `@floor-agents/sandbox`. Never add an uncontained spawn path; `FLOOR_AGENTS_SANDBOX=off` exists for developing this repo only.
+**Agent containment:** agent CLIs cannot be trusted to stay in their folder — measured, `cursor-agent --trust` writes to absolute paths outside its working directory, and `Bash` in a Claude tool list can write anywhere. Any code that spawns an agent CLI starts it through `sandboxed()` from `@floor-agents/sandbox`. Never add an uncontained spawn path; `FLOOR_AGENTS_SANDBOX=off` exists for developing this repo only. Every sandboxed spawn also denies the manifest's private sources to a provider not in `guardrails.privateSourceProviders` (`privateSourceDenials` + `withDenyRead`); a bridge that cannot be sandboxed is refused instead.
 
 ## Commands
 

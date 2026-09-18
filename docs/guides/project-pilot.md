@@ -117,6 +117,14 @@ changes are rejected by the native diff validator. Checks capture up to 32 KiB p
 stdout/stderr stream, continue draining larger output, and record truncation.
 Timeouts fail; on POSIX, the check's process group is terminated as well.
 
+The gate does not run in the agent's worktree. The engine snapshots the turn's
+tree, checks it out alone in a `gate-*` directory beside the worktree, runs
+`project.setup` there and then every verification command, and removes the
+directory whatever happens. What is verified is therefore exactly what the commit
+will carry: an ignored file, a cache or a build left behind by the turn cannot
+help a check pass. A setup command that fails there fails the gate, reported as
+`Setup: <name>`. The cost is one more setup per gate.
+
 The candidate Git tree must remain unchanged through verification and commit.
 The published commit contains that verified tree; intermediate commits created
 by an agent are excluded. The engine checks the remote branch against the verified
@@ -140,9 +148,10 @@ tree/commit IDs) and `workspacePath`. A failed check, blocked diff, native error
 or push failure leaves the developer workspace available for inspection and
 labels the issue `needs-human`. Successful developer workspaces are removed.
 
-`run` refuses to overwrite an existing execution state, including a failed one.
-Dedicated retry/resume/cancel commands and durable attempt scheduling remain a
-separate increment. Do not delete state merely to retry a published task; inspect
+`run` refuses to overwrite an existing execution state, including a failed one;
+`run --retry` starts a failed issue again and keeps its history, `verify --issue`
+takes its preserved tree through the gate again, and `status --issue` prints what
+happened (see the [CLI reference](../cli.md)). Do not delete state merely to retry a published task; inspect
 the recorded branch and PR first.
 
 ## Existing configurations

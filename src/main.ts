@@ -20,6 +20,7 @@ import { parseArgs } from './cli/args.ts'
 import { doctorProject, initProject } from './cli/project.ts'
 import { pipelinesFor, pipelinesLabel } from './cli/modes.ts'
 import { loadProjectEnv, projectEnvPath } from './cli/env.ts'
+import { startExternalVoters } from '../scripts/lib/bridges.ts'
 
 // ── CLI flags (handle before any startup work) ───────────────────
 const VERSION = (
@@ -253,6 +254,15 @@ const hasExternalAgents = company.agents.some(a => a.external)
 const stateStore = createStateStore(STATE_DIR)
 const costTracker = createCostTracker()
 
+const GATEWAY_PORT = parseInt(process.env.GATEWAY_PORT ?? '3100', 10)
+const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN
+const externalVoterOpts = {
+  port: GATEWAY_PORT,
+  repo: company.project.root ?? process.cwd(),
+  log: (m: string) => console.log(`[bridges] ${m}`),
+  manifest: company,
+}
+
 if (args.command === 'run') {
   try {
     const issue = await task.getIssue(args.issue!)
@@ -279,6 +289,10 @@ if (args.command === 'run') {
         return adapter
       },
       findReviewer: () => company.agents.find(a => a.capabilities.includes('review_pr') && !a.external),
+      // `run` never starts the long-lived watch gateway. The host stands one
+      // up for the PR review (if any external voter needs a bridge) and stops
+      // it with the bridges when the votes are in.
+      externalVoters: { start: agents => startExternalVoters(agents, externalVoterOpts) },
     })
     const state = await stateStore.get(issue.id)
     if (state?.step !== 'done') throw new Error(state?.error ?? `Task did not complete (${state?.step ?? 'no state'})`)
@@ -291,13 +305,16 @@ if (args.command === 'run') {
 }
 
 // Start gateway if external agents are configured
-const GATEWAY_PORT = parseInt(process.env.GATEWAY_PORT ?? '3100', 10)
-const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN
 const gateway = hasExternalAgents
   ? createGateway({ port: GATEWAY_PORT, token: GATEWAY_TOKEN })
   : undefined
 
 if (gateway) gateway.start()
+
+const externalVoters = {
+  start: (agents: Parameters<typeof startExternalVoters>[0]) =>
+    startExternalVoters(agents, { ...externalVoterOpts, ...(gateway ? { gateway } : {}) }),
+}
 
 // Each pipeline watches its own labels. When both run, the committee gets its own
 // task adapter so the two watchers do not overwrite each other's seen-issue record.
@@ -313,6 +330,7 @@ const orchestrators = [
         stateStore,
         costTracker,
         gateway,
+        externalVoters,
       })]
     : []),
   ...(pipelines.committee
@@ -325,6 +343,7 @@ const orchestrators = [
         stateStore,
         costTracker,
         gateway,
+        externalVoters,
         labels: COMMITTEE_LABELS,
         discussions: company.project.repo
           ? createDiscussionsAdapter({

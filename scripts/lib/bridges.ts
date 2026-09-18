@@ -10,12 +10,18 @@
  * The Cursor, Codex and Antigravity (`agy`) bridges run their CLI in a reviewer
  * sandbox that denies those paths. The xAI CLI runs uncontained, so a manifest
  * that does not trust that provider cannot seat it: the run is refused.
+ *
+ * `startExternalVoters` is the shared lifecycle: start a gateway if none is
+ * running, spawn each external voter's bridge, wait for it to register, and
+ * return a session the caller stops when the votes are in. A bridge that
+ * cannot start is recorded as a failure so the member can abstain immediately
+ * instead of polling issue comments.
  */
 
 import type { AgentDefinition, PrivateSourcePolicy } from '@floor-agents/core'
 import { privateSourceDenials } from '@floor-agents/core'
 import { denyReadEnv } from '@floor-agents/sandbox'
-import type { Gateway } from '@floor-agents/gateway'
+import { createGateway, type Gateway, type GatewayConfig } from '@floor-agents/gateway'
 import { join } from 'node:path'
 
 export type BridgePlan = {
@@ -36,7 +42,7 @@ const LEGACY_BY_ID: Readonly<Record<string, (typeof BRIDGE_PROVIDERS)[number]>> 
   antigravity: 'antigravity',
 }
 
-type Agent = Pick<AgentDefinition, 'id' | 'name' | 'llm' | 'external'>
+type Agent = Pick<AgentDefinition, 'id' | 'name' | 'llm' | 'external' | 'voteByComment'>
 
 const modelEnv = (name: string, model: string): Record<string, string> =>
   model && model !== 'local' ? { [name]: model } : {}
@@ -95,10 +101,154 @@ export function bridgeFor(
   }
 }
 
+/** How long to wait for a spawned bridge to register on the gateway. */
+const DEFAULT_CONNECT_TIMEOUT_MS = 15_000
+
+export type SpawnedBridge = {
+  readonly kill: () => void
+  readonly exited: Promise<number>
+  readonly exitCode: number | null
+}
+
+export type SpawnBridge = (script: string, env: Record<string, string | undefined>) => SpawnedBridge
+
+export type ExternalVoterStart =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: string }
+
+export type ExternalVoterSession = {
+  readonly gateway: Gateway
+  readonly started: ReadonlyMap<string, ExternalVoterStart>
+  stop(): void
+}
+
+export type StartExternalVotersOpts = {
+  readonly port: number
+  readonly repo: string
+  readonly log: (msg: string) => void
+  /** The manifest, whose private sources each bridge must deny to an untrusted provider. */
+  readonly manifest: PrivateSourcePolicy
+  /** Reuse a gateway that is already running (watch mode). Absent: one is started and stopped with the session. */
+  readonly gateway?: Gateway
+  /** For tests: the gateway constructor, instead of opening a real port. */
+  readonly createGateway?: (config: GatewayConfig) => Gateway
+  /** For tests: the process spawn, instead of `bun scripts/<bridge>`. */
+  readonly spawn?: SpawnBridge
+  /** How long to wait for each bridge to register. */
+  readonly connectTimeoutMs?: number
+}
+
+function defaultSpawn(script: string, env: Record<string, string | undefined>): SpawnedBridge {
+  return Bun.spawn(['bun', join(import.meta.dir, '..', script)], {
+    env,
+    stdout: 'inherit',
+    stderr: 'inherit',
+  })
+}
+
+async function waitForConnect(
+  gateway: Gateway,
+  agentId: string,
+  proc: SpawnedBridge,
+  timeoutMs: number,
+): Promise<ExternalVoterStart> {
+  const deadline = Date.now() + timeoutMs
+  let exited: number | undefined
+  const watchExit = proc.exited.then(code => { exited = code })
+  while (Date.now() < deadline) {
+    if (gateway.isAgentConnected(agentId)) return { ok: true }
+    if (proc.exitCode !== null || exited !== undefined) {
+      const code = proc.exitCode ?? exited
+      return { ok: false, reason: `bridge process exited (code ${code})` }
+    }
+    const remaining = Math.max(0, deadline - Date.now())
+    await Promise.race([
+      watchExit,
+      new Promise<void>(r => setTimeout(r, Math.min(50, remaining))),
+    ])
+  }
+  if (gateway.isAgentConnected(agentId)) return { ok: true }
+  return { ok: false, reason: `bridge did not connect within ${timeoutMs}ms` }
+}
+
+function needsBridge(agent: Agent): boolean {
+  return !!agent.external && !agent.voteByComment
+}
+
+/**
+ * Start a gateway if none is running, spawn a bridge for every external voter
+ * that is not configured to vote by comment, and wait for each to register.
+ *
+ * A member whose bridge cannot start (CLI missing, login expired, unknown
+ * provider) is recorded as a failure so the caller can abstain immediately.
+ * `stop()` kills the processes this session spawned, and stops a gateway this
+ * session started. A gateway the caller passed in is left running.
+ */
+export async function startExternalVoters(
+  agents: readonly Agent[],
+  opts: StartExternalVotersOpts,
+): Promise<ExternalVoterSession> {
+  const toStart = agents.filter(needsBridge)
+  const ownedGateway = !opts.gateway
+  const gateway = opts.gateway ?? (opts.createGateway ?? createGateway)({
+    port: opts.port,
+    ...(process.env.GATEWAY_TOKEN ? { token: process.env.GATEWAY_TOKEN } : {}),
+  })
+  if (ownedGateway) gateway.start()
+
+  const started = new Map<string, ExternalVoterStart>()
+  const live: SpawnedBridge[] = []
+  const spawn = opts.spawn ?? defaultSpawn
+  const connectTimeoutMs = opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
+
+  for (const agent of toStart) {
+    let plan: BridgePlan
+    try {
+      plan = bridgeFor(agent, opts.repo, privateSourceDenials(opts.manifest, agent.llm.provider))
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      opts.log(`${agent.id}: ${reason}`)
+      started.set(agent.id, { ok: false, reason })
+      continue
+    }
+
+    let proc: SpawnedBridge
+    try {
+      proc = spawn(plan.script, { ...process.env, GATEWAY_URL: `ws://localhost:${opts.port}`, ...plan.env })
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      opts.log(`${agent.id} via ${plan.script}: ${reason}`)
+      started.set(agent.id, { ok: false, reason })
+      continue
+    }
+
+    const outcome = await waitForConnect(gateway, agent.id, proc, connectTimeoutMs)
+    if (outcome.ok) {
+      live.push(proc)
+      started.set(agent.id, { ok: true })
+      opts.log(`${agent.id} via ${plan.script} connected`)
+    } else {
+      proc.kill()
+      started.set(agent.id, outcome)
+      opts.log(`${agent.id} via ${plan.script} failed: ${outcome.reason}`)
+    }
+  }
+
+  return {
+    gateway,
+    started,
+    stop() {
+      for (const p of live) p.kill()
+      if (ownedGateway) gateway.stop()
+    },
+  }
+}
+
 /**
  * Start a bridge for every external member and wait for each to register.
- * Plans are resolved before anything spawns, so a bad provider fails the run
- * before a single process starts.
+ * A wrapper around {@link startExternalVoters} for callers that already hold
+ * a gateway (RFC scripts). Failed members are logged and skipped; the session
+ * still stops the processes that did start.
  */
 export async function startBridges(
   agents: readonly Agent[],
@@ -111,18 +261,6 @@ export async function startBridges(
     readonly manifest: PrivateSourcePolicy
   },
 ): Promise<{ stop(): void }> {
-  const external = agents.filter(a => a.external)
-  const plans = external.map(a => ({ agent: a, plan: bridgeFor(a, opts.repo, privateSourceDenials(opts.manifest, a.llm.provider)) }))
-  const procs = plans.map(({ plan }) =>
-    Bun.spawn(['bun', join(import.meta.dir, '..', plan.script)], {
-      env: { ...process.env, GATEWAY_URL: `ws://localhost:${opts.port}`, ...plan.env },
-      stdout: 'inherit',
-      stderr: 'inherit',
-    }),
-  )
-  for (const { agent, plan } of plans) {
-    for (let i = 0; i < 30 && !opts.gateway.isAgentConnected(agent.id); i++) await new Promise(r => setTimeout(r, 500))
-    opts.log(`${agent.id} via ${plan.script} connected: ${opts.gateway.isAgentConnected(agent.id)}`)
-  }
-  return { stop: () => { for (const p of procs) p.kill() } }
+  const session = await startExternalVoters(agents, opts)
+  return { stop: () => session.stop() }
 }

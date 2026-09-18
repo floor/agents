@@ -81,6 +81,8 @@ This applies to **external** agents (dispatched over the [gateway](../gateway.md
 
 External agents do **not** require their `llm.provider` API key: `src/main.ts` computes required providers from non-external agents only, since external agents run via the gateway, not an in-process LLM adapter. See the [Local Committee guide](../guides/local-committee.md) for an all-local trio (Claude Code + Codex + Antigravity).
 
+`collectCommitteeVotes` (RFC review and committee PR review) takes an optional `externalVoters` host. When present, it starts a gateway if none is running, spawns each external voter's CLI bridge for the duration of the vote, and stops them afterwards. A bridge that cannot start abstains immediately. Issue-comment polling runs only for members with `voteByComment: true`. `src/main.ts` wires this for both `run --issue` and `watch`.
+
 ## Execution State Machine
 
 Each task progresses through 10 steps. State is saved between each step for crash recovery.

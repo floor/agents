@@ -27,6 +27,7 @@ import { signComments, agentSignature, sign, ENGINE_SIGNATURE } from './comment-
 import { discussionSection } from './discussion.ts'
 import { committeePrReviewEnabled, executeCommitteePrReview } from './committee-pr-review.ts'
 import type { Gateway } from '@floor-agents/gateway'
+import type { ExternalVoterHost } from './committee-pipeline.ts'
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -86,6 +87,8 @@ export type PipelineDeps = {
   readonly runAgent?: NativeAgentDeps['runAgent']
   /** Shared with the committee pipeline so external voters can review a PR. */
   readonly gateway?: Gateway
+  /** Starts CLI bridges for external voters for the duration of a committee PR review. */
+  readonly externalVoters?: ExternalVoterHost
 }
 
 // ── API dev agent (tool use) ─────────────────────────────────────
@@ -218,6 +221,7 @@ async function runConfiguredReview(
       costTracker: deps.costTracker,
       getAdapter: deps.getAdapter,
       ...(deps.gateway ? { gateway: deps.gateway } : {}),
+      ...(deps.externalVoters ? { externalVoters: deps.externalVoters } : {}),
     })
   }
   if (reviewer) return dispatchReview(issue, reviewer, state, deps, unsigned)

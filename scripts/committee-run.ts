@@ -2,10 +2,11 @@
 /**
  * Run a committee review on an RFC markdown file.
  *
- * Stands up a real gateway, spawns the local Codex bridge, reads the RFC from
- * disk, runs executeCommitteeReview with whichever committee agents are wired,
- * prints the votes, then tears down. Reviews are grounded in CODEX_CWD (the repo
- * the RFC is about), not the docs repo.
+ * Stands up a real gateway, spawns each external voter's bridge for the
+ * duration of the review (the same lifecycle PR review uses in `run` mode),
+ * reads the RFC from disk, runs executeCommitteeReview, prints the votes, then
+ * tears down. Reviews are grounded in CODEX_CWD (the repo the RFC is about),
+ * not the docs repo.
  *
  *   RFC_FILE=~/Code/floor/vlist.io/docs/refactor/RFC-013-integrated-draft.md \
  *   CODEX_CWD=~/Code/floor/vlist \
@@ -15,7 +16,6 @@
 import { loadCompanyConfig } from '@floor-agents/core'
 import type { TaskAdapter, Issue, ContextBuilder, StateStore } from '@floor-agents/core'
 import { createClaudeCodeAdapter } from '@floor-agents/claude-code'
-import { createGateway } from '@floor-agents/gateway'
 import {
   executeCommitteeReview,
   createCostTracker,
@@ -25,7 +25,7 @@ import { parseRfc } from './lib/rfc.ts'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { committeeConfigPath, selectVoters } from './lib/committee-env.ts'
-import { startBridges } from './lib/bridges.ts'
+import { startExternalVoters } from './lib/bridges.ts'
 import { reviewerSandbox, withDenyRead } from '@floor-agents/sandbox'
 import { privateSourceDenials } from '@floor-agents/core'
 
@@ -72,12 +72,6 @@ async function main() {
   console.log(`[run] repo: ${REPO}`)
   console.log(`[run] agents: ${agents.map(a => `${a.id}${a.external ? ' (external)' : ''}`).join(', ')}\n`)
 
-  const gateway = createGateway({ port: PORT })
-  gateway.start()
-
-  // One bridge per external member, chosen by its `provider` in the manifest.
-  const bridges = await startBridges(agents, { port: PORT, repo: REPO, gateway, log: m => console.log(`[run] ${m}`), manifest: company })
-
   // Claude reviews in-process with Bash, so it runs in a reviewer sandbox: it
   // reads the repository and cannot write anything outside its own state.
   const claudeCode = createClaudeCodeAdapter({
@@ -98,7 +92,16 @@ async function main() {
       throw new Error(`run harness only wires claude-code, got: ${provider}`)
     },
     externalAgents: { timeoutMs: parseInt(process.env.EXTERNAL_TIMEOUT_MS ?? '600000', 10) },
-    gateway,
+    // Shared with PR review in `floor-agents run`: start a gateway if none is
+    // running, spawn each external voter's bridge, stop them after the votes.
+    externalVoters: {
+      start: voters => startExternalVoters(voters, {
+        port: PORT,
+        repo: REPO,
+        log: m => console.log(`[run] ${m}`),
+        manifest: company,
+      }),
+    },
   }
 
   console.log('[run] running committee review…\n')
@@ -109,8 +112,6 @@ async function main() {
   for (const v of result.votes) console.log(`  ${v.agentName.padEnd(12)} → ${v.vote}`)
   console.log('total cost: $' + result.totalCost.toFixed(4))
 
-  bridges.stop()
-  gateway.stop()
   process.exit(0)
 }
 

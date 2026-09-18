@@ -17,9 +17,11 @@ import {
   committeePrReviewEnabled,
   tallyCommitteePrReview,
   type CommitteePrReviewDeps,
+  type ExternalVoterHost,
 } from '@floor-agents/orchestrator'
 import { createCostTracker } from '@floor-agents/orchestrator'
 import type { CommitteeVote } from '@floor-agents/orchestrator'
+import type { Gateway, TaskResult } from '@floor-agents/gateway'
 
 // ── Mock helpers ────────────────────────────────────────────────────
 
@@ -36,7 +38,7 @@ function makeIssue(overrides?: Partial<Issue>): Issue {
   }
 }
 
-function makeVoter(id: string, provider: string = id): AgentDefinition {
+function makeVoter(id: string, provider: string = id, external = false): AgentDefinition {
   return {
     id,
     name: id[0]!.toUpperCase() + id.slice(1),
@@ -45,7 +47,7 @@ function makeVoter(id: string, provider: string = id): AgentDefinition {
     capabilities: ['read_code', 'review_rfc', 'vote'],
     autonomy: 'T1',
     customInstructions: '',
-    external: false,
+    external,
   }
 }
 
@@ -376,5 +378,78 @@ describe('executeCommitteePrReview', () => {
     expect(deps.task.statuses.get('issue-1')).toBe('in_review')
     expect(deps.git.prComments.at(-1)).toContain('NO DECISION')
     expect(deps.git.prComments.at(-1)).toContain('Left for human review')
+  })
+})
+
+describe('executeCommitteePrReview — external voter bridges', () => {
+  test('votes from a fake bridge are counted in the tally', async () => {
+    const trace = { started: 0, stopped: 0 }
+    let resolvePending: ((result: TaskResult) => void) | undefined
+    const gateway: Gateway = {
+      start() {},
+      stop() {},
+      assign(_agentId, task) {
+        resolvePending?.({
+          taskId: task.id,
+          agentId: _agentId,
+          content: 'Looks correct from the bridge. VOTE: APPROVE',
+          receivedAt: new Date(),
+        })
+      },
+      waitForResult() {
+        return new Promise<TaskResult>(resolve => { resolvePending = resolve })
+      },
+      getConnectedAgents() { return [] },
+      isAgentConnected() { return true },
+      onAgentConnect() {},
+      onAgentDisconnect() {},
+    }
+    const host: ExternalVoterHost = {
+      async start(agents) {
+        trace.started++
+        expect(agents.map(a => a.id)).toEqual(['codex'])
+        return {
+          gateway,
+          started: new Map([['codex', { ok: true as const }]]),
+          stop() { trace.stopped++ },
+        }
+      },
+    }
+
+    const agents = [makeVoter('claude'), makeVoter('codex', 'codex-cli', true)]
+    const deps = makeDeps(agents, { claude: 'Looks correct. VOTE: APPROVE' })
+    const next = await executeCommitteePrReview(makeIssue(), makeState(), { ...deps, externalVoters: host })
+
+    expect(trace.started).toBe(1)
+    expect(trace.stopped).toBe(1)
+    expect(next.reviewVerdict?.decision).toBe('approve')
+    expect(deps.git.prComments.some(c => c.includes('Looks correct from the bridge'))).toBe(true)
+    expect(deps.git.prComments.at(-1)).toContain('APPROVED')
+  })
+
+  test('a bridge that fails to start abstains at once with the reason on the PR', async () => {
+    const trace = { started: 0, stopped: 0 }
+    const host: ExternalVoterHost = {
+      async start(agents) {
+        trace.started++
+        return {
+          started: new Map(agents.map(a => [a.id, { ok: false as const, reason: 'codex CLI not found' }])),
+          stop() { trace.stopped++ },
+        }
+      },
+    }
+
+    const agents = [makeVoter('claude'), makeVoter('codex', 'codex-cli', true)]
+    const deps = makeDeps(agents, { claude: 'Looks correct. VOTE: APPROVE' })
+    deps.task.getComments = async () => { throw new Error('must not poll') }
+
+    const started = Date.now()
+    const next = await executeCommitteePrReview(makeIssue(), makeState(), { ...deps, externalVoters: host })
+
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(trace.stopped).toBe(1)
+    expect(next.reviewVerdict).toBeNull()
+    expect(deps.git.prComments.some(c => c.includes('ABSTAIN') && c.includes('codex CLI not found'))).toBe(true)
+    expect(deps.git.prComments.at(-1)).toContain('NO DECISION')
   })
 })

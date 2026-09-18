@@ -10,7 +10,9 @@ Run a multi-agent technical committee that reviews proposals in parallel, votes,
 4. Votes are tallied (simple majority), results posted to Linear
 5. If a GitHub Discussion is linked, the outcome is synced there
 
-The same committee also reviews every PR an implementer opens, before a person sees it. Each member reads the diff inside its reviewer sandbox, the engine posts one signed PR comment per member plus a summary, and a majority approve with no blockers is the verdict. Timeouts abstain; fewer than two answers leaves the issue `in_review`. Merging stays with the coordinator. See [`review`](../configuration.md#review) in the configuration reference.
+The same committee also reviews every PR an implementer opens, before a person sees it. Each member reads the diff inside its reviewer sandbox, the engine posts one signed PR comment per member plus a summary, and a majority approve with no blockers is the verdict. Timeouts abstain; fewer than two answers leaves the issue `in_review`. Merging stays with the coordinator.
+
+In `floor-agents run --issue`, that PR review starts a gateway if none is running and spawns each external voter's CLI bridge for the duration of the vote (the same lifecycle `scripts/committee-run.ts` uses for RFC reviews). `watch` reuses its gateway and still starts the bridges per review. A bridge that cannot start abstains immediately with the reason on the PR; issue-comment polling is only for members with `voteByComment: true`. See [`review`](../configuration.md#review) in the configuration reference.
 
 ## Setup
 
@@ -178,9 +180,9 @@ If you need a custom prompt, set `promptTemplate` to a different path in the age
 
 ## External agents
 
-External agents (marked `external: true`) connect to the gateway WebSocket to receive assignments. The gateway starts automatically when external agents are present.
+External agents (marked `external: true`) connect to the gateway WebSocket to receive assignments. The gateway starts automatically when external agents are present in `watch` mode. In `run --issue`, a gateway is started only for the committee PR review (if any external voter needs a bridge) and is torn down with the bridges when the votes are in.
 
-To run the included Codex agent:
+To run the included Codex agent yourself (for example alongside `watch`, if you are not using the engine-spawned bridges):
 
 ```bash
 GATEWAY_URL=ws://localhost:3100 \
@@ -191,7 +193,9 @@ bun scripts/codex-agent.ts
 
 See the [Gateway documentation](../gateway.md) for the full protocol, REST fallback, and building custom agents.
 
-If an external agent disconnects mid-review, the gateway re-queues its task and re-dispatches on reconnect. If it times out entirely, the agent's vote counts as ABSTAIN.
+If an external agent disconnects mid-review, the gateway re-queues its task and re-dispatches on reconnect. If it times out entirely, the agent's vote counts as ABSTAIN. If its bridge never starts, the engine abstains immediately rather than waiting for a poll timeout.
+
+An external member that should vote by posting on the issue instead of through a CLI bridge sets `voteByComment: true`. That is the only path that still polls issue comments.
 
 ## Cost controls
 

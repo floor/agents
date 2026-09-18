@@ -1,6 +1,7 @@
 import { test, expect, describe } from 'bun:test'
-import { bridgeFor } from '../../scripts/lib/bridges.ts'
+import { bridgeFor, startExternalVoters, type SpawnedBridge } from '../../scripts/lib/bridges.ts'
 import { hasVerdict, reviewWithRetry, buildCursorReviewPrompt } from '../../scripts/lib/cursor-review.ts'
+import type { Gateway } from '@floor-agents/gateway'
 
 const agent = (id: string, provider: string, model = 'local') => ({ id, name: id, external: true, llm: { provider, model, temperature: 0.3, maxTokens: 16000 } })
 
@@ -104,5 +105,161 @@ describe('cursor review', () => {
   test('the prompt tells the reviewer it cannot modify anything', () => {
     const prompt = buildCursorReviewPrompt({ title: 'T', body: 'B', systemPrompt: 'S' })
     expect(prompt).toContain('you cannot modify anything')
+  })
+})
+
+describe('startExternalVoters', () => {
+  const manifest = { guardrails: {}, sources: {} }
+  const logs: string[] = []
+
+  function fakeGateway(connected: Set<string>) {
+    const state = { started: false, stopped: false }
+    const gateway: Gateway = {
+      start() { state.started = true },
+      stop() { state.stopped = true },
+      assign() {},
+      waitForResult() { return Promise.reject(new Error('not used')) },
+      getConnectedAgents() { return [] },
+      isAgentConnected(id) { return connected.has(id) },
+      onAgentConnect() {},
+      onAgentDisconnect() {},
+    }
+    return { gateway, state }
+  }
+
+  function connectedProc(id: string, connected: Set<string>, killed: string[]): SpawnedBridge {
+    connected.add(id)
+    return {
+      kill() { killed.push(id) },
+      exited: new Promise(() => {}),
+      exitCode: null,
+    }
+  }
+
+  function deadProc(code: number, killed: string[], id: string): SpawnedBridge {
+    return {
+      kill() { killed.push(id) },
+      exited: Promise.resolve(code),
+      exitCode: code,
+    }
+  }
+
+  test('starts a gateway when none is running, counts a connected bridge, and stops both', async () => {
+    const connected = new Set<string>()
+    const killed: string[] = []
+    const { gateway, state } = fakeGateway(connected)
+    const session = await startExternalVoters(
+      [agent('codex', 'codex-cli')],
+      {
+        port: 3199,
+        repo: '/r',
+        log: m => logs.push(m),
+        manifest,
+        createGateway: () => gateway,
+        spawn: (_script, env) => connectedProc(env.AGENT_ID!, connected, killed),
+      },
+    )
+
+    expect(state.started).toBe(true)
+    expect(session.started.get('codex')).toEqual({ ok: true })
+    session.stop()
+    expect(killed).toEqual(['codex'])
+    expect(state.stopped).toBe(true)
+  })
+
+  test('reuses a running gateway and does not stop it', async () => {
+    const connected = new Set<string>()
+    const killed: string[] = []
+    const { gateway, state } = fakeGateway(connected)
+    const session = await startExternalVoters(
+      [agent('codex', 'codex-cli')],
+      {
+        port: 3199,
+        repo: '/r',
+        log: m => logs.push(m),
+        manifest,
+        gateway,
+        spawn: (_script, env) => connectedProc(env.AGENT_ID!, connected, killed),
+      },
+    )
+
+    expect(state.started).toBe(false)
+    expect(session.started.get('codex')).toEqual({ ok: true })
+    session.stop()
+    expect(killed).toEqual(['codex'])
+    expect(state.stopped).toBe(false)
+  })
+
+  test('a bridge that exits before connecting fails immediately and is killed', async () => {
+    const connected = new Set<string>()
+    const killed: string[] = []
+    const { gateway } = fakeGateway(connected)
+    const session = await startExternalVoters(
+      [agent('codex', 'codex-cli')],
+      {
+        port: 3199,
+        repo: '/r',
+        log: m => logs.push(m),
+        manifest,
+        gateway,
+        connectTimeoutMs: 200,
+        spawn: (_script, env) => deadProc(127, killed, env.AGENT_ID!),
+      },
+    )
+
+    expect(session.started.get('codex')).toEqual({ ok: false, reason: 'bridge process exited (code 127)' })
+    expect(killed).toEqual(['codex'])
+    session.stop()
+  })
+
+  test('a bridge that never connects times out and is killed', async () => {
+    const connected = new Set<string>()
+    const killed: string[] = []
+    const { gateway } = fakeGateway(connected)
+    const session = await startExternalVoters(
+      [agent('grok', 'cursor', 'cursor-grok-4.6-high')],
+      {
+        port: 3199,
+        repo: '/r',
+        log: m => logs.push(m),
+        manifest,
+        gateway,
+        connectTimeoutMs: 80,
+        spawn: () => ({
+          kill() { killed.push('grok') },
+          exited: new Promise(() => {}),
+          exitCode: null,
+        }),
+      },
+    )
+
+    expect(session.started.get('grok')?.ok).toBe(false)
+    expect(session.started.get('grok')).toMatchObject({ ok: false })
+    expect((session.started.get('grok') as { reason: string }).reason).toContain('did not connect')
+    expect(killed).toEqual(['grok'])
+    session.stop()
+  })
+
+  test('a member that votes by comment is not spawned', async () => {
+    const spawned: string[] = []
+    const { gateway } = fakeGateway(new Set())
+    const session = await startExternalVoters(
+      [{ ...agent('codex', 'codex-cli'), voteByComment: true }],
+      {
+        port: 3199,
+        repo: '/r',
+        log: m => logs.push(m),
+        manifest,
+        gateway,
+        spawn: script => {
+          spawned.push(script)
+          return { kill() {}, exited: new Promise(() => {}), exitCode: null }
+        },
+      },
+    )
+
+    expect(spawned).toEqual([])
+    expect(session.started.size).toBe(0)
+    session.stop()
   })
 })

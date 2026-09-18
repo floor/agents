@@ -40,6 +40,25 @@ export type ExternalAgentConfig = {
   readonly timeoutMs?: number
 }
 
+export type ExternalVoterStart =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: string }
+
+export type ExternalVoterSession = {
+  readonly gateway?: Gateway
+  readonly started: ReadonlyMap<string, ExternalVoterStart>
+  stop(): void
+}
+
+/**
+ * Starts (or reuses) a gateway and a bridge process for each external voter
+ * for the duration of one review. Injected so tests can fake the processes
+ * and so `run` / `watch` / `committee-run` share the same lifecycle.
+ */
+export type ExternalVoterHost = {
+  start(agents: readonly AgentDefinition[]): Promise<ExternalVoterSession>
+}
+
 export type CommitteePipelineDeps = {
   readonly company: CompanyConfig
   readonly taskAdapter: TaskAdapter
@@ -50,6 +69,7 @@ export type CommitteePipelineDeps = {
   readonly discussions?: DiscussionsAdapter
   readonly externalAgents?: ExternalAgentConfig
   readonly gateway?: Gateway
+  readonly externalVoters?: ExternalVoterHost
 }
 
 // ── Vote extraction ──────────────────────────────────────────────
@@ -172,6 +192,17 @@ async function runCommitteeAgent(
 const DEFAULT_POLL_INTERVAL_MS = 15_000
 const DEFAULT_EXTERNAL_TIMEOUT_MS = 5 * 60_000
 
+function abstainVote(agent: AgentDefinition, summary: string): CommitteeVote {
+  return {
+    agentId: agent.id,
+    agentName: agent.name,
+    vote: 'abstain',
+    summary,
+    response: summary,
+    costUsd: 0,
+  }
+}
+
 async function dispatchExternalAgent(
   issue: Issue,
   agent: AgentDefinition,
@@ -183,50 +214,103 @@ async function dispatchExternalAgent(
   const config = deps.externalAgents ?? {}
   const timeout = config.timeoutMs ?? DEFAULT_EXTERNAL_TIMEOUT_MS
 
-  // Gateway path: dispatch via WebSocket
-  if (gateway) {
-    const taskId = `${issue.id}:${agent.id}`
-    console.log(`[committee] ${agent.id}: dispatching via gateway (timeout ${timeout / 1000}s)`)
-
-    // Register the pending-result handler BEFORE assigning, so a fast external
-    // agent that responds in the window between assign and await cannot have its
-    // result dropped (which would surface as a false timeout).
-    const resultP = gateway.waitForResult(taskId, timeout)
-    gateway.assign(agent.id, {
-      id: taskId,
-      issueId: issue.id,
-      title: issue.title,
-      body: assignmentBody,
-      systemPrompt,
-      createdAt: new Date().toISOString(),
-    })
-
-    try {
-      const result = await resultP
-      const vote = extractVote(result.content)
-      console.log(`[committee] ${agent.id}: gateway vote received — ${vote}`)
-
-      return {
-        agentId: agent.id,
-        agentName: agent.name,
-        vote,
-        summary: result.content.slice(0, 500),
-        response: result.content,
-        costUsd: 0,
-      }
-    } catch {
-      console.log(`[committee] ${agent.id}: gateway vote timed out`)
-      return { agentId: agent.id, agentName: agent.name, vote: 'abstain', summary: 'External agent timed out', response: '', costUsd: 0 }
-    }
+  if (!gateway) {
+    return abstainVote(
+      agent,
+      'No gateway: external voter needs a bridge, or voteByComment: true to poll issue comments',
+    )
   }
 
-  // Fallback: poll Linear comments
-  return pollForExternalVote(issue, agent, deps)
+  const taskId = `${issue.id}:${agent.id}`
+  console.log(`[committee] ${agent.id}: dispatching via gateway (timeout ${timeout / 1000}s)`)
+
+  // Register the pending-result handler BEFORE assigning, so a fast external
+  // agent that responds in the window between assign and await cannot have its
+  // result dropped (which would surface as a false timeout).
+  const resultP = gateway.waitForResult(taskId, timeout)
+  gateway.assign(agent.id, {
+    id: taskId,
+    issueId: issue.id,
+    title: issue.title,
+    body: assignmentBody,
+    systemPrompt,
+    createdAt: new Date().toISOString(),
+  })
+
+  try {
+    const result = await resultP
+    const vote = extractVote(result.content)
+    console.log(`[committee] ${agent.id}: gateway vote received — ${vote}`)
+
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      vote,
+      summary: result.content.slice(0, 500),
+      response: result.content,
+      costUsd: 0,
+    }
+  } catch {
+    console.log(`[committee] ${agent.id}: gateway vote timed out`)
+    return abstainVote(agent, 'External agent timed out')
+  }
+}
+
+async function voteForExternalAgent(
+  issue: Issue,
+  agent: AgentDefinition,
+  deps: CommitteePipelineDeps,
+  systemPrompt: string,
+  assignmentBody: string,
+  session: ExternalVoterSession | undefined,
+): Promise<CommitteeVote> {
+  if (agent.voteByComment) {
+    return pollForExternalVote(issue, agent, deps)
+  }
+
+  const start = session?.started.get(agent.id)
+  if (start && !start.ok) {
+    console.log(`[committee] ${agent.id}: bridge failed — ${start.reason}`)
+    return abstainVote(agent, `Bridge failed to start: ${start.reason}`)
+  }
+
+  const gateway = session?.gateway ?? deps.gateway
+  if (!gateway) {
+    console.log(`[committee] ${agent.id}: no gateway — abstaining (set voteByComment to poll issue comments)`)
+    return abstainVote(
+      agent,
+      'No gateway: external voter needs a bridge, or voteByComment: true to poll issue comments',
+    )
+  }
+
+  return dispatchExternalAgent(issue, agent, { ...deps, gateway }, systemPrompt, assignmentBody)
+}
+
+async function startVoterSession(
+  agents: readonly AgentDefinition[],
+  deps: CommitteePipelineDeps,
+): Promise<ExternalVoterSession | undefined> {
+  if (!agents.length || !deps.externalVoters) return undefined
+  try {
+    return await deps.externalVoters.start(agents)
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    console.error(`[committee] failed to start external voters: ${reason}`)
+    return {
+      ...(deps.gateway ? { gateway: deps.gateway } : {}),
+      started: new Map(agents.map(a => [a.id, { ok: false as const, reason }])),
+      stop() {},
+    }
+  }
 }
 
 /**
  * Run every member in parallel and collect votes. Used by RFC review and by
  * the PR-review path, which supplies a prompt that includes the diff.
+ *
+ * External members get a bridge for the duration of this call (when an
+ * {@link ExternalVoterHost} is provided). A bridge that cannot start abstains
+ * immediately. Comment polling runs only for members with `voteByComment`.
  */
 export async function collectCommitteeVotes(
   issue: Issue,
@@ -236,15 +320,23 @@ export async function collectCommitteeVotes(
 ): Promise<CommitteeVote[]> {
   const { company } = deps
   const internalAgents = agents.filter(a => !a.external)
-  const externalAgents = agents.filter(a => a.external)
+  const commentVoters = agents.filter(a => a.external && a.voteByComment)
+  const bridgeVoters = agents.filter(a => a.external && !a.voteByComment)
   const userMessage = prompt?.userMessage ?? defaultProposalUserMessage(issue)
   const assignmentBody = prompt?.assignmentBody ?? issue.body
 
-  return Promise.all([
-    ...internalAgents.map(agent => runCommitteeAgent(issue, agent, deps, userMessage)),
-    ...externalAgents.map(async agent =>
-      dispatchExternalAgent(issue, agent, deps, await buildSystemPrompt(agent, company), assignmentBody)),
-  ])
+  const session = await startVoterSession(bridgeVoters, deps)
+  try {
+    return await Promise.all([
+      ...internalAgents.map(agent => runCommitteeAgent(issue, agent, deps, userMessage)),
+      ...commentVoters.map(async agent =>
+        voteForExternalAgent(issue, agent, deps, await buildSystemPrompt(agent, company), assignmentBody, session)),
+      ...bridgeVoters.map(async agent =>
+        voteForExternalAgent(issue, agent, deps, await buildSystemPrompt(agent, company), assignmentBody, session)),
+    ])
+  } finally {
+    session?.stop()
+  }
 }
 
 async function pollForExternalVote(

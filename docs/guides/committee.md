@@ -10,7 +10,7 @@ Run a multi-agent technical committee that reviews proposals in parallel, votes,
 4. Votes are tallied (simple majority), results posted to Linear
 5. If a GitHub Discussion is linked, the outcome is synced there
 
-The same committee also reviews every PR an implementer opens, before a person sees it. Each member reads the diff inside its reviewer sandbox, the engine posts one signed PR comment per member plus a summary, and a majority approve with no blockers is the verdict. Timeouts abstain; fewer than two answers leaves the issue `in_review`. Merging stays with the coordinator.
+The same committee also reviews every PR an implementer opens, before a person sees it. Each member reads the issue, the discussion under it and the diff inside its reviewer sandbox — so a decision the owner or the coordinator recorded on the issue is in front of every reviewer, who is told to review against it and to raise disagreement with the decision as a concern for the owner, not as a blocker — the engine posts one signed PR comment per member plus a summary, and a majority approve with no blockers is the verdict. Timeouts abstain; fewer than two answers leaves the issue `in_review`. Merging stays with the coordinator.
 
 In `floor-agents run --issue`, that PR review starts a gateway if none is running and spawns each external voter's CLI bridge for the duration of the vote (the same lifecycle `scripts/committee-run.ts` uses for RFC reviews). `watch` reuses its gateway and still starts the bridges per review. A bridge that cannot start abstains immediately with the reason on the PR; issue-comment polling is only for members with `voteByComment: true`. See [`review`](../configuration.md#review) in the configuration reference.
 

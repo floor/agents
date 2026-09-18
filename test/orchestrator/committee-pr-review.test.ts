@@ -354,6 +354,36 @@ describe('tallyCommitteePrReview', () => {
 // ── Full review with mock members ───────────────────────────────────
 
 describe('executeCommitteePrReview', () => {
+  test('reviewers read the issue discussion: a decision the owner recorded is in front of them', async () => {
+    // mtrl #92: the owner had decided the behaviour change under the issue. Reviewers saw only the
+    // body, which still said "decide" — Codex blocked three cycles on a point already settled.
+    const seen: string[] = []
+    const agents = four()
+    const deps = makeDeps(agents, { claude: 'VOTE: APPROVE', codex: 'VOTE: APPROVE', grok: 'VOTE: APPROVE', gemini: 'VOTE: APPROVE' }, { seen })
+    deps.task.getComments = async () => [
+      { id: 'c1', author: 'Dr Jones', body: 'N10: yes — check() clears mixed, in 0.9.8.', createdAt: new Date('2026-09-18T12:00:00Z') },
+    ] as never
+    await executeCommitteePrReview(makeIssue(), makeState(), deps)
+    expect(seen.length).toBeGreaterThan(0)
+    for (const prompt of seen) {
+      expect(prompt).toContain('## Discussion')
+      expect(prompt).toContain('check() clears mixed, in 0.9.8')
+      expect(prompt).toContain('not as a BLOCKER')
+      // Issue, then discussion, then the diff.
+      expect(prompt.indexOf('## Discussion')).toBeLessThan(prompt.indexOf('## PR Diff'))
+    }
+  })
+
+  test('a comments outage does not cost the review', async () => {
+    const seen: string[] = []
+    const agents = four()
+    const deps = makeDeps(agents, { claude: 'VOTE: APPROVE', codex: 'VOTE: APPROVE', grok: 'VOTE: APPROVE', gemini: 'VOTE: APPROVE' }, { seen })
+    deps.task.getComments = async () => { throw new Error('Linear is down') }
+    const next = await executeCommitteePrReview(makeIssue(), makeState(), deps)
+    expect(next.reviewVerdict?.decision).toBe('approve')
+    expect(seen.every(p => !p.includes('## Discussion'))).toBe(true)
+  })
+
   test('unanimous approve → approve', async () => {
     const seen: string[] = []
     const agents = four()

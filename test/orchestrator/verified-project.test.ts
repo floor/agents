@@ -337,13 +337,20 @@ test('a comments outage is logged and the native turn still runs', async () => {
 })
 
 test('the native implementer prompt never names API-path tools, on a first pass or a revision', async () => {
+  const nativeDev: AgentDefinition = { ...agent, promptTemplate: join(process.cwd(), 'agents/backend-dev.md') }
+  const template = await Bun.file(nativeDev.promptTemplate).text()
+  expect(template).toContain('write_file')
+  expect(template).toContain('pr_description')
+  expect(template).toContain('FULL file contents')
+
   const capture = async (reviewComments?: string): Promise<string> => {
     let prompt = ''
+    const { task, git } = adapters('42')
     try {
-      await runNativeDevAgent(issue, agent, state(), {
+      await runNativeDevAgent(issue, nativeDev, state(), {
         project, guardrails: company.guardrails, stateStore: createStateStore(join(dir, 'state')),
         costTracker: createCostTracker(), addComment: async () => {}, setLabel: async () => {},
-        contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+        contextBuilder: createContextBuilder({ taskAdapter: task, gitAdapter: git }),
         runAgent: async (text, cwd) => {
           prompt = text
           await Bun.write(join(cwd, 'answer.txt'), '42')
@@ -359,8 +366,11 @@ test('the native implementer prompt never names API-path tools, on a first pass 
   const first = await capture()
   const revision = await capture('please add tests')
   for (const prompt of [first, revision]) {
+    expect(prompt).toContain('senior backend developer')
     expect(prompt).not.toContain('write_file')
     expect(prompt).not.toContain('pr_description')
+    expect(prompt).not.toContain('FULL file contents')
+    expect(prompt).not.toContain('## Output')
     expect(prompt).toContain('Do not commit, push, or open a PR')
     expect(prompt).toContain('own editing tools')
     expect(prompt).toContain('The engine reads the working tree, not your message')

@@ -10,14 +10,34 @@ export type PromptParts = {
 const DEFAULT_MAX_CONTEXT_TOKENS = 100_000
 const RESERVED_OUTPUT_TOKENS = 4_000
 
+/**
+ * Drop API-path tool instructions from a role template.
+ *
+ * Native CLIs edit the working tree with their own tools. Naming `write_file`
+ * (agy's file tool) or asking for "FULL file contents" made Gemini print the
+ * files and write nothing (mtrl FLO-102).
+ */
+export function withoutApiToolInstructions(text: string): string {
+  return text
+    .split('\n')
+    .filter(line => !/write_file|pr_description|FULL file contents?/i.test(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+}
+
 export async function renderPrompt(params: {
   agent: AgentDefinition
   project: ProjectConfig
   tree: string
   files: readonly SelectedFile[]
   maxContextTokens?: number
+  /**
+   * Native implementer: omit the API Output section and those lines from the
+   * role template. API agents keep both.
+   */
+  native?: boolean
 }): Promise<PromptParts> {
-  const { agent, project, tree, files, maxContextTokens } = params
+  const { agent, project, tree, files, maxContextTokens, native } = params
   const budget = (maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS) - RESERVED_OUTPUT_TOKENS
 
   // Load prompt template from disk if it exists
@@ -33,6 +53,10 @@ export async function renderPrompt(params: {
 
   if (!rolePrompt) {
     rolePrompt = `You are a ${agent.id} developer agent.`
+  }
+
+  if (native) {
+    rolePrompt = withoutApiToolInstructions(rolePrompt)
   }
 
   // Build project context
@@ -85,14 +109,16 @@ export async function renderPrompt(params: {
     used += estimateTokens(agent.customInstructions)
   }
 
-  // Output format — tool use instructions
-  sections.push(
-    '',
-    '## Output',
-    'Think through your approach, then implement the changes.',
-    'Use the `write_file` tool for each file you create or modify. Provide the FULL file content.',
-    'Use the `pr_description` tool once to provide a clear PR description.',
-  )
+  // Output format — API-path tool use. Native CLIs must not see these names.
+  if (!native) {
+    sections.push(
+      '',
+      '## Output',
+      'Think through your approach, then implement the changes.',
+      'Use the `write_file` tool for each file you create or modify. Provide the FULL file content.',
+      'Use the `pr_description` tool once to provide a clear PR description.',
+    )
+  }
 
   const systemPrompt = sections.join('\n')
 

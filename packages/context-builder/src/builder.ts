@@ -25,6 +25,11 @@ export type BuildContextParams = {
   readonly previousAttempt?: string
   /** Issue comments already rendered as a `## Discussion` block, or omitted. */
   readonly discussion?: string
+  /**
+   * Native implementer: omit API-path tool instructions from the system prompt.
+   * API agents leave this unset so they still receive `write_file` / `pr_description`.
+   */
+  readonly native?: boolean
 }
 
 export type ContextBuilderDeps = {
@@ -79,6 +84,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
         project,
         tree,
         files,
+        ...(params.native ? { native: true } : {}),
       })
 
       // Build user message

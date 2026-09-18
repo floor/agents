@@ -311,13 +311,15 @@ export async function runNativeDevAgent(
 
   try {
     await prepareWorkspace(worktree, deps.project)
-    // Build context hints
+    // Native: omit API-path tool names from the role template and Output
+    // section. agy's file tool is itself called write_file (mtrl FLO-102).
     const ctx = await contextBuilder.build({
       agent,
       issue,
       project: deps.project,
       reviewComments,
       ref: worktree.initialSha,
+      native: true,
     })
 
     const promptParts = [

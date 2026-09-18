@@ -40,7 +40,7 @@ List identifiers with `agy models` (requires the CLI login). Optional `--effort 
 
 `antigravity` is a native provider: an agent with `provider: antigravity` and `write_code` implements through the native runner, like `cursor` and `claude-code`. It runs on a worktree with `--dangerously-skip-permissions` (it needs the shell for tests) inside an implementer sandbox — it may write that worktree and its git metadata, nothing else — and the engine verifies and publishes the tree. As a PR reviewer it runs with `--mode plan` in a reviewer sandbox.
 
-Native implementer instructions tell the CLI to edit the working tree with its own tools and not to print file contents as a reply. They never name the API-path tools: agy's file tool is itself called `write_file`, and a prohibition on that name made Gemini print whole files and write nothing (mtrl FLO-102).
+The native implementer's prompt never names the API-path tools (`write_file`, `pr_description`): agy's file tool is itself called `write_file`, and a prohibition on that name made Gemini print whole files and write nothing (mtrl FLO-102). The context builder omits the API Output section and those lines from the role template (`native: true`); native instructions tell the CLI to edit the working tree with its own tools and not to print file contents as a reply.
 
 `--print-timeout` is set from the agent's `timeoutMs` (a Go duration, e.g. `10m`) so the CLI does not give up before the engine does. A CLI-side timeout is reported as a budget, not a crash.
 

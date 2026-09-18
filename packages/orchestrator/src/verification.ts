@@ -66,10 +66,25 @@ async function changedBytes(worktree: Worktree, baseSha: string, tree: string, p
   if (numstat.startsWith('-\t-\t')) return Number(await gitText(worktree.path, ['cat-file', '-s', blob]))
   const patch = await gitText(worktree.path, ['diff', '--no-renames', '--no-color', '--unified=0', baseSha, tree, '--', path])
   let bytes = 0
+  let inHunk = false
   for (const line of patch.split('\n')) {
-    if (line.startsWith('+') && !line.startsWith('+++ ')) bytes += Buffer.byteLength(line) // the '+' stands for the newline
+    // Only lines inside a hunk are content: the `+++ b/path` header is not, and
+    // an added line that itself begins with `++ ` must not be mistaken for it.
+    if (line.startsWith('@@')) inHunk = true
+    else if (inHunk && line.startsWith('+')) bytes += Buffer.byteLength(line) // the '+' stands for the newline
   }
   return bytes
+}
+
+/** Paths that are an existing file moved without a change: nothing was written, whatever its size. */
+async function movedUnchanged(worktree: Worktree, baseSha: string, tree: string): Promise<Set<string>> {
+  const status = await gitText(worktree.path, ['diff', '--name-status', '-M100%', '-z', baseSha, tree])
+  const fields = status.split('\0').filter(Boolean)
+  const moved = new Set<string>()
+  for (let i = 0; i < fields.length; i++) {
+    if (fields[i]!.startsWith('R')) { moved.add(fields[i + 2]!); i += 2 } else i += 1
+  }
+  return moved
 }
 
 /** Validate cumulative changes, including deletions, modes and agent commits. */
@@ -77,13 +92,14 @@ export async function validateWorktree(worktree: Worktree, baseSha: string, guar
   const tree = await snapshotWorktree(worktree)
   const paths = (await gitText(worktree.path, ['diff', '--name-only', '--no-renames', '-z', baseSha, tree])).split('\0').filter(Boolean)
   const files: { path: string; content: string }[] = []
+  const moved = await movedUnchanged(worktree, baseSha, tree)
   let total = 0
   for (const path of paths) {
     const entry = await gitText(worktree.path, ['ls-tree', tree, '--', path])
     const mode = entry.split(' ')[0]
     if (entry && mode !== '100644' && mode !== '100755') throw new Error(`Unsupported file mode for ${path}: ${mode}`)
     const object = entry.match(/^\d+ blob ([a-f0-9]+)\t/)
-    const size = await changedBytes(worktree, baseSha, tree, path, object?.[1])
+    const size = moved.has(path) ? 0 : await changedBytes(worktree, baseSha, tree, path, object?.[1])
     if (size > guardrails.maxFileSizeBytes) {
       throw new Error(`Guardrail: the change adds ${size} bytes to ${path}, over maxFileSizeBytes (${guardrails.maxFileSizeBytes})`)
     }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtemp, mkdir, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, rename, rm, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { AgentDefinition, CompanyConfig, ExecutionState, GitAdapter, Issue, LLMAdapter, ProjectConfig, TaskAdapter } from '@floor-agents/core'
@@ -169,6 +169,16 @@ test('only what a change adds is measured: a deletion writes nothing, a rewrite 
 
   await rm(join(worktree.path, 'generated.txt'))
   await validateWorktree(worktree, worktree.initialSha, company.guardrails)
+
+  // Moving a large file unchanged writes nothing either; a small new file whose
+  // line begins like a patch header is counted as the 42 bytes it is.
+  await mkdir(join(worktree.path, 'docs'))
+  await rename(join(worktree.path, 'big.md'), join(worktree.path, 'docs', 'big.md'))
+  await Bun.write(join(worktree.path, 'notes.md'), '++ a line that begins like a patch header\n')
+  await validateWorktree(worktree, worktree.initialSha, { ...company.guardrails, maxFileSizeBytes: 50_000 })
+  await expect(validateWorktree(worktree, worktree.initialSha, { ...company.guardrails, maxTotalOutputBytes: 10 })).rejects.toThrow(/adds 42 bytes across 4 files/)
+  await rm(join(worktree.path, 'notes.md'))
+  await rename(join(worktree.path, 'docs', 'big.md'), join(worktree.path, 'big.md'))
 
   const big = join(worktree.path, 'big.md')
   await Bun.write(big, (await Bun.file(big).text()).split('\n').map((l, i) => i < 1500 ? l.replace('line', 'LINE') : l).join('\n'))

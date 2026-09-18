@@ -1,7 +1,7 @@
 # 2026-09-18 — Three benchmarks on real tasks
 
 After a day of polish (see [The Polish Sprint](../polish-sprint.md)), the engine was measured on
-two small real issues, twice. The morning's baseline for a task of this size was two to three
+two real issues, three times, with engine fixes between the rounds. The morning's baseline for a task of this size was two to three
 hours and several runs. The target is 25 minutes from label to approved pull request.
 
 ## Setup

@@ -31,6 +31,7 @@ export type {
 
 export type { ProjectConventions, ProjectStructure, ProjectConfig, ProjectCommand } from './types/project.ts'
 export type { CompanyConfig } from './types/company.ts'
+export type { ReviewConfig } from './types/review.ts'
 export type { SourceDefinition, SourceVisibility } from './types/sources.ts'
 export type { TasksConfig, TaskSource } from './types/tasks.ts'
 export type { GuardrailsConfig, GuardrailViolation } from './types/guardrails.ts'

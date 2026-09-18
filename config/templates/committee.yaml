@@ -110,6 +110,9 @@ costs:
   maxCostPerDay: 20.00
   warnCostThreshold: 1.00
 
+review:
+  committee: true
+
 statusMapping:
   draft: "Backlog"
   review: "In Progress"

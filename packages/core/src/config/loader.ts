@@ -7,6 +7,7 @@ import type { AutonomyConfig } from '../types/autonomy.ts'
 import type { GuardrailsConfig } from '../types/guardrails.ts'
 import type { CostConfig } from '../types/costs.ts'
 import type { SourceDefinition } from '../types/sources.ts'
+import type { ReviewConfig } from '../types/review.ts'
 import type { TasksConfig } from '../types/tasks.ts'
 import { dirname, resolve } from 'node:path'
 
@@ -134,6 +135,13 @@ function parseTasks(raw: any): TasksConfig | undefined {
   }
 }
 
+function parseReview(raw: any): ReviewConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  return {
+    ...(typeof raw.committee === 'boolean' ? { committee: raw.committee } : {}),
+  }
+}
+
 function parseCosts(raw: any): CostConfig {
   return {
     maxCostPerTask: raw?.maxCostPerTask ?? 5.0,
@@ -193,6 +201,7 @@ function parseConfig(text: string): CompanyConfig {
     guardrails: parseGuardrails(raw.guardrails),
     sources: parseSources(raw.sources),
     ...(raw.tasks !== undefined ? { tasks: parseTasks(raw.tasks) } : {}),
+    ...(raw.review !== undefined ? { review: parseReview(raw.review) } : {}),
     costs: parseCosts(raw.costs),
     statusMapping: raw.statusMapping ?? {},
     createdAt: now,

@@ -97,12 +97,29 @@ export async function buildSystemPrompt(agent: AgentDefinition, company: Company
 
 // ── Single agent review ──────────────────────────────────────────
 
+function defaultProposalUserMessage(issue: Issue): string {
+  return [
+    `## Proposal for Review\n\n**${issue.title}**`,
+    issue.body ? `\n${issue.body}` : '',
+    '\n---',
+    '\nPlease review this proposal against the current codebase.',
+    'Provide your technical analysis and explicitly state **VOTE: APPROVE** or **VOTE: REJECT**.',
+  ].join('\n')
+}
+
+export type CommitteeDispatchPrompt = {
+  readonly userMessage: string
+  /** Body sent to external agents on the gateway assignment. Defaults to the issue body. */
+  readonly assignmentBody?: string
+}
+
 async function runCommitteeAgent(
   issue: Issue,
   agent: AgentDefinition,
   deps: CommitteePipelineDeps,
+  userMessage: string,
 ): Promise<CommitteeVote> {
-  const { company, taskAdapter, costTracker, getAdapter } = deps
+  const { company, costTracker, getAdapter } = deps
 
   console.log(`[committee] ${agent.id}: reviewing "${issue.title}"`)
 
@@ -110,13 +127,7 @@ async function runCommitteeAgent(
 
   const messages: LLMMessage[] = [{
     role: 'user',
-    content: [
-      `## Proposal for Review\n\n**${issue.title}**`,
-      issue.body ? `\n${issue.body}` : '',
-      '\n---',
-      '\nPlease review this proposal against the current codebase.',
-      'Provide your technical analysis and explicitly state **VOTE: APPROVE** or **VOTE: REJECT**.',
-    ].join('\n'),
+    content: userMessage,
   }]
 
   try {
@@ -166,6 +177,7 @@ async function dispatchExternalAgent(
   agent: AgentDefinition,
   deps: CommitteePipelineDeps,
   systemPrompt: string,
+  assignmentBody: string,
 ): Promise<CommitteeVote> {
   const { gateway } = deps
   const config = deps.externalAgents ?? {}
@@ -184,7 +196,7 @@ async function dispatchExternalAgent(
       id: taskId,
       issueId: issue.id,
       title: issue.title,
-      body: issue.body,
+      body: assignmentBody,
       systemPrompt,
       createdAt: new Date().toISOString(),
     })
@@ -210,6 +222,29 @@ async function dispatchExternalAgent(
 
   // Fallback: poll Linear comments
   return pollForExternalVote(issue, agent, deps)
+}
+
+/**
+ * Run every member in parallel and collect votes. Used by RFC review and by
+ * the PR-review path, which supplies a prompt that includes the diff.
+ */
+export async function collectCommitteeVotes(
+  issue: Issue,
+  agents: readonly AgentDefinition[],
+  deps: CommitteePipelineDeps,
+  prompt?: CommitteeDispatchPrompt,
+): Promise<CommitteeVote[]> {
+  const { company } = deps
+  const internalAgents = agents.filter(a => !a.external)
+  const externalAgents = agents.filter(a => a.external)
+  const userMessage = prompt?.userMessage ?? defaultProposalUserMessage(issue)
+  const assignmentBody = prompt?.assignmentBody ?? issue.body
+
+  return Promise.all([
+    ...internalAgents.map(agent => runCommitteeAgent(issue, agent, deps, userMessage)),
+    ...externalAgents.map(async agent =>
+      dispatchExternalAgent(issue, agent, deps, await buildSystemPrompt(agent, company), assignmentBody)),
+  ])
 }
 
 async function pollForExternalVote(
@@ -300,11 +335,7 @@ export async function executeCommitteeReview(
   // Run internal and external agents in parallel — each external agent gets its
   // own persona from its promptTemplate (codex-reviewer.md, antigravity-reviewer.md)
   // rather than a shared generic prompt.
-  const votes = await Promise.all([
-    ...internalAgents.map(agent => runCommitteeAgent(issue, agent, deps)),
-    ...externalAgents.map(async agent =>
-      dispatchExternalAgent(issue, agent, deps, await buildSystemPrompt(agent, company))),
-  ])
+  const votes = await collectCommitteeVotes(issue, agents, deps)
 
   const outcome = tallyVotes(votes)
   const totalCost = votes.reduce((sum, v) => sum + v.costUsd, 0)

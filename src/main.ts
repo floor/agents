@@ -304,6 +304,7 @@ const orchestrators = [
         contextBuilder,
         stateStore,
         costTracker,
+        gateway,
       })]
     : []),
   ...(pipelines.committee

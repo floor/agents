@@ -149,6 +149,14 @@ export function validateCompanyConfig(config: CompanyConfig): readonly string[] 
     if (t.source === 'linear' && !t.linear?.team?.trim()) errors.push('tasks.linear.team is required when tasks.source is linear')
     if (t.labels !== undefined && (!Array.isArray(t.labels) || t.labels.some(l => typeof l !== 'string' || !l.trim()))) errors.push('tasks.labels must be a list of label names')
   }
+  if (config.review !== undefined) {
+    if (config.review.committee !== undefined && typeof config.review.committee !== 'boolean') {
+      errors.push('review.committee must be a boolean')
+    }
+    if (config.review.committee === true && !config.agents.some(a => a.capabilities.includes('vote'))) {
+      errors.push('review.committee is true but no agent has the vote capability')
+    }
+  }
   const trusted = config.guardrails.privateSourceProviders
   if (trusted !== undefined && (!Array.isArray(trusted) || trusted.some(p => typeof p !== 'string' || !p.trim()))) {
     errors.push('guardrails.privateSourceProviders must be a list of provider names')

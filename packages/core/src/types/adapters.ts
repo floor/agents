@@ -136,6 +136,12 @@ export type LLMConfig = {
   readonly tools?: readonly ToolDefinition[]
   readonly maxTokens?: number
   readonly temperature?: number
+  /**
+   * Per-call turn cap for a CLI adapter that counts them (`claude-code`).
+   * Committee PR review passes the native reviewer's budget (60); other
+   * callers leave this unset so the adapter keeps its own default (10).
+   */
+  readonly maxTurns?: number
 }
 
 export type LLMUsage = {

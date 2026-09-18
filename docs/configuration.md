@@ -195,13 +195,13 @@ review:
 
 Set `review.committee: true` to send every implementer PR to the committee even when a `review_pr` agent is also seated. Set `review.committee: false` to skip committee review.
 
-When committee PR review runs, each member with `vote` reads the PR diff (`getPRDiff`) inside its reviewer sandbox, returns findings and a vote (`VOTE: APPROVE` / `VOTE: REJECT`, with must-fix issues as `BLOCKER: …`), and the engine posts one signed PR comment per member plus one summary. The pipeline verdict is:
+When committee PR review runs, each member with `vote` reads the PR diff (`getPRDiff`) inside its reviewer sandbox, returns findings and a vote (`VOTE: APPROVE` / `VOTE: REJECT`, with must-fix issues as `BLOCKER: …`), and the engine posts one signed PR comment per member plus one summary. The prompt names the diff as the object of review — read the repository only where the diff needs context — and a Claude Code member gets the native reviewer's turn cap (`DEFAULT_MAX_TURNS.review`, 60) on that call only, so a review does not become an exploration that dies at 10 turns while the PM and RFC reviews keep the adapter default. The pipeline verdict is:
 
-- **approve** — a majority of answers approve and no member found a blocker
+- **approve** — a majority of answers approve and no completed review found a blocker
 - **changes requested** — otherwise; blockers are fed to the implementer as review comments, up to the usual review-cycle cap
 - **no decision** — fewer than two members returned a vote (timeouts and errors abstain). The issue is left `in_review` for a person; there is no verdict
 
-A member that times out or errors abstains and says so on the PR. Two answering votes are enough to decide, so one abstention in a four-member committee does not block a result.
+A member that times out or errors abstains and says so on the PR. Claude Code errors include the envelope `subtype`, any partial `result` (capped so the comment fits GitHub), and stderr, so an abstention says why (`error_max_turns`, `error_during_execution`, …). A capped turn is a failed execution even when it produced text, so a truncated `VOTE: APPROVE` is not counted and `BLOCKER:` inside that error text is not a committee blocker. A completed review whose `VOTE:` marker was not recognised also abstains, but its `BLOCKER:` lines still block. Two answering votes are enough to decide, so one abstention in a four-member committee does not block a result.
 
 **`run --issue` and external voters.** Committee PR review seats external members the same way `scripts/committee-run.ts` seats them for an RFC: if no gateway is already running, one is started for the review; each external voter that is not `voteByComment: true` gets its CLI bridge (`scripts/lib/bridges.ts`) for the duration of the vote; the bridges (and a gateway this review started) are stopped afterwards. `watch` reuses its long-lived gateway and still spawns the bridges per review. A bridge that cannot start (CLI missing, login expired, unknown provider) abstains immediately with that reason on the PR — it never falls through to a five-minute comment poll. Comment polling remains only for members explicitly set `voteByComment: true`.
 

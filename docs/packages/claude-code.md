@@ -20,7 +20,7 @@ import { createClaudeCodeAdapter } from '@floor-agents/claude-code'
 const adapter = createClaudeCodeAdapter({
   cwd: '/path/to/repo',      // working directory for Claude Code
   model: 'opus',              // opus, sonnet, haiku
-  maxTurns: 10,               // max agent turns
+  maxTurns: 10,               // generic default; a PR review call may pass 60
   allowedTools: ['Read', 'Glob', 'Grep', 'Bash', 'LSP'],
 })
 ```
@@ -69,9 +69,13 @@ This makes it far more effective as a reviewer than an API call that only sees a
 |--------|---------|-------------|
 | `cwd` | `process.cwd()` | Working directory — should be the repo root |
 | `model` | Claude Code default | `opus`, `sonnet`, or `haiku` |
-| `maxTurns` | 10 | Max agent turns before stopping |
+| `maxTurns` | 10 | Max agent turns before stopping. A committee PR review call passes `DEFAULT_MAX_TURNS.review` (60); the PM and RFC reviews keep this default |
 | `allowedTools` | All | Array of allowed Claude Code tools |
 | `sandbox` | none | [sandbox](./sandbox.md) the CLI starts in; committee reviewers pass `reviewerSandbox('claude')` |
+
+## Errors
+
+The envelope's `subtype` is included in thrown errors (`Claude Code error (error_max_turns): …`) together with the last 2000 characters of `result` and the last 500 characters of stderr, so a committee abstention can say why without overflowing GitHub's PR comment size (HTTP 422). A capped turn is always a failure — even when it produced text — so a truncated `VOTE: APPROVE` cannot count as a completed review.
 
 ## Timeouts
 

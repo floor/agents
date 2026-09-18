@@ -19,6 +19,17 @@ import { costNote } from './cost-note.ts'
 
 export type Vote = 'approve' | 'reject' | 'abstain'
 
+/**
+ * How a committee member produced its vote.
+ *
+ * `answered` is a completed review — including one whose `VOTE:` marker was
+ * not recognised, which still abstains but may carry `BLOCKER:` lines.
+ * `failed` is an execution that never finished (timeout, adapter error,
+ * bridge failure); its text is not a review, so `BLOCKER:` inside an error
+ * must not count.
+ */
+export type CommitteeVoteExecution = 'answered' | 'failed'
+
 export type CommitteeVote = {
   readonly agentId: string
   readonly agentName: string
@@ -26,6 +37,7 @@ export type CommitteeVote = {
   readonly summary: string
   readonly response: string
   readonly costUsd: number
+  readonly execution: CommitteeVoteExecution
 }
 
 export type CommitteeResult = {
@@ -171,6 +183,7 @@ async function runCommitteeAgent(
       summary: result.content.slice(0, 500),
       response: result.content,
       costUsd: result.totalCost,
+      execution: 'answered',
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -183,6 +196,7 @@ async function runCommitteeAgent(
       summary: `Error: ${message}`,
       response: '',
       costUsd: 0,
+      execution: 'failed',
     }
   }
 }
@@ -200,6 +214,7 @@ function abstainVote(agent: AgentDefinition, summary: string): CommitteeVote {
     summary,
     response: summary,
     costUsd: 0,
+    execution: 'failed',
   }
 }
 
@@ -249,6 +264,7 @@ async function dispatchExternalAgent(
       summary: result.content.slice(0, 500),
       response: result.content,
       costUsd: 0,
+      execution: 'answered',
     }
   } catch {
     console.log(`[committee] ${agent.id}: gateway vote timed out`)
@@ -352,7 +368,7 @@ async function pollForExternalVote(
 
   if (!taskAdapter.getComments) {
     console.error(`[committee] ${agent.id}: no gateway and no getComments — cannot dispatch`)
-    return { agentId: agent.id, agentName: agent.name, vote: 'abstain', summary: 'No gateway or getComments available', response: '', costUsd: 0 }
+    return { agentId: agent.id, agentName: agent.name, vote: 'abstain', summary: 'No gateway or getComments available', response: '', costUsd: 0, execution: 'failed' }
   }
 
   console.log(`[committee] ${agent.id}: polling for external vote (timeout ${timeout / 1000}s)`)
@@ -381,6 +397,7 @@ async function pollForExternalVote(
           summary: comment.body.slice(0, 500),
           response: comment.body,
           costUsd: 0,
+          execution: 'answered',
         }
       }
     }
@@ -389,7 +406,7 @@ async function pollForExternalVote(
   }
 
   console.log(`[committee] ${agent.id}: external vote timed out`)
-  return { agentId: agent.id, agentName: agent.name, vote: 'abstain', summary: 'External agent timed out', response: '', costUsd: 0 }
+  return { agentId: agent.id, agentName: agent.name, vote: 'abstain', summary: 'External agent timed out', response: '', costUsd: 0, execution: 'failed' }
 }
 
 // ── Main committee pipeline ──────────────────────────────────────

@@ -17,7 +17,7 @@ export { createWorktree, commitAndPushWorktree, removeWorktree } from './worktre
 export type { Worktree } from './worktree.ts'
 export { runProjectCommand, validateWorktree, verifyWorktree, verificationSummary } from './verification.ts'
 export { executeCommitteeReview, buildSystemPrompt, collectCommitteeVotes } from './committee-pipeline.ts'
-export type { CommitteeResult, CommitteeVote, Vote, CommitteePipelineDeps, ExternalAgentConfig, CommitteeDispatchPrompt, ExternalVoterHost, ExternalVoterSession, ExternalVoterStart } from './committee-pipeline.ts'
+export type { CommitteeResult, CommitteeVote, CommitteeVoteExecution, Vote, CommitteePipelineDeps, ExternalAgentConfig, CommitteeDispatchPrompt, ExternalVoterHost, ExternalVoterSession, ExternalVoterStart } from './committee-pipeline.ts'
 export { executeCommitteePrReview, committeePrReviewEnabled, committeeVoters, tallyCommitteePrReview, extractBlockers } from './committee-pr-review.ts'
 export type { CommitteePrOutcome, CommitteePrReviewDeps } from './committee-pr-review.ts'
 export { createCommitteeOrchestrator } from './committee-orchestrator.ts'

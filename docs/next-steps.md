@@ -1,5 +1,10 @@
 # Next Steps
 
+> **History since 2026-09-18.** What is up next lives in Linear (team FLO, project
+> *agents*): the items below became FLO-174 (§1), FLO-13 (§2 and §4), FLO-176 (§5),
+> FLO-177 (§6, the open bullets), FLO-175 (§7); §3 is done (the native runner selects
+> context files). Edit the issue, not this page.
+
 Updated May 19, 2026.
 
 ---

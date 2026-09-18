@@ -1,19 +1,16 @@
 # Known Issues
 
+> **History since 2026-09-18.** The open items of this project live in Linear (team FLO,
+> project *agents*): FLO-174 (Linear polling and backoff), FLO-175 (`doctor` refuses what
+> `run` refuses), FLO-176 (provider registry), FLO-177 (orchestrator-agent hardening),
+> FLO-13 (workflow engine and PM agent, unwired), FLO-14 (dogfooding metrics). Edit the
+> issue, not this page. The record below is kept as it was.
+
 Updated May 19, 2026.
 
 ---
 
 ## Open
-
-### Git push from worktree fails
-**Severity:** High — blocks native execution loop
-**Found:** Sprint 4
-
-Claude Code edits files and commits in the worktree (exit 0), but `git push origin <branch>` fails with "failed to push some refs." The worktree may not inherit git credentials or remote config properly.
-
-**Workaround:** None yet. API-based execution (sprint 2 config) still works.
-
 
 ### Linear rate limit (5000 req/hr)
 **Severity:** Medium — blocks operation after heavy use
@@ -26,6 +23,9 @@ The 5-second polling interval burns through Linear's rate limit during multiple 
 ---
 
 ## Resolved
+
+### Git push from worktree fails
+Resolved by the verified-commit path: the engine commits and pushes the verified tree itself (`packages/orchestrator/src/verified-commit.ts`), the agent never pushes. Every native PR since floor/agents#59 went through it.
 
 ### Provider routing fixed
 The orchestrator correctly routes all LLM calls through `getLLMAdapter(agent.llm.provider)`. The billing issue was `ANTHROPIC_API_KEY` in the Claude Code subprocess env, not a routing bug.

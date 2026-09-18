@@ -11,7 +11,7 @@ import { createGeminiAdapter } from '@floor-agents/gemini'
 import { createGitHubAdapter } from '@floor-agents/github'
 import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
-import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, freshState, historyOf, historyText, lastAttempt, verifyPreservedAttempt, verifyRefusal, verifyFailedReport, sign, ENGINE_SIGNATURE, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
+import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, freshState, historyOf, historyText, lastAttempt, verifyPreservedAttempt, verifyRefusal, reseatRefusal, verifyFailedReport, sign, ENGINE_SIGNATURE, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
 import { createDiscussionsAdapter } from '@floor-agents/github'
 import { createGateway } from '@floor-agents/gateway'
 import { mkdir, rename } from 'node:fs/promises'
@@ -46,6 +46,7 @@ Usage:
   floor-agents run --issue <id>         Implement one issue and exit (defaults to GitHub Issues)
   floor-agents run --issue <id> --retry Archive a failed attempt and run the issue again (its history is kept)
   floor-agents verify --issue <id>      Re-run the gate on a failed attempt's preserved tree and continue to the PR
+  floor-agents review --issue <id>      Seat the committee again on a pull request its last review left undecided
   floor-agents status --issue <id>      Show an issue's attempts, gate runs and reviews
   floor-agents [watch]                  Watch the configured task source (defaults to Linear)
   floor-agents --config <path>          Select a manifest (also CONFIG_PATH)
@@ -317,6 +318,34 @@ if (args.command === 'verify') {
       await task.addComment(issue.id, sign(verifyFailedReport(attempt.n, message, failing, key), ENGINE_SIGNATURE)).catch(() => {})
       await task.setLabel(issue.id, 'needs-human').catch(() => {})
     }
+    process.exit(1)
+  }
+}
+
+if (args.command === 'review') {
+  // Seat the committee again on a pull request its last review left undecided.
+  const issue = await task.getIssue(args.issue!)
+  if (!issue) { console.error(`Issue not found: ${args.issue}`); process.exit(1) }
+  const key = issue.key ?? issue.id
+  const recorded = await stateStore.get(issue.id)
+  const refusal = reseatRefusal(recorded)
+  if (refusal) { console.error(`Cannot review ${key}: ${refusal}`); process.exit(1) }
+  const agent = company.agents.find(a => a.id === recorded!.agentId)
+  if (!agent) { console.error(`Cannot review ${key}: agent "${recorded!.agentId}" is no longer in the manifest`); process.exit(1) }
+  try {
+    // The pipeline is entered at its review step: it checks that the pull request
+    // still carries the verified commit, seats the committee, and goes on from the
+    // verdict as any run does — a revision on a rejection, done on an approval.
+    const reviewing = { ...recorded!, step: 'reviewing' as const, updatedAt: new Date().toISOString() }
+    await stateStore.save(reviewing)
+    await executeTask(issue, agent, oneShotDeps(), reviewing)
+    const state = await stateStore.get(issue.id)
+    if (state?.step !== 'done') throw new Error(state?.error ?? `Task did not complete (${state?.step ?? 'no state'})`)
+    const last = state.reviews?.at(-1)
+    console.log(`Review of ${key}: ${last?.outcome ?? 'not recorded'} — ${state.prUrl}`)
+    process.exit(0)
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err))
     process.exit(1)
   }
 }

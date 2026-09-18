@@ -131,6 +131,26 @@ export function recordReview(state: ExecutionState, review: ReviewRecord): Execu
   return { ...state, reviews: [...(state.reviews ?? []), review] }
 }
 
+/**
+ * Why the committee cannot be seated again on this issue's pull request — or
+ * null when it can.
+ *
+ * A review that ends with no decision is not a verdict: a seat was out of quota,
+ * a bridge lost its port. The pull request is fine and unjudged, and the only
+ * way to have it judged used to be a whole new run. Seating the committee again
+ * is for that case only: a rejected change goes to a revision, an approved one
+ * is done, and neither is reopened by asking again.
+ */
+export function reseatRefusal(state: ExecutionState | null | undefined): string | null {
+  if (!state) return 'no run is recorded for it'
+  if (!state.prId) return 'its run opened no pull request'
+  if (state.step !== 'done') return `its run is ${state.step}, not done`
+  const last = state.reviews?.at(-1)
+  if (!last) return 'no review is recorded for it'
+  if (last.outcome !== 'no_decision') return `its last review ended with ${last.outcome}, not with no decision`
+  return null
+}
+
 /** What a retry keeps from the run it replaces. */
 export function historyOf(state: ExecutionState | null | undefined): Pick<ExecutionState, 'attempts' | 'reviews'> {
   return {

@@ -16,6 +16,11 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['run', '--retry'])).toThrow('Usage: floor-agents run --issue')
   })
 
+  test('review takes one issue', () => {
+    expect(parseArgs(['review', '--issue', 'FLO-96'])).toEqual({ command: 'review', config: undefined, issue: 'FLO-96' })
+    expect(() => parseArgs(['review'])).toThrow('Usage: floor-agents review --issue')
+  })
+
   test('verify takes one issue', () => {
     expect(parseArgs(['verify', '--issue', 'FLO-191'])).toEqual({ command: 'verify', config: undefined, issue: 'FLO-191' })
     expect(() => parseArgs(['verify'])).toThrow('Usage: floor-agents verify --issue')
@@ -24,7 +29,7 @@ describe('parseArgs', () => {
   test('status reads one issue', () => {
     expect(parseArgs(['status', '--issue', 'FLO-191'])).toEqual({ command: 'status', config: undefined, issue: 'FLO-191' })
     expect(() => parseArgs(['status'])).toThrow('Usage: floor-agents status --issue')
-    expect(() => parseArgs(['doctor', '--issue', 'FLO-1'])).toThrow('--issue is only supported with run, verify and status')
+    expect(() => parseArgs(['doctor', '--issue', 'FLO-1'])).toThrow('--issue is only supported with run, verify, review and status')
   })
 
   test('no command means watch', () => {

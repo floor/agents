@@ -14,10 +14,11 @@ import type { DiscussionsAdapter } from '@floor-agents/github'
 import type { Gateway } from '@floor-agents/gateway'
 import { sign, signComments, agentSignature, ENGINE_SIGNATURE } from './comment-signature.ts'
 import { costNote } from './cost-note.ts'
+import { extractVote, type Vote } from './vote.ts'
 
 // ── Types ────────────────────────────────────────────────────────
 
-export type Vote = 'approve' | 'reject' | 'abstain'
+export type { Vote } from './vote.ts'
 
 /**
  * How a committee member produced its vote.
@@ -85,13 +86,6 @@ export type CommitteePipelineDeps = {
 }
 
 // ── Vote extraction ──────────────────────────────────────────────
-
-function extractVote(response: string): Vote {
-  const upper = response.toUpperCase()
-  if (upper.includes('VOTE: APPROVE')) return 'approve'
-  if (upper.includes('VOTE: REJECT')) return 'reject'
-  return 'abstain'
-}
 
 function tallyVotes(votes: readonly CommitteeVote[]): 'approved' | 'rejected' | 'no_quorum' {
   const cast = votes.filter(v => v.vote !== 'abstain')

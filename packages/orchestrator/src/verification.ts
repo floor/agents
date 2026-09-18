@@ -48,6 +48,22 @@ export async function runProjectCommand(cwd: string, check: ProjectCommand): Pro
   }
 }
 
+/**
+ * How much of `path` the change wrote, in bytes.
+ *
+ * The size caps came from the API path, where an agent *outputs* whole files. A
+ * native agent edits in place: a one-line entry in a 104 KB changelog is not a
+ * 104 KB output, and summing whole files stopped finished work (vlist FLO-163,
+ * FLO-185). So the measure is the patch — for a new file that is its content, so
+ * a generated blob is still refused; a binary has no textual patch and counts
+ * as its blob.
+ */
+async function changedBytes(worktree: Worktree, baseSha: string, tree: string, path: string, blob: string | undefined): Promise<number> {
+  const numstat = await gitText(worktree.path, ['diff', '--numstat', '--no-renames', baseSha, tree, '--', path])
+  if (numstat.startsWith('-\t-\t')) return blob ? Number(await gitText(worktree.path, ['cat-file', '-s', blob])) : 0
+  return Buffer.byteLength(await gitText(worktree.path, ['diff', '--no-renames', '--no-color', baseSha, tree, '--', path]))
+}
+
 /** Validate cumulative changes, including deletions, modes and agent commits. */
 export async function validateWorktree(worktree: Worktree, baseSha: string, guardrails: GuardrailsConfig): Promise<void> {
   const tree = await snapshotWorktree(worktree)
@@ -59,12 +75,16 @@ export async function validateWorktree(worktree: Worktree, baseSha: string, guar
     const mode = entry.split(' ')[0]
     if (entry && mode !== '100644' && mode !== '100755') throw new Error(`Unsupported file mode for ${path}: ${mode}`)
     const object = entry.match(/^\d+ blob ([a-f0-9]+)\t/)
-    const size = object ? Number(await gitText(worktree.path, ['cat-file', '-s', object[1]!])) : 0
-    if (size > guardrails.maxFileSizeBytes) throw new Error(`Guardrail: ${path} exceeds maxFileSizeBytes`)
+    const size = await changedBytes(worktree, baseSha, tree, path, object?.[1])
+    if (size > guardrails.maxFileSizeBytes) {
+      throw new Error(`Guardrail: the change to ${path} is ${size} bytes, over maxFileSizeBytes (${guardrails.maxFileSizeBytes})`)
+    }
     total += size
     files.push({ path, content: '' })
   }
-  if (total > guardrails.maxTotalOutputBytes) throw new Error('Guardrail: changes exceed maxTotalOutputBytes')
+  if (total > guardrails.maxTotalOutputBytes) {
+    throw new Error(`Guardrail: the change is ${total} bytes across ${paths.length} files, over maxTotalOutputBytes (${guardrails.maxTotalOutputBytes})`)
+  }
   const violations = validateAgentOutput({ files, rawResponse: '', prDescription: '', parseErrors: [] }, guardrails)
   if (violations.length) throw new Error(`Guardrails failed:\n${violations.map(v => v.detail).join('\n')}`)
 }

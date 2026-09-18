@@ -209,3 +209,10 @@ costs:
 ```
 
 The committee orchestrator checks daily limits before starting each review and skips proposals when the budget is exhausted.
+
+## How a vote is read
+
+A member's vote is its **last** `VOTE:` marker outside code — `APPROVE`, or any of `REJECT`,
+`REQUEST_CHANGES`, `CHANGES REQUESTED`. A marker quoted in backticks or inside a fenced block is
+an example, not a vote: a review that quoted "`VOTE: APPROVE`" and ended with **VOTE: REJECT**
+was once recorded as an approval. No marker is an abstention.

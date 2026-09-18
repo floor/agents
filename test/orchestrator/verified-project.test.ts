@@ -84,6 +84,28 @@ test('failed engine checks preserve logs and never push', async () => {
   expect(await Bun.file(join(worktree.path, 'answer.txt')).exists()).toBe(true)
 })
 
+test('size guardrails measure the change, not the files it touches', async () => {
+  // A one-line entry in a changelog far over the per-file cap is a small change…
+  await Bun.write(join(root, 'CHANGELOG.md'), `# Changelog\n${'- an old entry that makes this file large\n'.repeat(6000)}`)
+  await gitText(root, ['add', '-A'])
+  await gitText(root, ['commit', '-m', 'a large changelog'])
+  await gitText(root, ['push', 'origin', `HEAD:refs/heads/${branch}`, '--force'])
+  const worktree = await createWorktree(branch, root)
+  const log = join(worktree.path, 'CHANGELOG.md')
+  expect((await Bun.file(log).text()).length).toBeGreaterThan(company.guardrails.maxFileSizeBytes)
+  await Bun.write(log, (await Bun.file(log).text()).replace('# Changelog\n', '# Changelog\n- a new entry\n'))
+  await validateWorktree(worktree, worktree.initialSha, company.guardrails)
+
+  // …and a new file over the cap is still refused, with the numbers in the message.
+  await Bun.write(join(worktree.path, 'generated.txt'), 'x'.repeat(company.guardrails.maxFileSizeBytes + 1))
+  await expect(validateWorktree(worktree, worktree.initialSha, company.guardrails)).rejects.toThrow(/generated\.txt is \d+ bytes, over maxFileSizeBytes/)
+  await rm(join(worktree.path, 'generated.txt'))
+
+  // The total is the sum of the changes.
+  const tight = { ...company.guardrails, maxTotalOutputBytes: 50 }
+  await expect(validateWorktree(worktree, worktree.initialSha, tight)).rejects.toThrow(/across 1 files, over maxTotalOutputBytes \(50\)/)
+})
+
 test('blocked deletions, binary size, and symlinks fail actual-diff guardrails', async () => {
   const worktree = await createWorktree(branch, root)
   await rm(join(worktree.path, '.env.secret'))

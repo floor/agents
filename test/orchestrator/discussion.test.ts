@@ -73,18 +73,42 @@ describe('discussionSection', () => {
     expect(section.indexOf('msg-5')).toBeLessThan(section.indexOf('msg-24'))
   })
 
-  test('drops the oldest kept comments to fit 8,000 characters', () => {
-    const body = 'x'.repeat(1_000)
-    const comments = Array.from({ length: 10 }, (_, i) => comment({
-      author: 'a',
-      body: `${i}-${body}`,
-      createdAt: new Date(Date.UTC(2026, 0, 1, 0, i)),
-    }))
+  test('drops the oldest kept comments to fit 16,000 characters, newest first in priority', () => {
+    const comments = Array.from({ length: 6 }, (_, i) =>
+      comment({ author: `u${i}`, body: `${i}:` + 'x'.repeat(3_500), createdAt: new Date(Date.UTC(2026, 8, 10 + i)) }))
     const section = discussionSection(comments)
-    expect(section.length).toBeLessThanOrEqual(8_000)
+    expect(section.length).toBeLessThanOrEqual(16_000)
+    expect(section).toContain('**u5**')
+    expect(section).not.toContain('**u0**')
     expect(section).toContain('earlier comments omitted')
-    expect(section).toContain(`9-${body}`)
-    expect(section).not.toContain(`0-${body}`)
+  })
+
+  test('one oversized comment is shortened, not dropped — it used to erase the whole discussion', () => {
+    // A coordinator hint carrying a 47,000-character diff (vlist FLO-163).
+    const hint = 'Hint: start from the preserved tree.\n' + 'd'.repeat(47_000) + '\nLeave package.json untouched.'
+    const section = discussionSection([comment({ author: 'coordinator', body: hint, createdAt: new Date('2026-09-18T10:00:00Z') })])
+    expect(section).toContain('Hint: start from the preserved tree.')
+    expect(section).toContain('Leave package.json untouched.')
+    expect(section).toMatch(/\(\d+ characters omitted — the full comment is on the issue\)/)
+    expect(section.length).toBeLessThan(5_000)
+  })
+
+  test('an old oversized comment and a new short one: the short one is intact', () => {
+    const section = discussionSection([
+      comment({ author: 'earlier', body: 'o'.repeat(50_000), createdAt: new Date('2026-09-17T00:00:00Z') }),
+      comment({ author: 'later', body: 'Use nav.reveal, not nav.navigate.', createdAt: new Date('2026-09-18T00:00:00Z') }),
+    ])
+    expect(section).toContain('Use nav.reveal, not nav.navigate.')
+    expect(section).toContain('**earlier**')
+    expect(section.indexOf('**earlier**')).toBeLessThan(section.indexOf('**later**'))
+  })
+
+  test('a discussion that exists never reads as empty, whatever its size', () => {
+    const section = discussionSection(Array.from({ length: 30 }, (_, i) =>
+      comment({ author: `u${i}`, body: 'y'.repeat(60_000), createdAt: new Date(Date.UTC(2026, 8, 1, i)) })))
+    expect(section).toContain('## Discussion')
+    expect(section).toContain('**u29**')
+    expect(section.length).toBeLessThanOrEqual(16_000)
   })
 
   test('progress comments do not count toward the cap or the omitted line', () => {

@@ -34,6 +34,7 @@ import { committeeConfigPath, parseMaxRounds, selectVoters, telegramSettings } f
 import { startBridges } from './lib/bridges.ts'
 import { reviewerSandbox, withDenyRead } from '@floor-agents/sandbox'
 import { privateSourceDenials } from '@floor-agents/core'
+import { extractVote } from '../packages/orchestrator/src/vote.ts'
 
 const expand = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
 
@@ -49,13 +50,6 @@ const TIMEOUT_MS = parseInt(process.env.EXTERNAL_TIMEOUT_MS ?? '900000', 10)
 const DRY_RUN = process.env.DRY_RUN === '1' || process.env.DRY_RUN === 'true'
 
 type Vote = 'approve' | 'reject' | 'abstain'
-
-function extractVote(text: string): Vote {
-  const upper = text.toUpperCase()
-  if (upper.includes('VOTE: APPROVE')) return 'approve'
-  if (upper.includes('VOTE: REJECT')) return 'reject'
-  return 'abstain'
-}
 
 // Strip ANSI escape codes — CLI stderr is colorized and must never reach a comment.
 function stripAnsi(s: string): string {

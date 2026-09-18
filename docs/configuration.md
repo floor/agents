@@ -136,8 +136,8 @@ Safety boundaries enforced before any code is committed.
 ```yaml
 guardrails:
   maxFilesPerTask: 20                # Max files per agent output
-  maxFileSizeBytes: 102400           # 100 KB per file
-  maxTotalOutputBytes: 512000        # 500 KB total
+  maxFileSizeBytes: 102400           # 100 KB written to any one file
+  maxTotalOutputBytes: 512000        # 500 KB written in total
   blockedPaths:                      # Glob patterns — never write to these
     - ".env*"
     - "*.pem"
@@ -153,6 +153,13 @@ guardrails:
     - claude-code
     - cursor
 ```
+
+**What the size caps measure.** On the native path (an agent CLI editing a worktree) the two
+size caps measure *the change*, not the files it touches: for each changed file, the byte size of
+its patch against the base — for a new file that is its content, so a generated blob is still
+refused, and a binary counts as its blob. A one-line entry in a 104 KB changelog is a few dozen
+bytes. On the API path, where an agent outputs whole files, they measure those files. The error
+names the file and both numbers.
 
 ### `tasks`
 
@@ -176,7 +183,10 @@ written only for a public GitHub issue in the same repository.
 Each turn, the implementer is given the issue's comments as a Discussion section: people's
 notes and the engine's own reports (a stop report, a retry hint). Progress comments signed by
 an implementer, reviewer or committee member are skipped, so the prompt is the conversation
-rather than the run talking to itself. A failure to read comments is logged and the turn
+rather than the run talking to itself. The section holds the most recent 20 comments and at
+most 16,000 characters: older comments are dropped first and counted, a comment over 4,000
+characters is shortened to its head and tail with a note, and the newest comment is never
+dropped — a hint is the last thing said. A failure to read comments is logged and the turn
 continues without them.
 
 ### `review`

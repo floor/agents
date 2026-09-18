@@ -158,15 +158,20 @@ agents:
 # it is kept in step with vlist and mtrl so a source added later is covered.
 
 guardrails:
-  maxFilesPerTask: 20
+  # A task that adds a workspace package touches its package, the runner, the
+  # sandbox, a bridge, doctor, docs and tests: FLO-165 was 24 files, stopped by
+  # the cap of 20 with nothing wrong in it. Forty covers a package-sized task.
+  maxFilesPerTask: 40
   maxFileSizeBytes: 102400
+  # bun.lock is not blocked here, unlike vlist and mtrl: a new workspace package
+  # must add its entry to the lockfile. The gate reinstalls with
+  # --frozen-lockfile on a clean export, and the coordinator reads the hunk.
   blockedPaths:
     - ".env*"
     - "*.pem"
     - "*.key"
     - ".github/workflows/*"
     - "package.json"
-    - "bun.lock"
     - ".gitignore"
   privateSourceProviders: [claude-code, lmstudio, cursor]
 

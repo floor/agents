@@ -25,6 +25,12 @@ export type Issue = {
   readonly url?: string
   /** The key a person uses for it, when it differs from the id (a Linear identifier such as FLO-25). */
   readonly key?: string
+  /** The task source's own name for where the issue stands ("In Review"); `status` is the engine's coarser reading of it. */
+  readonly stateName?: string
+  /** The milestone it is planned for, when the task source has milestones ("0.9.8"). */
+  readonly milestone?: string
+  /** 1 (urgent) to 4 (low); absent or 0 when the task source sets none. */
+  readonly priority?: number
   readonly createdAt: Date
   readonly updatedAt: Date
 }
@@ -48,6 +54,13 @@ export type IssueComment = {
 export type TaskAdapter = {
   watchIssues(filters?: { labels?: string[] }): AsyncIterable<IssueEvent>
   getIssue(issueId: string): Promise<Issue | null>
+  /**
+   * Every issue of the project that is not finished, whatever its labels: the
+   * project's to-do list as the task source holds it. Optional — a task source
+   * that cannot list is still a task source; the API then lists only the issues
+   * that have a run.
+   */
+  listOpenIssues?(): Promise<Issue[]>
   createIssue(data: CreateIssueData, parentId?: string): Promise<Issue>
   updateIssue(issueId: string, changes: UpdateIssueData): Promise<void>
   addComment(issueId: string, text: string): Promise<void>

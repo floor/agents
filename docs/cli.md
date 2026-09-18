@@ -19,6 +19,7 @@ floor-agents verify --issue 123
 | `run --issue <id> --retry` | Archive a failed attempt under `STATE_DIR/archive/`, drop the `needs-human` label, and run the issue again; refuses an attempt that is not failed. The new run starts over from the base but carries the issue's history: attempts and reviews keep their numbering |
 | `verify --issue <id>` | Take the last attempt's preserved tree forward without another agent turn: guardrails and the whole gate again, and on green the usual publication — commit, push, pull request, review. For stops that were not the code's fault (a guardrail since raised, a flaky check, a budget reset). Refuses when the run is not failed, when the attempt kept no tree, or when the branch has moved since the attempt began; a tree that fails again stays kept and the issue is told which check failed |
 | `review --issue <id>` | Seat the committee again on the issue's pull request, when its last review ended with **no decision** — a seat out of quota, a bridge that could not start. No agent turn, no gate: the pipeline is entered at its review step, checks that the pull request still carries the verified commit, and goes on from the verdict as any run does (a revision on a rejection, done on an approval). Also reopens a loop that stopped on a **blocker which stood through a revision**, once a person has settled the point in a comment on the issue. Otherwise it refuses: a run that is not done, no pull request, or a last review that reached a verdict — a verdict is not reopened by asking again |
+| `serve` | Serve the [Project API](./api.md) and nothing else: what a [control panel](./control-panel.md) reads. Takes no task, starts no agent, skips the project preflight. `watch` serves the same API beside its watchers, on the same port |
 | `status --issue <id>` | Print the issue's history: each implementer turn (agent, turn time, outcome, the gate step that failed and the end of what it printed, whether its tree is still on disk) and each review cycle with its votes |
 | `watch` or no command | Start the existing developer or committee watch loop |
 | `--help`, `-h` | Show usage |
@@ -41,6 +42,9 @@ Config discovery: `--config`, then `CONFIG_PATH`, then `.agents/agents.yaml`, th
 | `COMMITTEE_LABELS` | Comma-separated committee triggers; default `committee,agents` |
 | `GATEWAY_PORT` | External-agent gateway port; default `3100` |
 | `GATEWAY_TOKEN` | Optional gateway authentication token |
+| `API_PORT` | Port of the project API, on 127.0.0.1; default `3110` |
+| `API_TOKEN` | When set, the project API requires `Authorization: Bearer <token>` |
+| `LINEAR_PROJECT_ID` | The Linear project to read, **only** for a manifest that names none (`tasks.linear.project` wins) |
 | `FLOOR_AGENTS_MAX_RUNS` | How many tasks run at once on this machine, across all engine processes; default `2`, `0` for no limit. See [Machine slots](#machine-slots) |
 | `FLOOR_AGENTS_SLOT_PORT` | Base of the loopback ports used as slots; default `47600` |
 | `FLOOR_AGENTS_RESUME` | `off` makes a revision start a new agent session with the full brief instead of continuing the implementer's own; default is to continue |

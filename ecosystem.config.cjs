@@ -27,17 +27,36 @@ const common = {
   log_date_format: 'YYYY-MM-DD HH:mm:ss',
 }
 
-/** A watcher for one sibling project: `../<project>/.agents/agents.yaml`. */
-const watcher = (project, gatewayPort) => ({
+/** A watcher for one sibling project: `../<project>/.agents/agents.yaml`. It serves the project API too. */
+const watcher = (project, gatewayPort, apiPort) => ({
   ...common,
   name: `agents-${project}`,
   args: ['watch', '--config', resolve(__dirname, '..', project, '.agents', 'agents.yaml')],
   env: {
     STATE_DIR: resolve(__dirname, '..', project, '.agents', 'runs'),
     GATEWAY_PORT: String(gatewayPort),
+    API_PORT: String(apiPort),
   },
   error_file: `logs/${project}.error.log`,
   out_file: `logs/${project}.out.log`,
+})
+
+/**
+ * The project API alone, for a project whose watcher is not running: the control
+ * panel (Floor IO, /agents) reads it. It takes no task and starts no agent. It
+ * uses the same port as the project's watcher, so run one or the other.
+ *
+ * STATE_DIR is not set: it reads the runs where `run --issue` wrote them, which
+ * for runs started by hand from this folder is this folder's own state directory.
+ * Several projects may share it; each API lists only its own repository's runs.
+ */
+const api = (project, apiPort, manifest) => ({
+  ...common,
+  name: `agents-api-${project}`,
+  args: ['serve', '--config', manifest ?? resolve(__dirname, '..', project, '.agents', 'agents.yaml')],
+  env: { API_PORT: String(apiPort) },
+  error_file: `logs/api-${project}.error.log`,
+  out_file: `logs/api-${project}.out.log`,
 })
 
 module.exports = {
@@ -49,7 +68,10 @@ module.exports = {
       error_file: 'logs/error.log',
       out_file: 'logs/out.log',
     },
-    watcher('vlist', 3101),
-    watcher('mtrl', 3102),
+    watcher('vlist', 3101, 3111),
+    watcher('mtrl', 3102, 3112),
+    api('vlist', 3111),
+    api('mtrl', 3112),
+    api('agents', 3113, resolve(__dirname, '.agents', 'agents.yaml')),
   ],
 }

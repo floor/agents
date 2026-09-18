@@ -12,6 +12,8 @@ orchestrates agents, or embed the engine in your own Bun app.
 - [Configuration](./configuration.md) — YAML config reference, environment variables
 - [Agents & the Team](./agents.md) — agents are fully configurable; capabilities, modes, personas
 - [CLI](./cli.md) — the `floor-agents` binary: flags, env vars, modes, trigger tags
+- [Project API](./api.md) — what an engine process tells a control panel: the project, the team, the open issues, the recorded runs; read-only, `/api/v1`, one process per project
+- [Control Panel](./control-panel.md) — Floor IO's `/agents`: how it is wired to each project's engine, how to run it, what it shows, where it must not be served
 - [Scripts](./scripts.md) — committee runner + gateway bridges (`scripts/`) reference
 - [The Run Path](./run-path.md) — `run --issue` step by step: what each step writes, how it fails, what failing costs; the working map for polishing the engine
 - [The Polish Sprint](./polish-sprint.md) — the record since 2026-09-18: why product work stopped, every engine change and what found it, the measurements, the owner's direction (service, console, coordinator authority), the order of work, what is parked, and where knowledge lives
@@ -39,6 +41,7 @@ Each package has its own documentation:
 | `@floor-agents/context-builder` | Context assembly + prompts | [context-builder](./packages/context-builder.md) |
 | `@floor-agents/orchestrator` | Main loop + state machine | [orchestrator](./packages/orchestrator.md) |
 | `@floor-agents/gateway` | WebSocket server for external agents | [gateway](./gateway.md) |
+| `@floor-agents/api` | Read-only HTTP API of one project, for a control panel | [api](./api.md) |
 
 ## Guides
 

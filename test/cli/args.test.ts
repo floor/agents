@@ -16,6 +16,11 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['run', '--retry'])).toThrow('Usage: floor-agents run --issue')
   })
 
+  test('serve is the API alone: no issue', () => {
+    expect(parseArgs(['serve', '--config', 'a.yaml'])).toEqual({ command: 'serve', config: 'a.yaml', issue: undefined })
+    expect(() => parseArgs(['serve', '--issue', 'FLO-1'])).toThrow('--issue is only supported with')
+  })
+
   test('review takes one issue', () => {
     expect(parseArgs(['review', '--issue', 'FLO-96'])).toEqual({ command: 'review', config: undefined, issue: 'FLO-96' })
     expect(() => parseArgs(['review'])).toThrow('Usage: floor-agents review --issue')

@@ -11,9 +11,10 @@ import { createGeminiAdapter } from '@floor-agents/gemini'
 import { createGitHubAdapter } from '@floor-agents/github'
 import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
-import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, freshState, historyOf, historyText, lastAttempt, verifyPreservedAttempt, verifyRefusal, reseatRefusal, stopChildren, liveChildren, withSlot, verifyFailedReport, sign, ENGINE_SIGNATURE, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
+import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, freshState, historyOf, historyText, lastAttempt, verifyPreservedAttempt, verifyRefusal, reseatRefusal, stopChildren, liveChildren, withSlot, slotSettings, MAX_REVIEW_CYCLES, verifyFailedReport, sign, ENGINE_SIGNATURE, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
 import { createDiscussionsAdapter } from '@floor-agents/github'
 import { createGateway } from '@floor-agents/gateway'
+import { createApiServer, DEFAULT_API_PORT } from '@floor-agents/api'
 import { mkdir, rename } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -21,6 +22,7 @@ import { parseArgs } from './cli/args.ts'
 import { doctorProject, initProject } from './cli/project.ts'
 import { pipelinesFor, pipelinesLabel } from './cli/modes.ts'
 import { loadProjectEnv, projectEnvPath } from './cli/env.ts'
+import { linearScope } from './cli/linear-scope.ts'
 import { startExternalVoters } from '../scripts/lib/bridges.ts'
 
 // ── CLI flags (handle before any startup work) ───────────────────
@@ -47,6 +49,7 @@ Usage:
   floor-agents run --issue <id> --retry Archive a failed attempt and run the issue again (its history is kept)
   floor-agents verify --issue <id>      Re-run the gate on a failed attempt's preserved tree and continue to the PR
   floor-agents review --issue <id>      Seat the committee again on a pull request its last review left undecided
+  floor-agents serve                    Serve the project API only (what a control panel reads); watch serves it too
   floor-agents status --issue <id>      Show an issue's attempts, gate runs and reviews
   floor-agents [watch]                  Watch the configured task source (defaults to Linear)
   floor-agents --config <path>          Select a manifest (also CONFIG_PATH)
@@ -98,7 +101,8 @@ if (errors.length > 0) {
 // GitHub issues for a run and Linear for a watch, as before the manifest could say.
 const TASK_ADAPTER = company.tasks?.source ?? process.env.TASK_ADAPTER ?? (args.command === 'watch' ? 'linear' : 'github-issues')
 
-if (args.command === 'doctor' || args.command === 'run' || company.project.verification) {
+// `serve` only reads: it needs no preflight of commands it will never run.
+if (args.command !== 'serve' && (args.command === 'doctor' || args.command === 'run' || company.project.verification)) {
   const diagnostics = await doctorProject(company, TASK_ADAPTER)
   for (const d of diagnostics) console.log(`${d.ok ? 'PASS' : 'FAIL'} ${d.name}: ${d.detail}`)
   if (diagnostics.some(d => !d.ok)) process.exit(1)
@@ -199,8 +203,8 @@ const createTask = () => {
         linear: {
           apiKey: requireEnv('LINEAR_API_KEY'),
           teamId: company.tasks?.linear?.team ?? requireEnv('LINEAR_TEAM_ID'),
-          projectId: process.env.LINEAR_PROJECT_ID,
-          ...(company.tasks?.linear?.project ? { projectName: company.tasks.linear.project } : {}),
+          // The manifest's project, never the environment's when the manifest names one.
+          ...linearScope(company, process.env),
         },
       })
     case 'things':
@@ -302,6 +306,31 @@ async function shutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
 }
 process.on('SIGINT', () => { void shutdown('SIGINT') })
 process.on('SIGTERM', () => { void shutdown('SIGTERM') })
+
+// ── The project API ──────────────────────────────────────────────
+// What a control panel reads: the project, its team, its open issues and its
+// recorded runs. `serve` is this and nothing else; `watch` serves it beside its
+// watchers. The task source is asked through its own adapter instance, unwrapped:
+// the API posts nothing, so it needs no signature and no mirror.
+const startApi = (mode: 'serve' | 'watch') => {
+  const api = createApiServer({
+    company, stateStore, taskAdapter: createTask(), taskSource: TASK_ADAPTER,
+    triggerLabels: company.tasks?.labels ?? ['agent'],
+    mode, version: VERSION, maxRuns: slotSettings().max, maxReviewCycles: MAX_REVIEW_CYCLES,
+    port: parseInt(process.env.API_PORT ?? String(DEFAULT_API_PORT), 10),
+    ...(process.env.API_TOKEN ? { token: process.env.API_TOKEN } : {}),
+  })
+  api.start()
+  stopHooks.push(() => api.stop())
+  return api
+}
+
+if (args.command === 'serve') {
+  startApi('serve')
+  console.log(`[api] state: ${STATE_DIR}`)
+  // Nothing else to do: the process lives until it is stopped.
+  await new Promise(() => {})
+}
 
 if (args.command === 'verify') {
   // Take the last attempt's preserved tree forward without another agent turn.
@@ -476,5 +505,8 @@ console.log(`  providers: ${[...llmAdapters.keys()].join(', ')}`)
 console.log()
 
 stopHooks.push(() => gateway?.stop(), ...orchestrators.map(o => () => o.stop()))
+
+// A watching engine answers the control panel too.
+startApi('watch')
 
 await Promise.all(orchestrators.map(o => o.start()))

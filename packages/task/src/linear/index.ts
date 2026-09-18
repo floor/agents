@@ -6,6 +6,7 @@ import type {
 } from '@floor-agents/core'
 import {
   getIssuesByLabel,
+  getOpenIssues,
   getIssueById,
   createLinearIssue,
   updateLinearIssue,
@@ -27,6 +28,9 @@ function stateTypeToStatus(type: string): IssueStatus {
     case 'unstarted': return 'triage'
     case 'started': return 'in_progress'
     case 'completed': return 'done'
+    // Linear spells it with one l; the two-l spelling was never matched, so a
+    // cancelled issue read as backlog.
+    case 'canceled': return 'done'
     case 'cancelled': return 'done'
     default: return 'backlog'
   }
@@ -44,6 +48,9 @@ function linearToIssue(li: LinearIssue): Issue {
     status: stateTypeToStatus(li.state.type),
     labels: li.labels.nodes.map(l => l.name),
     parentId: li.parent?.id,
+    stateName: li.state.name,
+    ...(li.projectMilestone?.name ? { milestone: li.projectMilestone.name } : {}),
+    ...(li.priority ? { priority: li.priority } : {}),
     createdAt: new Date(li.createdAt),
     updatedAt: new Date(li.updatedAt),
   }
@@ -164,6 +171,10 @@ export function createLinearAdapter(adapterConfig: LinearAdapterConfig): TaskAda
     async getIssue(issueId) {
       const li = await getIssueById(config, issueId)
       return li ? linearToIssue(li) : null
+    },
+
+    async listOpenIssues() {
+      return (await getOpenIssues(config)).map(linearToIssue)
     },
 
     async createIssue(data, parentId) {

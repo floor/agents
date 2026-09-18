@@ -29,6 +29,13 @@
         "@floor-agents/sandbox": "workspace:*",
       },
     },
+    "packages/api": {
+      "name": "@floor-agents/api",
+      "version": "0.1.0",
+      "dependencies": {
+        "@floor-agents/core": "workspace:*",
+      },
+    },
     "packages/claude-code": {
       "name": "@floor-agents/claude-code",
       "version": "0.0.1",
@@ -119,6 +126,8 @@
     "@floor-agents/anthropic": ["@floor-agents/anthropic@workspace:packages/anthropic"],
 
     "@floor-agents/antigravity": ["@floor-agents/antigravity@workspace:packages/antigravity"],
+
+    "@floor-agents/api": ["@floor-agents/api@workspace:packages/api"],
 
     "@floor-agents/claude-code": ["@floor-agents/claude-code@workspace:packages/claude-code"],
 

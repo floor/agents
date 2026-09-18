@@ -19,7 +19,7 @@ import { buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
 import { buildAgyArgs, parseAgyResult } from '@floor-agents/antigravity'
 import { costNote, metaLine } from './cost-note.ts'
 import { AgentStopped, writtenSummary } from './stop-report.ts'
-import { closeAttempt, lastAttempt, openAttempt, outcomeOf, recordTurn, reopenAttempt } from './attempts.ts'
+import { closeAttempt, lastAttempt, openAttempt, outcomeOf, patchAttempt, recordTurn, reopenAttempt, sessionToContinue } from './attempts.ts'
 
 /** Providers whose CLI runs as a full agent on a worktree, rather than through tool calls. */
 export const NATIVE_PROVIDERS = new Set(['claude-code', 'cursor', 'antigravity'])
@@ -78,6 +78,8 @@ type NativeRunResult = {
   readonly durationMs: number
   readonly exitCode: number
   readonly subtype?: string
+  /** The CLI's session id, when its envelope gives one. */
+  readonly sessionId?: string
 }
 
 /**
@@ -94,9 +96,11 @@ export function nativeAgentArgv(opts: {
   readonly model?: string
   readonly maxTurns?: number
   readonly timeoutMs?: number
+  /** Continue this session of the same CLI instead of opening a new one. */
+  readonly resume?: string
 }): string[] {
   if (opts.provider === 'cursor') {
-    return ['cursor-agent', ...buildCursorArgs({
+    return ['cursor-agent', ...(opts.resume ? ['--resume', opts.resume] : []), ...buildCursorArgs({
       prompt: opts.prompt,
       ...(opts.model ? { model: opts.model } : {}),
       // An implementer runs the project's tests, which needs the shell.
@@ -115,6 +119,7 @@ export function nativeAgentArgv(opts: {
     const tools = opts.role === 'implement' ? 'Read,Edit,Write,Bash,Glob,Grep' : 'Read,Glob,Grep,Bash'
     return [
       'claude', '-p', opts.prompt,
+      ...(opts.resume ? ['--resume', opts.resume] : []),
       '--output-format', 'json',
       '--max-turns', String(opts.maxTurns ?? DEFAULT_MAX_TURNS[opts.role]),
       '--allowedTools', tools,
@@ -130,6 +135,7 @@ export type NativeParsed = {
   readonly isError: boolean
   /** The envelope's own reason, when it gives one: `error_max_turns`, `success`. */
   readonly subtype?: string
+  readonly sessionId?: string
 }
 
 function agyTimeout(status: string, text: string): boolean {
@@ -141,7 +147,7 @@ export function parseNativeResult(provider: string, stdout: string, stderr: stri
   if (provider === 'cursor') {
     try {
       const r = parseCursorResult(stdout)
-      return { resultText: r.result ?? '', cost: 0, isError: r.is_error, ...(r.subtype ? { subtype: r.subtype } : {}) }
+      return { resultText: r.result ?? '', cost: 0, isError: r.is_error, ...(r.subtype ? { subtype: r.subtype } : {}), ...(r.session_id ? { sessionId: r.session_id } : {}) }
     } catch {
       return { resultText: stdout || stderr, cost: 0, isError: true }
     }
@@ -166,6 +172,7 @@ export function parseNativeResult(provider: string, stdout: string, stderr: stri
     return {
       resultText: data.result ?? '', cost: data.total_cost_usd ?? 0, isError: Boolean(data.is_error),
       ...(typeof data.subtype === 'string' ? { subtype: data.subtype } : {}),
+      ...(typeof data.session_id === 'string' ? { sessionId: data.session_id } : {}),
     }
   } catch {
     return { resultText: stdout || stderr, cost: 0, isError: false }
@@ -220,6 +227,8 @@ export async function spawnNativeAgent(opts: {
   readonly denyRead?: readonly string[]
   /** For tests: the home directory the sandbox protects. */
   readonly home?: string
+  /** Continue this session of the CLI instead of opening a new one. */
+  readonly resume?: string
 }): Promise<NativeRunResult> {
   // API keys are stripped so each CLI authenticates through its logged-in
   // subscription session instead of metered per-token API billing.
@@ -256,19 +265,49 @@ export async function spawnNativeAgent(opts: {
   clearTimeout(timeout)
 
   const durationMs = Math.round(performance.now() - start)
-  const { resultText, cost, isError, subtype } = parseNativeResult(opts.provider, stdout, stderr)
+  const { resultText, cost, isError, subtype, sessionId } = parseNativeResult(opts.provider, stdout, stderr)
 
   // A clean exit that reports an error is still a failure.
   return {
     resultText, cost, durationMs, exitCode: timedOut ? 143 : exitCode === 0 && isError ? 1 : exitCode,
     ...(subtype ? { subtype } : {}),
+    ...(sessionId ? { sessionId } : {}),
   }
+}
+
+/** Under this, a failed resumed turn that wrote nothing is a session that would not open, not work that went wrong. */
+const RESUME_FAILS_FAST_MS = 120_000
+
+async function untouched(worktree: Worktree): Promise<boolean> {
+  const dirty = await gitText(worktree.path, ['status', '--porcelain'])
+  const head = await gitText(worktree.path, ['rev-parse', 'HEAD'])
+  return !dirty && head === worktree.initialSha
+}
+
+/**
+ * What a continued session is told. It already knows the task; what is new is
+ * where it stands and what the reviewers said.
+ */
+export function continuationPrompt(reviewComments: string, discussion: string | undefined, verification: NonNullable<ProjectConfig['verification']>): string {
+  return [
+    'You are continuing your own work on this task. Your change was published as a pull request and reviewed.',
+    '',
+    'Your earlier checkout is gone. The current directory is a fresh checkout of your branch: it contains everything you published, at a new path. Use paths relative to it; absolute paths from earlier in this session no longer exist.',
+    '',
+    '## Review Feedback (address these)',
+    reviewComments,
+    ...(discussion ? ['', 'The discussion on the issue, as it stands now — read it again, a decision or a hint may be new:', '', discussion] : []),
+    '',
+    'Address every blocker with the smallest change that resolves it. Do not rewrite what was not criticised: each line you add is a line the reviewers read again. If a blocker asks for something you cannot decide (a policy, a public contract), say so in your reply instead of guessing.',
+    '',
+    ...nativeImplementerInstructions(verification),
+  ].join('\n')
 }
 
 // ── Dev agent: native execution on worktree ─────────────────────
 
 export type NativeAgentDeps = {
-  readonly runAgent?: (prompt: string, cwd: string, model?: string) => Promise<NativeRunResult>
+  readonly runAgent?: (prompt: string, cwd: string, model?: string, turn?: { readonly resume?: string }) => Promise<NativeRunResult>
   readonly contextBuilder: ContextBuilder
   readonly stateStore: StateStore
   readonly costTracker: CostTracker
@@ -398,54 +437,69 @@ export async function runNativeDevAgent(
 
   try {
     await prepareWorkspace(worktree, deps.project)
-    // Native: omit API-path tool names from the role template and Output
-    // section. agy's file tool is itself called write_file (mtrl FLO-102).
-    const ctx = await contextBuilder.build({
-      agent,
-      issue,
-      project: deps.project,
-      reviewComments,
-      ref: worktree.initialSha,
-      native: true,
-    })
-
-    const promptParts = [
-      ctx.systemPrompt,
-      '',
-      '## Task',
-      `**${issue.title}**`,
-      issue.body || '',
-    ]
-
-    if (deps.discussion) {
-      promptParts.push('', deps.discussion)
+    // The whole brief: role, the contents of the selected files, the task, the
+    // discussion, the feedback. Built only when it is used.
+    const fullPrompt = async (): Promise<string> => {
+      // Native: omit API-path tool names from the role template and Output
+      // section. agy's file tool is itself called write_file (mtrl FLO-102).
+      const ctx = await contextBuilder.build({
+        agent,
+        issue,
+        project: deps.project,
+        reviewComments,
+        ref: worktree.initialSha,
+        native: true,
+      })
+      return [
+        ctx.systemPrompt,
+        '',
+        '## Task',
+        `**${issue.title}**`,
+        issue.body || '',
+        ...(deps.discussion ? ['', deps.discussion] : []),
+        ...(reviewComments ? ['', '## Review Feedback (address these)', reviewComments] : []),
+        '',
+        ...nativeImplementerInstructions(deps.project.verification!),
+      ].join('\n')
     }
 
-    if (reviewComments) {
-      promptParts.push('', '## Review Feedback (address these)', reviewComments)
-    }
-
-    promptParts.push(
-      '',
-      ...nativeImplementerInstructions(deps.project.verification!),
-    )
+    // A revision is the implementer's own previous turn, continued: the CLI
+    // resumes its session, which already holds the brief, the files it read and
+    // what it wrote, and is told only what changed — the reviewers' blockers.
+    // Measured on the benchmarks of 2026-09-18: a revision started from nothing,
+    // with the full brief, cost 5 to 10 minutes; most of it was reading again.
+    const continued = isRevision && process.env.FLOOR_AGENTS_RESUME !== 'off' ? sessionToContinue(state, agent.id) : undefined
 
     // The implementer may write its worktree and that worktree's own git metadata
     // (index, locks) — nothing else, including the main checkout it came from.
     const gitDir = await gitText(worktree.path, ['rev-parse', '--absolute-git-dir'])
     const budget = { timeoutMs: turnTimeoutMs(agent.timeoutMs), maxTurns: agent.maxTurns ?? DEFAULT_MAX_TURNS.implement }
-    const runAgent = deps.runAgent ?? ((prompt: string, cwd: string, model?: string) => spawnNativeAgent({
+    const runAgent = deps.runAgent ?? ((prompt: string, cwd: string, model?: string, turn?: { readonly resume?: string }) => spawnNativeAgent({
       provider: agent.llm.provider, role: 'implement', prompt, cwd, writable: [cwd, gitDir], denyRead: deps.denyRead ?? [],
-      timeoutMs: budget.timeoutMs, maxTurns: budget.maxTurns, ...(model ? { model } : {}),
+      timeoutMs: budget.timeoutMs, maxTurns: budget.maxTurns, ...(model ? { model } : {}), ...(turn?.resume ? { resume: turn.resume } : {}),
     }))
-    const result = await runAgent(
-      promptParts.join('\n'),
-      worktree.path,
-      agent.llm.model,
-    )
+    let result: NativeRunResult
+    if (continued) {
+      console.log(`[${agent.id}] continuing the session of attempt ${continued.n}`)
+      state = patchAttempt(state, { continues: continued.n })
+      result = await runAgent(continuationPrompt(reviewComments!, deps.discussion, deps.project.verification!), worktree.path, agent.llm.model, { resume: continued.sessionId })
+      costTracker.recordCost(issue.id, result.cost)
+      // A session that cannot be resumed (expired, another machine, a CLI update)
+      // fails at once and writes nothing: the revision is then run the long way.
+      // A turn that worked for minutes, or wrote something, is a real turn.
+      if (result.exitCode !== 0 && result.durationMs < RESUME_FAILS_FAST_MS && await untouched(worktree)) {
+        console.log(`[${agent.id}] the session could not be continued (${excerpt(result.resultText, 200) || `exit ${result.exitCode}`}) — starting a new one with the full brief`)
+        const { continues: _continues, ...rest } = lastAttempt(state)!
+        state = { ...state, attempts: [...state.attempts!.slice(0, -1), rest] }
+        result = await runAgent(await fullPrompt(), worktree.path, agent.llm.model)
+        costTracker.recordCost(issue.id, result.cost)
+      }
+    } else {
+      result = await runAgent(await fullPrompt(), worktree.path, agent.llm.model)
+      costTracker.recordCost(issue.id, result.cost)
+    }
 
-    costTracker.recordCost(issue.id, result.cost)
-    state = recordTurn(state, { durationMs: result.durationMs, exitCode: result.exitCode, reply: result.resultText, ...(result.subtype ? { subtype: result.subtype } : {}) })
+    state = recordTurn(state, { durationMs: result.durationMs, exitCode: result.exitCode, reply: result.resultText, ...(result.subtype ? { subtype: result.subtype } : {}), ...(result.sessionId ? { sessionId: result.sessionId } : {}) })
     state = await advanceState(state, 'calling_llm', { costUsd: costTracker.getTaskCost(issue.id), llmResponse: result.resultText }, stateStore)
     console.log(`[${agent.id}] native agent: ${formatDuration(result.durationMs)}, $${result.cost.toFixed(4)}, exit ${result.exitCode}`)
 

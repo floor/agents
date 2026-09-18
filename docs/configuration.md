@@ -116,6 +116,18 @@ across several plugins with tests does not. A turn that reaches the limit is kil
 fails; its worktree is preserved. `FLOOR_AGENTS_AGENT_TIMEOUT_MS` overrides it for one run,
 without editing the manifest.
 
+**A revision continues the implementer's session.** When the committee asks for changes, the
+native implementer is not started again from nothing: the CLI resumes the session of its own
+published turn (`cursor-agent --resume`, `claude --resume`) and is told only what is new — where
+it stands (a fresh checkout of its branch, at a new path), the reviewers' blockers, and the
+discussion as it is now. The session already holds the brief, the files it read and what it
+wrote. A session that cannot be resumed (expired, another machine, a CLI that ties sessions to a
+folder) fails within seconds having written nothing; the revision is then run once with the full
+brief, as before. A resumed turn that worked and failed is an ordinary failed turn. `agy` has no
+resume and always gets the full brief. `FLOOR_AGENTS_RESUME=off` disables it for one run. The
+attempt records the session (`sessionId`) and which attempt it continued (`continues`);
+`status --issue` shows `revision (continues 1)`.
+
 **`maxTurns`** caps the tool calls in one turn, for a CLI that counts them (`claude-code`: every
 Read, Edit or Bash call is a turn). The defaults fit the role — 300 implementing, 60 reviewing —
 and a turn that reaches the cap ends with no result, reported as such. The time budget already

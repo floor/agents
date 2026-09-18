@@ -41,6 +41,7 @@ Config discovery: `--config`, then `CONFIG_PATH`, then `.agents/agents.yaml`, th
 | `COMMITTEE_LABELS` | Comma-separated committee triggers; default `committee,agents` |
 | `GATEWAY_PORT` | External-agent gateway port; default `3100` |
 | `GATEWAY_TOKEN` | Optional gateway authentication token |
+| `FLOOR_AGENTS_RESUME` | `off` makes a revision start a new agent session with the full brief instead of continuing the implementer's own; default is to continue |
 
 `run` supports development configs. It requires `project.root`, `project.baseBranch`,
 and nonempty `project.verification`. It runs preflight first and exits nonzero if

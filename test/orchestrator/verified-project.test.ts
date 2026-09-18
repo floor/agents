@@ -149,7 +149,9 @@ describe('verify: a preserved tree taken forward without another turn', () => {
 
     expect(verifyRefusal(stopped, p => p === kept)).toBeNull()
     const comments: string[] = []
-    const verified = await verifyPreservedAttempt(issue, nativeAgent, stopped, verifyDeps(store, comments))
+    // verify runs in a new process, with a cost tracker that starts at zero: what the turns cost must survive it.
+    const verified = await verifyPreservedAttempt(issue, nativeAgent, { ...stopped, costUsd: 1.5 }, verifyDeps(store, comments))
+    expect(verified.costUsd).toBe(1.5)
     expect(verified.step).toBe('creating_pr')
     expect(verified.error).toBeNull()
     expect(verified.attempts).toHaveLength(1)

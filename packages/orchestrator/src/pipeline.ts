@@ -22,7 +22,8 @@ import { requireVerification } from './verified-commit.ts'
 import { gitText } from './worktree.ts'
 import { buildPrBody } from './pr-body.ts'
 import { costNote, metaLine } from './cost-note.ts'
-import { signComments, agentSignature } from './comment-signature.ts'
+import { AgentStopped, stopReport, crashReport } from './stop-report.ts'
+import { signComments, agentSignature, sign, ENGINE_SIGNATURE } from './comment-signature.ts'
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -207,6 +208,9 @@ export async function executeTask(
       console.log(`[orchestrator] creating branch: ${branchName}`)
       await gitAdapter.createBranch(company.project.repo, branchName, company.project.baseBranch)
       state = await advanceState(state, 'building_context', { branchName }, stateStore)
+      // The board shows the pickup as it happens: a person watching the queue
+      // sees the issue move, not only the comments under it.
+      await unsigned.setStatus(issue.id, 'in_progress')
 
       await taskAdapter.addComment(issue.id, [
         `🤖 **${devAgent.name}** is picking up this task`,
@@ -386,9 +390,13 @@ export async function executeTask(
     const message = err instanceof Error ? err.message : String(err)
     console.error(`[orchestrator] error: ${message}`)
     state = await advanceState(await stateStore.get(issue.id) ?? state, 'failed', { error: message }, stateStore)
+    // The engine is the one reporting — the agent that stopped did not write
+    // this — so the comment carries the engine's signature, not the agent's.
+    const key = issue.key ?? issue.id
+    const report = err instanceof AgentStopped ? stopReport(devAgent.name, err.message, err.written, key) : crashReport(message, key)
     try {
-      await taskAdapter.addComment(issue.id, ['❌ **Agent error**', '', '```', message, '```', '', 'This issue has been labeled `needs-human`.'].join('\n'))
-      await taskAdapter.setLabel(issue.id, 'needs-human')
+      await unsigned.addComment(issue.id, sign(report, ENGINE_SIGNATURE))
+      await unsigned.setLabel(issue.id, 'needs-human')
     } catch {}
   }
 }

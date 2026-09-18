@@ -32,3 +32,4 @@ export { signComments, sign, agentSignature, agentLabel, ENGINE_SIGNATURE } from
 export type { AgentRole, Signable } from './comment-signature.ts'
 export { runDeliberation } from './deliberation.ts'
 export type { DeliberationAgent, DeliberationContext, Turn, ConvergenceResult, DeliberationOptions, DeliberationResult } from './deliberation.ts'
+export { AgentStopped, stopReport, crashReport, writtenSummary } from './stop-report.ts'

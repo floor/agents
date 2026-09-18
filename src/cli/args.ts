@@ -2,6 +2,8 @@ export type CliArgs = {
   readonly command: 'watch' | 'init' | 'doctor' | 'run' | 'help' | 'version'
   readonly config?: string
   readonly issue?: string
+  /** `run` only: archive a failed attempt and start over. */
+  readonly retry?: boolean
 }
 
 export function parseArgs(argv: readonly string[]): CliArgs {
@@ -11,6 +13,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
   let hasCommand = false
   let config: string | undefined
   let issue: string | undefined
+  let retry = false
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
     if (['watch', 'init', 'doctor', 'run'].includes(arg) && !hasCommand) {
@@ -21,9 +24,12 @@ export function parseArgs(argv: readonly string[]): CliArgs {
       if (!value || value.startsWith('-')) throw new Error(`${arg} requires a value`)
       if (arg === '--config') config = value
       else issue = value
+    } else if (arg === '--retry') {
+      retry = true
     } else throw new Error(`Unknown argument: ${arg}`)
   }
   if (command === 'run' && !issue) throw new Error('Usage: floor-agents run --issue <id> [--config <path>]')
   if (issue && command !== 'run') throw new Error('--issue is only supported with run')
-  return { command, config, issue }
+  if (retry && command !== 'run') throw new Error('--retry is only supported with run')
+  return { command, config, issue, ...(retry ? { retry } : {}) }
 }

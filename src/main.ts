@@ -13,7 +13,7 @@ import { createContextBuilder } from '@floor-agents/context-builder'
 import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
 import { createDiscussionsAdapter } from '@floor-agents/github'
 import { createGateway } from '@floor-agents/gateway'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, rename } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { parseArgs } from './cli/args.ts'
 import { doctorProject, initProject } from './cli/project.ts'
@@ -41,6 +41,7 @@ Usage:
   floor-agents init                     Create .agents/agents.yaml and a developer prompt
   floor-agents doctor                   Check project setup without running an agent
   floor-agents run --issue <id>         Implement one issue and exit (defaults to GitHub Issues)
+  floor-agents run --issue <id> --retry Archive a failed attempt and run the issue again
   floor-agents [watch]                  Watch the configured task source (defaults to Linear)
   floor-agents --config <path>          Select a manifest (also CONFIG_PATH)
   floor-agents --version
@@ -249,7 +250,17 @@ if (args.command === 'run') {
     const issue = await task.getIssue(args.issue!)
     if (!issue) throw new Error(`Issue not found: ${args.issue}`)
     const existing = await stateStore.get(issue.id)
-    if (existing) throw new Error(`Issue already has execution state (${existing.step}). Inspect ${STATE_DIR} before retrying; run never overwrites an existing attempt.`)
+    if (existing && args.retry) {
+      // A failed attempt is kept, out of the way, and the issue is a task again.
+      if (existing.step !== 'failed') throw new Error(`Issue is ${existing.step}, not failed; --retry only restarts a failed attempt.`)
+      const archive = join(STATE_DIR, 'archive')
+      await mkdir(archive, { recursive: true })
+      await rename(join(STATE_DIR, `${issue.id}.json`), join(archive, `${issue.id}.${existing.updatedAt.replace(/[:.]/g, '-')}.json`))
+      await task.removeLabel(issue.id, 'needs-human')
+      console.log(`[orchestrator] retrying ${args.issue}: failed attempt archived (${existing.error ?? 'no error recorded'})`)
+    } else if (existing) {
+      throw new Error(`Issue already has execution state (${existing.step}). Pass --retry to archive a failed attempt and start over; run never overwrites one.`)
+    }
     const agent = resolveAgent(issue, company.agents)
     if (!agent) throw new Error('No internal agent with write_code capability is configured')
     await executeTask(issue, agent, {

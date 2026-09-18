@@ -29,7 +29,23 @@ import {
 import type { CostTracker } from './cost-tracker.ts'
 import { sign, agentSignature, ENGINE_SIGNATURE } from './comment-signature.ts'
 import { costNote } from './cost-note.ts'
+import type { LLMAdapterResolver } from './llm-runner.ts'
+import { DEFAULT_MAX_TURNS } from './native-runner.ts'
 import { MAX_REVIEW_CYCLES } from './review.ts'
+
+/**
+ * PR review is the only caller that gets the native reviewer's turn cap.
+ * The shared `claude-code` adapter stays at 10 for the PM and RFC reviews.
+ */
+function withClaudeReviewTurns(getAdapter: LLMAdapterResolver): LLMAdapterResolver {
+  return (provider) => {
+    const adapter = getAdapter(provider)
+    if (provider !== 'claude-code') return adapter
+    return {
+      run: (config) => adapter.run({ ...config, maxTurns: DEFAULT_MAX_TURNS.review }),
+    }
+  }
+}
 
 export type CommitteePrOutcome = 'approve' | 'request_changes' | 'no_decision'
 
@@ -95,8 +111,14 @@ export function tallyCommitteePrReview(votes: readonly CommitteeVote[]): {
     return { outcome: 'no_decision', reviewComments: '' }
   }
 
+  // Blockers come from completed reviews only. A failed execution's error
+  // text can contain `BLOCKER:` (a capped Claude turn, a stack trace) and
+  // must not turn a majority approval into request_changes. An abstention
+  // that is a finished review whose `VOTE:` marker was not recognised still
+  // contributes its blockers.
   const blockerNotes: string[] = []
   for (const v of votes) {
+    if (v.execution === 'failed') continue
     const blockers = memberBlockers(v)
     if (!blockers.length) continue
     blockerNotes.push(`**${v.agentName}:**\n${blockers.join('\n')}`)
@@ -137,6 +159,7 @@ function prReviewUserMessage(issue: Issue, diff: string): string {
     '```',
     '\n---',
     '\nReview this diff against the current codebase. You are a reviewer: report findings, do not edit.',
+    'The diff is the object of review: read the repository only where the diff needs context.',
     'List every must-fix issue as **BLOCKER: <what must change>**.',
     'Provide your technical analysis and explicitly state **VOTE: APPROVE** or **VOTE: REJECT**.',
     'Approve only if the change is correct and you found no blockers.',
@@ -165,7 +188,7 @@ export async function executeCommitteePrReview(
     contextBuilder: deps.contextBuilder,
     stateStore,
     costTracker,
-    getAdapter: deps.getAdapter,
+    getAdapter: withClaudeReviewTurns(deps.getAdapter),
     ...(deps.gateway ? { gateway: deps.gateway } : {}),
     ...(deps.externalAgents ? { externalAgents: deps.externalAgents } : {}),
     ...(deps.externalVoters ? { externalVoters: deps.externalVoters } : {}),

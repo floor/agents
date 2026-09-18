@@ -19,8 +19,8 @@ import {
   type CommitteePrReviewDeps,
   type ExternalVoterHost,
 } from '@floor-agents/orchestrator'
-import { createCostTracker } from '@floor-agents/orchestrator'
-import type { CommitteeVote } from '@floor-agents/orchestrator'
+import { createCostTracker, DEFAULT_MAX_TURNS } from '@floor-agents/orchestrator'
+import type { CommitteeVote, CommitteeVoteExecution } from '@floor-agents/orchestrator'
 import type { Gateway, TaskResult } from '@floor-agents/gateway'
 
 // ── Mock helpers ────────────────────────────────────────────────────
@@ -215,7 +215,7 @@ function makeCompany(agents: AgentDefinition[], review?: CompanyConfig['review']
 function makeDeps(
   agents: AgentDefinition[],
   responses: Record<string, string | Error>,
-  extras?: { seen?: string[] },
+  extras?: { seen?: string[]; getAdapter?: CommitteePrReviewDeps['getAdapter'] },
 ): CommitteePrReviewDeps & { task: ReturnType<typeof mockTaskAdapter>; git: ReturnType<typeof mockGitAdapter>; store: StateStore } {
   const task = mockTaskAdapter()
   const git = mockGitAdapter()
@@ -227,7 +227,7 @@ function makeDeps(
     contextBuilder: mockContextBuilder(),
     stateStore: store,
     costTracker: createCostTracker(),
-    getAdapter: () => llmByProvider(responses, extras?.seen),
+    getAdapter: extras?.getAdapter ?? (() => llmByProvider(responses, extras?.seen)),
     task,
     git,
     store,
@@ -236,8 +236,22 @@ function makeDeps(
 
 const four = () => [makeVoter('claude'), makeVoter('codex'), makeVoter('grok'), makeVoter('gemini')]
 
-function vote(agentId: string, agentName: string, v: CommitteeVote['vote'], response: string): CommitteeVote {
-  return { agentId, agentName, vote: v, summary: response.slice(0, 500), response, costUsd: 0 }
+function vote(
+  agentId: string,
+  agentName: string,
+  v: CommitteeVote['vote'],
+  response: string,
+  execution?: CommitteeVoteExecution,
+): CommitteeVote {
+  return {
+    agentId,
+    agentName,
+    vote: v,
+    summary: response.slice(0, 500),
+    response,
+    costUsd: 0,
+    execution: execution ?? (v === 'abstain' ? 'failed' : 'answered'),
+  }
 }
 
 // ── Default: when the committee reviews a PR ────────────────────────
@@ -292,6 +306,40 @@ describe('tallyCommitteePrReview', () => {
     expect(tallyCommitteePrReview(votes).outcome).toBe('approve')
   })
 
+  test('an abstention whose text contains VOTE: APPROVE is not an answer', () => {
+    const votes = [
+      vote('claude', 'Claude', 'abstain', 'Claude Code error (error_max_turns): Looks good.\nVOTE: APPROVE'),
+      vote('codex', 'Codex', 'approve', 'VOTE: APPROVE'),
+      vote('grok', 'Grok', 'abstain', 'Error: timed out'),
+      vote('gemini', 'Gemini', 'abstain', 'Error: timed out'),
+    ]
+    expect(tallyCommitteePrReview(votes).outcome).toBe('no_decision')
+  })
+
+  test('a failed abstention whose text contains BLOCKER: does not turn a majority approval into request_changes', () => {
+    const votes = [
+      vote('claude', 'Claude', 'abstain', 'Claude Code error (error_max_turns): BLOCKER: sandbox write\nVOTE: APPROVE', 'failed'),
+      vote('codex', 'Codex', 'approve', 'VOTE: APPROVE'),
+      vote('grok', 'Grok', 'approve', 'VOTE: APPROVE'),
+      vote('gemini', 'Gemini', 'approve', 'VOTE: APPROVE'),
+    ]
+    const result = tallyCommitteePrReview(votes)
+    expect(result.outcome).toBe('approve')
+    expect(result.reviewComments).not.toContain('sandbox write')
+  })
+
+  test('an answered abstention (no vote marker) whose text contains BLOCKER: still requests changes', () => {
+    const votes = [
+      vote('claude', 'Claude', 'abstain', 'The sandbox write is wrong.\nBLOCKER: do not write outside the worktree', 'answered'),
+      vote('codex', 'Codex', 'approve', 'VOTE: APPROVE'),
+      vote('grok', 'Grok', 'approve', 'VOTE: APPROVE'),
+      vote('gemini', 'Gemini', 'approve', 'VOTE: APPROVE'),
+    ]
+    const result = tallyCommitteePrReview(votes)
+    expect(result.outcome).toBe('request_changes')
+    expect(result.reviewComments).toContain('do not write outside the worktree')
+  })
+
   test('three abstentions → no_decision', () => {
     const votes = [
       vote('claude', 'Claude', 'approve', 'VOTE: APPROVE'),
@@ -322,6 +370,7 @@ describe('executeCommitteePrReview', () => {
     expect(next.step).toBe('updating_issue')
     expect(deps.git.diffs).toEqual(['1'])
     expect(seen.some(s => s.includes('diff --git a/src/widget.ts'))).toBe(true)
+    expect(seen.some(s => s.includes('read the repository only where the diff needs context'))).toBe(true)
     expect(deps.git.prComments.length).toBe(5)
     expect(deps.git.prComments.filter(c => c.includes('**Agent:**')).length).toBe(5)
     expect(deps.git.prComments.at(-1)).toContain('APPROVED')
@@ -360,6 +409,95 @@ describe('executeCommitteePrReview', () => {
     expect(next.reviewVerdict?.decision).toBe('approve')
     expect(next.step).toBe('updating_issue')
     expect(deps.git.prComments.some(c => c.includes('ABSTAIN') && c.includes('gateway timed out'))).toBe(true)
+  })
+
+  test('a capped Claude turn that contains VOTE: APPROVE abstains rather than approving', async () => {
+    const agents = four()
+    const deps = makeDeps(agents, {
+      claude: new Error('Claude Code error (error_max_turns): Looks correct.\nVOTE: APPROVE'),
+      codex: 'VOTE: APPROVE',
+      grok: 'VOTE: APPROVE',
+      gemini: 'VOTE: APPROVE',
+    })
+
+    const next = await executeCommitteePrReview(makeIssue(), makeState(), deps)
+
+    expect(next.reviewVerdict?.decision).toBe('approve')
+    const claudeComment = deps.git.prComments.find(c => c.includes('## Claude Review'))
+    expect(claudeComment).toContain('**Vote:** ABSTAIN')
+    expect(claudeComment).toContain('error_max_turns')
+    expect(deps.git.prComments.at(-1)).toContain('| Claude | **ABSTAIN** |')
+  })
+
+  test('a completed review without a vote marker still registers its blockers', async () => {
+    const agents = four()
+    const deps = makeDeps(agents, {
+      claude: 'I have concerns.\nBLOCKER: missing empty-input test',
+      codex: 'VOTE: APPROVE',
+      grok: 'VOTE: APPROVE',
+      gemini: 'VOTE: APPROVE',
+    })
+
+    const next = await executeCommitteePrReview(makeIssue(), makeState(), deps)
+
+    expect(next.reviewVerdict?.decision).toBe('request_changes')
+    expect(next.reviewVerdict?.comments).toContain('missing empty-input test')
+    const claudeComment = deps.git.prComments.find(c => c.includes('## Claude Review'))
+    expect(claudeComment).toContain('**Vote:** ABSTAIN')
+    expect(deps.git.prComments.at(-1)).toContain('CHANGES REQUESTED')
+    expect(deps.git.prComments.at(-1)).toContain('missing empty-input test')
+  })
+
+  test('a Claude Code PR review gets the native review turn cap; other providers keep their call unset', async () => {
+    const seen: Record<string, number | undefined> = {}
+    const agents = [
+      makeVoter('claude', 'claude-code'),
+      makeVoter('codex'),
+      makeVoter('grok'),
+      makeVoter('gemini'),
+    ]
+    const responses = {
+      'claude-code': 'VOTE: APPROVE',
+      codex: 'VOTE: APPROVE',
+      grok: 'VOTE: APPROVE',
+      gemini: 'VOTE: APPROVE',
+    }
+    const inner = llmByProvider(responses)
+    const deps = makeDeps(agents, responses, {
+      getAdapter: (provider: string) => ({
+        async run(config: LLMConfig) {
+          seen[provider] = config.maxTurns
+          return inner.run(config)
+        },
+      }),
+    })
+
+    const next = await executeCommitteePrReview(makeIssue(), makeState(), deps)
+
+    expect(next.reviewVerdict?.decision).toBe('approve')
+    expect(Object.keys(seen).sort()).toEqual(['claude-code', 'codex', 'gemini', 'grok'])
+    expect(seen['claude-code']).toBe(DEFAULT_MAX_TURNS.review)
+    expect(DEFAULT_MAX_TURNS.review).toBe(60)
+    expect(seen['codex']).toBeUndefined()
+    expect(seen['grok']).toBeUndefined()
+    expect(seen['gemini']).toBeUndefined()
+  })
+
+  test('a capped Claude turn that contains BLOCKER: does not request changes when others approve', async () => {
+    const agents = four()
+    const deps = makeDeps(agents, {
+      claude: new Error('Claude Code error (error_max_turns): BLOCKER: sandbox write\nVOTE: APPROVE'),
+      codex: 'VOTE: APPROVE',
+      grok: 'VOTE: APPROVE',
+      gemini: 'VOTE: APPROVE',
+    })
+
+    const next = await executeCommitteePrReview(makeIssue(), makeState(), deps)
+
+    expect(next.reviewVerdict?.decision).toBe('approve')
+    expect(next.reviewVerdict?.comments).not.toContain('sandbox write')
+    expect(deps.git.prComments.at(-1)).toContain('APPROVED')
+    expect(deps.git.prComments.at(-1)).not.toContain('sandbox write')
   })
 
   test('three abstentions → in_review, no verdict', async () => {

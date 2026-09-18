@@ -83,6 +83,8 @@ External agents do **not** require their `llm.provider` API key: `src/main.ts` c
 
 `collectCommitteeVotes` (RFC review and committee PR review) takes an optional `externalVoters` host. When present, it starts a gateway if none is running, spawns each external voter's CLI bridge for the duration of the vote, and stops them afterwards. A bridge that cannot start abstains immediately. Issue-comment polling runs only for members with `voteByComment: true`. `src/main.ts` wires this for both `run --issue` and `watch`.
 
+Committee PR review is the only path that raises a Claude Code member's turn cap to `DEFAULT_MAX_TURNS.review` (60), per call, so the PM and RFC reviews keep the adapter default of 10. Each `CommitteeVote` carries an `execution` of `answered` or `failed`: a failed execution (timeout, adapter error, bridge failure) abstains and its `BLOCKER:` text is ignored; a completed review whose `VOTE:` marker was not recognised also abstains, but its blockers still count.
+
 ## Execution State Machine
 
 Each task progresses through 10 steps. State is saved between each step for crash recovery.

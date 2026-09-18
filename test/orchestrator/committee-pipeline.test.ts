@@ -180,6 +180,32 @@ describe('vote extraction', () => {
     expect(result.votes.every(v => v.vote === 'approve')).toBe(true)
   })
 
+  test('an RFC review does not pass the native review turn cap', async () => {
+    const seen: Array<number | undefined> = []
+    const llm: LLMAdapter = {
+      async run(config: LLMConfig): Promise<LLMResponse> {
+        seen.push(config.maxTurns)
+        return {
+          content: 'Looks solid. VOTE: APPROVE',
+          toolCalls: [],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 500, outputTokens: 200, cost: 0.005 },
+          provider: 'claude-code',
+          model: 'test',
+          durationMs: 50,
+        }
+      },
+    }
+    const deps = makeDeps('', { getAdapter: () => llm })
+    const agents = [makeAgent('claude', 'claude-code')]
+
+    const result = await executeCommitteeReview(makeIssue(), agents, deps)
+
+    expect(result.outcome).toBe('approved')
+    expect(seen.length).toBe(1)
+    expect(seen[0]).toBeUndefined()
+  })
+
   test('all reject → rejected', async () => {
     const deps = makeDeps('Major issues remain. VOTE: REJECT')
     const agents = [makeAgent('claude'), makeAgent('gemini'), makeAgent('gpt')]
@@ -285,6 +311,7 @@ describe('vote extraction', () => {
     const result = await executeCommitteeReview(makeIssue(), agents, deps)
 
     expect(result.votes[0]!.vote).toBe('abstain')
+    expect(result.votes[0]!.execution).toBe('answered')
     expect(result.outcome).toBe('no_quorum')
   })
 
@@ -391,6 +418,7 @@ describe('error handling', () => {
     const result = await executeCommitteeReview(makeIssue(), agents, deps)
 
     expect(result.votes[0]!.vote).toBe('abstain')
+    expect(result.votes[0]!.execution).toBe('failed')
     expect(result.votes[0]!.summary).toContain('API rate limited')
     expect(result.outcome).toBe('no_quorum')
   })

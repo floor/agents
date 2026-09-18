@@ -14,20 +14,85 @@ export type ClaudeCodeAdapterConfig = {
   readonly sandbox?: SandboxSpec
 }
 
+/**
+ * Generic default for one `claude -p` turn. Committee PR review passes the
+ * native reviewer's cap (`DEFAULT_MAX_TURNS.review`, 60) per call so a
+ * member that starts reading the repository does not die here with no final
+ * text. The adapter itself stays at 10: a PM or RFC caller does not inherit
+ * the reviewer's budget.
+ */
 const DEFAULT_MAX_TURNS = 10
 const TIMEOUT_MS = 600_000 // 10 min — Claude Code can take a while
 
-type ClaudeCodeResult = {
-  type: string
-  subtype: string
-  is_error: boolean
-  duration_ms: number
-  result: string
-  total_cost_usd: number
-  usage: {
-    input_tokens: number
-    output_tokens: number
+export type ClaudeCodeResult = {
+  type?: string
+  subtype?: string
+  is_error?: boolean
+  duration_ms?: number
+  result?: string
+  total_cost_usd?: number
+  usage?: {
+    input_tokens?: number
+    output_tokens?: number
   }
+}
+
+/**
+ * The argv for one `claude -p` turn. Pure, so the turn cap is testable without
+ * spawning anything — the same reason `buildCursorArgs` splits construction out.
+ */
+export function buildClaudeCodeArgs(opts: {
+  readonly prompt: string
+  readonly maxTurns?: number
+  readonly model?: string
+  readonly allowedTools?: readonly string[]
+}): string[] {
+  const args = [
+    'claude',
+    '-p', opts.prompt,
+    '--output-format', 'json',
+    '--max-turns', String(opts.maxTurns ?? DEFAULT_MAX_TURNS),
+  ]
+  if (opts.model) args.push('--model', opts.model)
+  if (opts.allowedTools?.length) args.push('--allowedTools', opts.allowedTools.join(','))
+  return args
+}
+
+/** Last characters of `result` kept in a thrown error — GitHub rejects PR comments over ~64 KiB (HTTP 422). */
+const ERROR_RESULT_TAIL = 2_000
+/** Last characters of stderr that travel with the error so the abstention comment has a trace. */
+const ERROR_STDERR_TAIL = 500
+
+/**
+ * The message a committee abstention shows. `subtype` is the envelope's own
+ * reason (`error_max_turns`, `error_during_execution`); without it the
+ * comment used to read `Unknown error`. `result` is capped so a long partial
+ * turn cannot 422 the PR comment; stderr's last 500 characters travel with
+ * it so the trace is on the PR.
+ */
+export function formatClaudeCodeError(
+  data: Pick<ClaudeCodeResult, 'subtype' | 'result'>,
+  stderr: string,
+): string {
+  const subtype = data.subtype ? ` (${data.subtype})` : ''
+  const result = (data.result || 'Unknown error').slice(-ERROR_RESULT_TAIL)
+  const tail = stderr.trim().slice(-ERROR_STDERR_TAIL)
+  return tail
+    ? `Claude Code error${subtype}: ${result}\n${tail}`
+    : `Claude Code error${subtype}: ${result}`
+}
+
+/**
+ * What one envelope becomes. `is_error` always fails — including
+ * `error_max_turns` that still produced text. A truncated `VOTE: APPROVE`
+ * must not count as a completed review; the thrown message carries
+ * `subtype`, `result`, and stderr so the committee comment can say why.
+ */
+export function interpretClaudeCodeTurn(data: ClaudeCodeResult, stderr: string): string {
+  if (data.is_error) {
+    throw new Error(formatClaudeCodeError(data, stderr))
+  }
+  return data.result ?? ''
 }
 
 export function createClaudeCodeAdapter(config: ClaudeCodeAdapterConfig = {}): LLMAdapter {
@@ -58,7 +123,7 @@ export function createClaudeCodeAdapter(config: ClaudeCodeAdapterConfig = {}): L
           tool_calls: llmConfig.tools.map(t => ({
             name: t.name,
             input: Object.fromEntries(
-              Object.entries((t.inputSchema as any).properties ?? {}).map(([k]) => [k, `<${k}>`])
+              Object.entries((t.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}).map(([k]) => [k, `<${k}>`])
             ),
           })),
         }, null, 2))
@@ -67,21 +132,12 @@ export function createClaudeCodeAdapter(config: ClaudeCodeAdapterConfig = {}): L
 
       const prompt = parts.join('\n')
 
-      // Build claude CLI args
-      const args = [
-        'claude',
-        '-p', prompt,
-        '--output-format', 'json',
-        '--max-turns', String(config.maxTurns ?? DEFAULT_MAX_TURNS),
-      ]
-
-      if (config.model) {
-        args.push('--model', config.model)
-      }
-
-      if (config.allowedTools?.length) {
-        args.push('--allowedTools', config.allowedTools.join(','))
-      }
+      const args = buildClaudeCodeArgs({
+        prompt,
+        maxTurns: llmConfig.maxTurns ?? config.maxTurns,
+        ...(config.model ? { model: config.model } : {}),
+        ...(config.allowedTools ? { allowedTools: config.allowedTools } : {}),
+      })
 
       // Strip API keys from env so Claude Code uses the Max plan subscription,
       // not the Anthropic API. If ANTHROPIC_API_KEY is present, Claude Code
@@ -119,11 +175,7 @@ export function createClaudeCodeAdapter(config: ClaudeCodeAdapterConfig = {}): L
         throw new Error(`Claude Code returned invalid JSON: ${stdout.slice(0, 500)}`)
       }
 
-      if (data.is_error) {
-        throw new Error(`Claude Code error: ${data.result ?? 'Unknown error'}`)
-      }
-
-      const resultText = data.result ?? ''
+      const resultText = interpretClaudeCodeTurn(data, stderr)
 
       // Extract tool calls from the response if tools were defined
       const toolCalls: ToolCall[] = []

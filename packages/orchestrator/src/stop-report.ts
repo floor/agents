@@ -45,3 +45,15 @@ export function crashReport(message: string, issueKey: string): string {
     `Labeled \`needs-human\` until it is retried: \`floor-agents run --issue ${issueKey} --retry\`.`,
   ].join('\n')
 }
+
+/** What the issue is told when `verify` takes an attempt up again and its tree still does not pass. */
+export function verifyFailedReport(attemptNumber: number, message: string, failing: { readonly name: string; readonly tail?: string } | undefined, issueKey: string): string {
+  return [
+    `🔁 **Attempt ${attemptNumber} verified again — not published**`,
+    '',
+    message.split('\n')[0]!,
+    ...(failing?.tail ? ['', `The end of what \`${failing.name}\` printed:`, '```', failing.tail.split('\n').slice(-30).join('\n'), '```'] : []),
+    '',
+    `The tree is still kept. Fix what stopped it and run \`floor-agents verify --issue ${issueKey}\` again, or start over with \`floor-agents run --issue ${issueKey} --retry\`.`,
+  ].join('\n')
+}

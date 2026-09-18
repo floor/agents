@@ -11,7 +11,7 @@ import { createGeminiAdapter } from '@floor-agents/gemini'
 import { createGitHubAdapter } from '@floor-agents/github'
 import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
-import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, freshState, historyOf, historyText, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
+import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, freshState, historyOf, historyText, lastAttempt, verifyPreservedAttempt, verifyRefusal, verifyFailedReport, sign, ENGINE_SIGNATURE, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
 import { createDiscussionsAdapter } from '@floor-agents/github'
 import { createGateway } from '@floor-agents/gateway'
 import { mkdir, rename } from 'node:fs/promises'
@@ -45,6 +45,7 @@ Usage:
   floor-agents doctor                   Check project setup without running an agent
   floor-agents run --issue <id>         Implement one issue and exit (defaults to GitHub Issues)
   floor-agents run --issue <id> --retry Archive a failed attempt and run the issue again (its history is kept)
+  floor-agents verify --issue <id>      Re-run the gate on a failed attempt's preserved tree and continue to the PR
   floor-agents status --issue <id>      Show an issue's attempts, gate runs and reviews
   floor-agents [watch]                  Watch the configured task source (defaults to Linear)
   floor-agents --config <path>          Select a manifest (also CONFIG_PATH)
@@ -265,6 +266,61 @@ const externalVoterOpts = {
   manifest: company,
 }
 
+/** What `run` and `verify` hand the pipeline: one issue, then exit. */
+const oneShotDeps = (): Parameters<typeof executeTask>[2] => ({
+  company, taskAdapter: task, gitAdapter: github, contextBuilder, stateStore, costTracker,
+  getAdapter: provider => {
+    const adapter = llmAdapters.get(provider)
+    if (!adapter) throw new Error(`No adapter for ${provider}`)
+    return adapter
+  },
+  findReviewer: () => company.agents.find(a => a.capabilities.includes('review_pr') && !a.external),
+  // A one-shot command never starts the long-lived watch gateway. The host
+  // stands one up for the PR review (if any external voter needs a bridge) and
+  // stops it with the bridges when the votes are in.
+  externalVoters: { start: agents => startExternalVoters(agents, externalVoterOpts) },
+})
+
+if (args.command === 'verify') {
+  // Take the last attempt's preserved tree forward without another agent turn.
+  const issue = await task.getIssue(args.issue!)
+  if (!issue) { console.error(`Issue not found: ${args.issue}`); process.exit(1) }
+  const key = issue.key ?? issue.id
+  const recorded = await stateStore.get(issue.id)
+  const refusal = verifyRefusal(recorded, existsSync)
+  if (refusal) { console.error(`Cannot verify ${key}: ${refusal}`); process.exit(1) }
+  const agent = company.agents.find(a => a.id === recorded!.agentId)
+  if (!agent) { console.error(`Cannot verify ${key}: agent "${recorded!.agentId}" is no longer in the manifest`); process.exit(1) }
+  try {
+    await task.removeLabel(issue.id, 'needs-human')
+    const verified = await verifyPreservedAttempt(issue, agent, recorded!, {
+      contextBuilder, stateStore, costTracker, project: company.project, guardrails: company.guardrails,
+      // The engine took the tree forward, not the agent: its words carry the engine's signature.
+      addComment: (id, text) => task.addComment(id, sign(text, ENGINE_SIGNATURE)),
+      setLabel: (id, label) => task.setLabel(id, label),
+    })
+    // Published: the rest is the ordinary path — pull request, review, done.
+    await executeTask(issue, agent, oneShotDeps(), verified)
+    const state = await stateStore.get(issue.id)
+    if (state?.step !== 'done') throw new Error(state?.error ?? `Task did not complete (${state?.step ?? 'no state'})`)
+    console.log(`Ready for human review: ${state.prUrl}\nExecution state: ${STATE_DIR}`)
+    process.exit(0)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error(message)
+    const after = await stateStore.get(issue.id)
+    const attempt = after ? lastAttempt(after) : undefined
+    // A tree that was taken up and failed again is reported; a run that got past
+    // publication reported its own failure on the way.
+    if (attempt && attempt.outcome !== 'published') {
+      const failing = attempt.gates.at(-1)?.checks.find(c => c.exitCode !== 0 || c.timedOut)
+      await task.addComment(issue.id, sign(verifyFailedReport(attempt.n, message, failing, key), ENGINE_SIGNATURE)).catch(() => {})
+      await task.setLabel(issue.id, 'needs-human').catch(() => {})
+    }
+    process.exit(1)
+  }
+}
+
 if (args.command === 'status') {
   // The history of one issue's runs: attempts, their gates, the reviews.
   const issue = await task.getIssue(args.issue!)
@@ -294,19 +350,7 @@ if (args.command === 'run') {
     }
     const agent = resolveAgent(issue, company.agents)
     if (!agent) throw new Error('No internal agent with write_code capability is configured')
-    await executeTask(issue, agent, {
-      company, taskAdapter: task, gitAdapter: github, contextBuilder, stateStore, costTracker,
-      getAdapter: provider => {
-        const adapter = llmAdapters.get(provider)
-        if (!adapter) throw new Error(`No adapter for ${provider}`)
-        return adapter
-      },
-      findReviewer: () => company.agents.find(a => a.capabilities.includes('review_pr') && !a.external),
-      // `run` never starts the long-lived watch gateway. The host stands one
-      // up for the PR review (if any external voter needs a bridge) and stops
-      // it with the bridges when the votes are in.
-      externalVoters: { start: agents => startExternalVoters(agents, externalVoterOpts) },
-    }, freshState(issue.id, agent.id, args.retry ? historyOf(existing) : {}))
+    await executeTask(issue, agent, oneShotDeps(), freshState(issue.id, agent.id, args.retry ? historyOf(existing) : {}))
     const state = await stateStore.get(issue.id)
     if (state?.step !== 'done') throw new Error(state?.error ?? `Task did not complete (${state?.step ?? 'no state'})`)
     console.log(`Ready for human review: ${state.prUrl}\nExecution state: ${STATE_DIR}`)

@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, mkdir, rename, rm, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { AgentDefinition, CompanyConfig, ExecutionState, GitAdapter, Issue, LLMAdapter, ProjectConfig, TaskAdapter } from '@floor-agents/core'
 import { loadCompanyConfig } from '@floor-agents/core'
-import { createStateStore, createCostTracker, executeTask, freshState, historyOf, runNativeDevAgent } from '@floor-agents/orchestrator'
+import { createStateStore, createCostTracker, executeTask, freshState, historyOf, runNativeDevAgent, verifyFailedReport, verifyPreservedAttempt, verifyRefusal } from '@floor-agents/orchestrator'
 import { createContextBuilder } from '@floor-agents/context-builder'
 import { commitWorktree, createWorktree, gitText } from '../../packages/orchestrator/src/worktree.ts'
 import { validateWorktree, verifyWorktree, runProjectCommand } from '../../packages/orchestrator/src/verification.ts'
@@ -114,6 +114,95 @@ test('a run records its attempt, and a retry adds a second one to the same histo
   expect(done.attempts!.map(a => [a.n, a.outcome])).toEqual([[1, 'gate-failed'], [2, 'published']])
   expect(done.attempts![1]!.worktreePath).toBeUndefined()
   expect(done.attempts![1]!.commitSha).toBe(done.commitSha!)
+})
+
+describe('verify: a preserved tree taken forward without another turn', () => {
+  const nativeAgent: AgentDefinition = { ...agent, llm: { ...agent.llm, provider: 'cursor' } }
+  const pipelineDeps = (store: ReturnType<typeof createStateStore>, answer: string, guardrails = company.guardrails) => {
+    const { task, git } = adapters('42')
+    return {
+      company: { ...company, guardrails }, taskAdapter: task, gitAdapter: git, stateStore: store, costTracker: createCostTracker(),
+      contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+      getAdapter: () => { throw new Error('unused') }, findReviewer: () => undefined,
+      runAgent: async (_prompt: string, cwd: string) => {
+        await Bun.write(join(cwd, 'answer.txt'), answer)
+        return { resultText: `wrote ${answer}`, cost: 0, durationMs: 1_000, exitCode: 0 }
+      },
+    }
+  }
+  const verifyDeps = (store: ReturnType<typeof createStateStore>, comments: string[], guardrails = company.guardrails) => ({
+    contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+    stateStore: store, costTracker: createCostTracker(), project, guardrails,
+    addComment: async (_id: string, text: string) => { comments.push(text) }, setLabel: async () => {},
+  })
+
+  test('a tree stopped by a guardrail is published once the guardrail is raised — the agent does not run again', async () => {
+    const store = createStateStore(join(dir, 'state'))
+    const strict = { ...company.guardrails, blockedPaths: [...company.guardrails.blockedPaths, 'answer.txt'] }
+    let turns = 0
+    const deps = pipelineDeps(store, '42', strict)
+    await executeTask(issue, nativeAgent, { ...deps, runAgent: async (p: string, cwd: string) => { turns++; return deps.runAgent(p, cwd) } })
+    const stopped = (await store.get(issue.id))!
+    expect(stopped.step).toBe('failed')
+    expect(stopped.attempts![0]).toMatchObject({ outcome: 'guardrail', gates: [] })
+    const kept = stopped.attempts![0]!.worktreePath!
+
+    expect(verifyRefusal(stopped, p => p === kept)).toBeNull()
+    const comments: string[] = []
+    // verify runs in a new process, with a cost tracker that starts at zero: what the turns cost must survive it.
+    const verified = await verifyPreservedAttempt(issue, nativeAgent, { ...stopped, costUsd: 1.5 }, verifyDeps(store, comments))
+    expect(verified.costUsd).toBe(1.5)
+    expect(verified.step).toBe('creating_pr')
+    expect(verified.error).toBeNull()
+    expect(verified.attempts).toHaveLength(1)
+    expect(verified.attempts![0]).toMatchObject({ n: 1, outcome: 'published', commitSha: verified.commitSha! })
+    expect(verified.attempts![0]!.gates.map(g => g.passed)).toEqual([true])
+    expect(verified.attempts![0]!.worktreePath).toBeUndefined()
+    expect(await Bun.file(join(kept, 'answer.txt')).exists()).toBe(false)
+    // The run names its own branch (agent/<issue>-<title>), not the fixture's.
+    expect(await gitText(remote, ['rev-parse', `refs/heads/${verified.branchName}`])).toBe(verified.commitSha!)
+    expect(comments[0]).toContain('Attempt 1** re-verified and published, without another turn')
+
+    // The rest is the ordinary path, from the pull request on.
+    await executeTask(issue, nativeAgent, pipelineDeps(store, 'unused'), verified)
+    expect((await store.get(issue.id))!.step).toBe('done')
+    expect(turns).toBe(1)
+  })
+
+  test('a tree that still fails stays kept: a second gate run on the same attempt, the run failed again', async () => {
+    const store = createStateStore(join(dir, 'state'))
+    await executeTask(issue, nativeAgent, pipelineDeps(store, '41'))
+    const failed = (await store.get(issue.id))!
+    await expect(verifyPreservedAttempt(issue, nativeAgent, failed, verifyDeps(store, []))).rejects.toThrow('Verification failed: Answer check')
+    const after = (await store.get(issue.id))!
+    expect(after.step).toBe('failed')
+    expect(after.attempts![0]!.outcome).toBe('gate-failed')
+    expect(after.attempts![0]!.gates.map(g => g.passed)).toEqual([false, false])
+    expect(await Bun.file(join(after.attempts![0]!.worktreePath!, 'answer.txt')).text()).toBe('41')
+    expect(verifyFailedReport(1, after.error!, after.attempts![0]!.gates.at(-1)!.checks[0], 'FLO-1')).toContain('floor-agents verify --issue FLO-1')
+  })
+
+  test('a branch that moved since the attempt began makes its tree stale: refused, the record untouched', async () => {
+    const store = createStateStore(join(dir, 'state'))
+    await executeTask(issue, nativeAgent, pipelineDeps(store, '41'))
+    const failed = (await store.get(issue.id))!
+    await Bun.write(join(root, 'other.txt'), 'someone else')
+    await gitText(root, ['add', '-A'])
+    await gitText(root, ['commit', '-m', 'the branch moves'])
+    await gitText(root, ['push', 'origin', `HEAD:refs/heads/${failed.branchName}`])
+    await expect(verifyPreservedAttempt(issue, nativeAgent, failed, verifyDeps(store, []))).rejects.toThrow(/branch moved since attempt 1 began/)
+    expect((await store.get(issue.id))!.attempts![0]!.gates).toHaveLength(1)
+  })
+
+  test('what cannot be verified says why', () => {
+    const base = { ...state(), step: 'failed' as const }
+    expect(verifyRefusal(null, () => true)).toContain('no run is recorded')
+    expect(verifyRefusal({ ...base, step: 'done' }, () => true)).toContain('not failed')
+    expect(verifyRefusal(base, () => true)).toContain('predates the attempt record')
+    const kept = openAttempt(base, { kind: 'implement', agentId: 'developer', model: 'm', baseSha: 'b', initialSha: 'i', worktreePath: '/gone' })
+    expect(verifyRefusal(kept, () => false)).toContain("tree is gone")
+    expect(verifyRefusal(kept, () => true)).toBeNull()
+  })
 })
 
 test('a failed gate and a published tree are both in the history', async () => {

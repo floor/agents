@@ -9,7 +9,7 @@ import type {
   GuardrailsConfig,
 } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
-import { createWorktree, gitText, snapshotWorktree, removeWorktree } from './worktree.ts'
+import { createWorktree, gitText, snapshotWorktree, removeWorktree, type Worktree } from './worktree.ts'
 import { requireVerification, prepareWorkspace, verifyAndCommit, resolveBaseSha } from './verified-commit.ts'
 import { verificationSummary } from './verification.ts'
 import type { CostTracker } from './cost-tracker.ts'
@@ -18,7 +18,7 @@ import { buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
 import { buildAgyArgs, parseAgyResult } from '@floor-agents/antigravity'
 import { costNote, metaLine } from './cost-note.ts'
 import { AgentStopped, writtenSummary } from './stop-report.ts'
-import { closeAttempt, openAttempt, outcomeOf, recordTurn } from './attempts.ts'
+import { closeAttempt, lastAttempt, openAttempt, outcomeOf, recordTurn, reopenAttempt } from './attempts.ts'
 
 /** Providers whose CLI runs as a full agent on a worktree, rather than through tool calls. */
 export const NATIVE_PROVIDERS = new Set(['claude-code', 'cursor', 'antigravity'])
@@ -281,6 +281,85 @@ export type NativeAgentDeps = {
   readonly discussion?: string
 }
 
+/**
+ * Guardrails, gate, commit, push — then the attempt is published and the cursor
+ * moves to `creating_pr`. One path for a tree an agent just finished and for a
+ * preserved tree taken up again by `verify`, so the two cannot drift apart.
+ */
+async function publishTree(
+  worktree: Worktree, issue: Issue, agent: AgentDefinition, state: ExecutionState, deps: NativeAgentDeps,
+  note: { readonly headline: string; readonly meta?: string },
+): Promise<ExecutionState> {
+  state = await verifyAndCommit(
+    worktree, deps.project, deps.guardrails, state, deps.stateStore,
+    `${issue.title}\n\nAutomated by Floor Agents (${agent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`,
+  )
+  const diffText = await gitText(worktree.path, ['diff', state.baseSha!, state.commitSha!, '--stat'])
+  await deps.addComment(issue.id, [
+    note.headline,
+    '```',
+    diffText,
+    '```',
+    ...(note.meta ? [`> ${note.meta}`] : []),
+    verificationSummary(state.verification!),
+  ].join('\n'))
+  state = closeAttempt(state, 'published', { commitSha: state.commitSha! })
+  // `verify` runs in a new process whose tracker starts at zero: never let it lower what the turns cost.
+  return advanceState(state, 'creating_pr', { costUsd: Math.max(state.costUsd, deps.costTracker.getTaskCost(issue.id)) }, deps.stateStore)
+}
+
+/** Why a preserved attempt cannot be verified, or `null` when it can. */
+export function verifyRefusal(state: ExecutionState | null, exists: (path: string) => boolean): string | null {
+  if (!state) return 'no run is recorded for this issue'
+  if (state.step !== 'failed') return `the run is ${state.step}, not failed — there is nothing to take up again`
+  const attempt = lastAttempt(state)
+  if (!attempt) return 'the run recorded no attempt (it predates the attempt record); use --retry'
+  if (attempt.outcome === 'published') return `attempt ${attempt.n} was published already`
+  if (!attempt.worktreePath || !attempt.initialSha) return `attempt ${attempt.n} kept no tree; use --retry`
+  if (!exists(attempt.worktreePath)) return `attempt ${attempt.n}'s tree is gone (${attempt.worktreePath}); use --retry`
+  if (!state.branchName) return 'the run has no branch'
+  return null
+}
+
+/**
+ * Take the last attempt's preserved tree forward without another agent turn:
+ * guardrails and the whole gate again, and on green the same publication a turn
+ * ends with. For the stops that were never the code's fault — a guardrail since
+ * raised, a flaky check, a budget reset — where a retry would throw the work
+ * away and pay a full turn to write it again.
+ *
+ * Refused when the branch has moved since the attempt began: its tree was built
+ * on a tip that is no longer the tip.
+ */
+export async function verifyPreservedAttempt(
+  issue: Issue, agent: AgentDefinition, state: ExecutionState, deps: NativeAgentDeps,
+): Promise<ExecutionState> {
+  requireVerification(deps.project)
+  const attempt = lastAttempt(state)!
+  const worktree: Worktree = { path: attempt.worktreePath!, branch: state.branchName!, initialSha: attempt.initialSha! }
+  const remote = (await gitText(deps.project.root!, ['ls-remote', 'origin', `refs/heads/${worktree.branch}`])).split(/\s/)[0]
+  if (remote !== worktree.initialSha) {
+    throw new Error(`The branch moved since attempt ${attempt.n} began (${worktree.initialSha.slice(0, 8)} → ${(remote || 'gone').slice(0, 8)}); its tree is stale. Use --retry.`)
+  }
+
+  state = reopenAttempt({ ...state, error: null, workspacePath: worktree.path, baseSha: attempt.baseSha, verification: undefined })
+  state = await advanceState(state, 'calling_llm', {}, deps.stateStore)
+  console.log(`[verify] attempt ${attempt.n} on ${worktree.path}`)
+  try {
+    state = await publishTree(worktree, issue, agent, state, deps, {
+      headline: `✅ **Attempt ${attempt.n}** re-verified and published, without another turn:`,
+    })
+    await removeWorktree(worktree)
+    return state
+  } catch (err) {
+    console.error(`[verify] workspace preserved: ${worktree.path}`)
+    const latest = await deps.stateStore.get(issue.id) ?? state
+    const message = err instanceof Error ? err.message : String(err)
+    await deps.stateStore.save({ ...closeAttempt(latest, outcomeOf(err), { error: message }), step: 'failed', error: message, updatedAt: new Date().toISOString() })
+    throw err
+  }
+}
+
 export async function runNativeDevAgent(
   issue: Issue,
   agent: AgentDefinition,
@@ -302,7 +381,7 @@ export async function runNativeDevAgent(
   // The turn gets a record of its own: which tree, how long, what the gate said.
   state = openAttempt(state, {
     kind: isRevision ? 'revision' : 'implement', agentId: agent.id, model: agent.llm.model,
-    baseSha: state.baseSha!, worktreePath: worktree.path,
+    baseSha: state.baseSha!, initialSha: worktree.initialSha, worktreePath: worktree.path,
   })
   await stateStore.save(state)
 
@@ -380,27 +459,11 @@ export async function runNativeDevAgent(
       throw new AgentStopped(`${agent.llm.provider} agent ${failureReason(result.exitCode, result.subtype, budget)}: ${result.resultText.slice(0, 500)}`.trimEnd().replace(/:$/, ''), written)
     }
 
-    state = await verifyAndCommit(
-      worktree, deps.project, deps.guardrails, state, stateStore,
-      `${issue.title}\n\nAutomated by Floor Agents (${agent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`,
-    )
-
-    const diffText = await gitText(worktree.path, ['diff', state.baseSha!, state.commitSha!, '--stat'])
-
-    await addComment(issue.id, [
-      `✅ **${agent.name}** completed work (native mode):`,
-      '```',
-      diffText,
-      '```',
-      `> ${metaLine([formatDuration(result.durationMs), costNote(result.cost)])}`,
-      verificationSummary(state.verification!),
-    ].join('\n'))
-
-    state = closeAttempt(state, 'published', { commitSha: state.commitSha! })
-    state = await advanceState(state, 'creating_pr', {
-      costUsd: costTracker.getTaskCost(issue.id),
-      llmResponse: result.resultText,
-    }, stateStore)
+    state = await publishTree(worktree, issue, agent, state, deps, {
+      headline: `✅ **${agent.name}** completed work (native mode):`,
+      meta: metaLine([formatDuration(result.durationMs), costNote(result.cost)]),
+    })
+    state = await advanceState(state, 'creating_pr', { llmResponse: result.resultText }, stateStore)
     await removeWorktree(worktree)
     return state
   } catch (err) {

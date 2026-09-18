@@ -8,6 +8,7 @@ floor-agents init
 floor-agents doctor
 floor-agents run --issue 123
 floor-agents status --issue 123
+floor-agents verify --issue 123
 ```
 
 | Command | Behavior |
@@ -16,6 +17,7 @@ floor-agents status --issue 123
 | `doctor` | Check config, repository identity/access, command availability, prompts and credential presence without invoking an agent |
 | `run --issue <id>` | Implement one issue, run configured checks, create a PR, then exit; refuses an existing execution state |
 | `run --issue <id> --retry` | Archive a failed attempt under `STATE_DIR/archive/`, drop the `needs-human` label, and run the issue again; refuses an attempt that is not failed. The new run starts over from the base but carries the issue's history: attempts and reviews keep their numbering |
+| `verify --issue <id>` | Take the last attempt's preserved tree forward without another agent turn: guardrails and the whole gate again, and on green the usual publication — commit, push, pull request, review. For stops that were not the code's fault (a guardrail since raised, a flaky check, a budget reset). Refuses when the run is not failed, when the attempt kept no tree, or when the branch has moved since the attempt began; a tree that fails again stays kept and the issue is told which check failed |
 | `status --issue <id>` | Print the issue's history: each implementer turn (agent, turn time, outcome, the gate step that failed and the end of what it printed, whether its tree is still on disk) and each review cycle with its votes |
 | `watch` or no command | Start the existing developer or committee watch loop |
 | `--help`, `-h` | Show usage |

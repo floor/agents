@@ -24,7 +24,7 @@ export function lastAttempt(state: ExecutionState): Attempt | undefined {
 /** Start a new attempt. Its number continues across retries: attempt 4 of an issue is its fourth turn, ever. */
 export function openAttempt(
   state: ExecutionState,
-  fields: Pick<Attempt, 'kind' | 'agentId' | 'model' | 'baseSha'> & { readonly worktreePath: string },
+  fields: Pick<Attempt, 'kind' | 'agentId' | 'model' | 'baseSha' | 'initialSha'> & { readonly worktreePath: string },
 ): ExecutionState {
   const attempts = state.attempts ?? []
   const attempt: Attempt = { n: attempts.length + 1, startedAt: now(), gates: [], outcome: 'running', ...fields }
@@ -113,6 +113,18 @@ export function outcomeOf(err: unknown): Exclude<AttemptOutcome, 'running' | 'pu
   if (/^Guardrail|^Unsupported file mode/.test(message)) return 'guardrail'
   if (/^Verification failed|^Checks modified the workspace/.test(message)) return 'gate-failed'
   return 'error'
+}
+
+/**
+ * Take a closed, unpublished attempt up again — the gate is about to run on its
+ * tree once more. The earlier outcome is not lost: its gate runs stay, and the
+ * error that closed it is what the next close replaces.
+ */
+export function reopenAttempt(state: ExecutionState): ExecutionState {
+  const current = lastAttempt(state)
+  if (!current || current.outcome === 'running' || current.outcome === 'published') return state
+  const { endedAt: _endedAt, error: _error, ...rest } = current
+  return { ...state, attempts: [...(state.attempts ?? []).slice(0, -1), { ...rest, outcome: 'running' }] }
 }
 
 export function recordReview(state: ExecutionState, review: ReviewRecord): ExecutionState {

@@ -30,6 +30,7 @@ export type {
 } from './types/agent.ts'
 
 export type { ProjectConventions, ProjectStructure, ProjectConfig, ProjectCommand } from './types/project.ts'
+export { DEFAULT_FIX_TURNS } from './types/project.ts'
 export type { CompanyConfig } from './types/company.ts'
 export type { ReviewConfig } from './types/review.ts'
 export type { SourceDefinition, SourceVisibility } from './types/sources.ts'
@@ -39,7 +40,7 @@ export type { CostConfig } from './types/costs.ts'
 export type { WorkflowDefinition, WorkflowStateDefinition, TransitionDefinition, TransitionTrigger } from './types/workflow.ts'
 export type { ChainOfCommand, ChainNode, WorkSource } from './types/chain.ts'
 export type { AutonomyConfig, AutonomyOverride, AutonomyMatch } from './types/autonomy.ts'
-export type { ExecutionStep, FileOutput, AgentOutput, ReviewVerdict, ExecutionState, StateStore, CommandResult, VerificationResult } from './types/execution.ts'
+export type { ExecutionStep, FileOutput, AgentOutput, ReviewVerdict, ExecutionState, StateStore, CommandResult, VerificationResult, GateRun } from './types/execution.ts'
 
 // Config
 export { loadCompanyConfig } from './config/loader.ts'

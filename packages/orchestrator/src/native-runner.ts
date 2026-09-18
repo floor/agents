@@ -8,16 +8,17 @@ import type {
   ProjectConfig,
   GuardrailsConfig,
 } from '@floor-agents/core'
+import { DEFAULT_FIX_TURNS } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
-import { createWorktree, gitText, snapshotWorktree, removeWorktree } from './worktree.ts'
+import { createWorktree, gitText, snapshotWorktree, removeWorktree, reopenWorktree } from './worktree.ts'
 import { requireVerification, prepareWorkspace, verifyAndCommit, resolveBaseSha } from './verified-commit.ts'
-import { verificationSummary } from './verification.ts'
+import { verificationSummary, isRepairableGateFailure, isRepairableVerification, latestFailingCheck, gateFailureSection, VerificationFailed } from './verification.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import { implementerSandbox, reviewerSandbox, sandboxed, withDenyRead, type SandboxTool } from '@floor-agents/sandbox'
 import { buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
 import { buildAgyArgs, parseAgyResult } from '@floor-agents/antigravity'
 import { costNote, metaLine } from './cost-note.ts'
-import { AgentStopped, writtenSummary } from './stop-report.ts'
+import { AgentStopped, GateExhausted, writtenSummary } from './stop-report.ts'
 
 /** Providers whose CLI runs as a full agent on a worktree, rather than through tool calls. */
 export const NATIVE_PROVIDERS = new Set(['claude-code', 'cursor', 'antigravity'])
@@ -43,11 +44,11 @@ export const DEFAULT_TURN_TIMEOUT_MS = 600_000
  * `write_file`, and Gemini treated a prohibition on that name as "print the
  * files, write nothing" (mtrl FLO-102).
  */
-export function nativeImplementerInstructions(verification: readonly { readonly command: readonly string[] }[]): readonly string[] {
+export function nativeImplementerInstructions(): readonly string[] {
   return [
     '## Instructions',
-    'You are working directly on a git branch. Edit files, run tests, iterate until the code is correct.',
-    `Project checks: ${verification.map(c => c.command.join(' ')).join('; ')}. The engine will run these independently.`,
+    'You are working directly on a git branch. Edit files; run the type check and the tests of the files you touched.',
+    'The engine runs the full gate and hands you any failure.',
     'Do not commit, push, or open a PR. The engine validates and publishes the final changes.',
     'Edit the files in this working directory with your own editing tools; do not print file contents in your reply — a reply is not a change. The engine reads the working tree, not your message.',
   ]
@@ -291,23 +292,38 @@ export async function runNativeDevAgent(
 
   requireVerification(deps.project)
 
+  const incoming = state
   state = await advanceState(state, 'calling_llm', {}, stateStore)
 
-  const worktree = await createWorktree(state.branchName!, deps.project.root)
+  const existing = incoming.step === 'calling_llm' && incoming.workspacePath && incoming.initialSha
+    ? await reopenWorktree(incoming.workspacePath, incoming.branchName!, incoming.initialSha)
+    : null
+  const resumed = Boolean(existing)
+  const worktree = existing ?? await createWorktree(state.branchName!, deps.project.root)
+
   state = await advanceState(state, 'calling_llm', {
-    workspacePath: worktree.path, baseSha: await resolveBaseSha(worktree, deps.project, state), verification: undefined,
+    workspacePath: worktree.path,
+    baseSha: await resolveBaseSha(worktree, deps.project, state),
+    initialSha: worktree.initialSha,
+    ...(resumed ? {} : { verification: undefined }),
   }, stateStore)
   const isRevision = !!reviewComments
+  // Only a persisted repairable gate failure skips the implementer. A leftover
+  // llmResponse from a previous turn (or a revision that crashed mid-agent)
+  // must not count as "the agent already ran".
+  const skipInitial = resumed && isRepairableVerification(state.verification)
 
-  console.log(`[${agent.id}] native agent on worktree: ${worktree.path}`)
+  console.log(`[${agent.id}] native agent on worktree: ${worktree.path}${resumed ? ' (resumed)' : ''}`)
 
-  await addComment(issue.id, [
-    isRevision
-      ? `⏳ **${agent.name}** is addressing review feedback...`
-      : `⏳ **${agent.name}** is working on the code...`,
-    `> Model: \`${agent.llm.model}\` via ${agent.llm.provider} (native mode)`,
-    `> Worktree: \`${state.branchName}\``,
-  ].join('\n'))
+  if (!skipInitial) {
+    await addComment(issue.id, [
+      isRevision
+        ? `⏳ **${agent.name}** is addressing review feedback...`
+        : `⏳ **${agent.name}** is working on the code...`,
+      `> Model: \`${agent.llm.model}\` via ${agent.llm.provider} (native mode)`,
+      `> Worktree: \`${state.branchName}\``,
+    ].join('\n'))
+  }
 
   try {
     await prepareWorkspace(worktree, deps.project)
@@ -322,69 +338,96 @@ export async function runNativeDevAgent(
       native: true,
     })
 
-    const promptParts = [
+    const promptBase = [
       ctx.systemPrompt,
       '',
       '## Task',
       `**${issue.title}**`,
       issue.body || '',
     ]
+    if (deps.discussion) promptBase.push('', deps.discussion)
+    if (reviewComments) promptBase.push('', '## Review Feedback (address these)', reviewComments)
+    promptBase.push('', ...nativeImplementerInstructions())
 
-    if (deps.discussion) {
-      promptParts.push('', deps.discussion)
-    }
-
-    if (reviewComments) {
-      promptParts.push('', '## Review Feedback (address these)', reviewComments)
-    }
-
-    promptParts.push(
-      '',
-      ...nativeImplementerInstructions(deps.project.verification!),
-    )
-
-    // The implementer may write its worktree and that worktree's own git metadata
-    // (index, locks) — nothing else, including the main checkout it came from.
     const gitDir = await gitText(worktree.path, ['rev-parse', '--absolute-git-dir'])
     const budget = { timeoutMs: turnTimeoutMs(agent.timeoutMs), maxTurns: agent.maxTurns ?? DEFAULT_MAX_TURNS.implement }
     const runAgent = deps.runAgent ?? ((prompt: string, cwd: string, model?: string) => spawnNativeAgent({
       provider: agent.llm.provider, role: 'implement', prompt, cwd, writable: [cwd, gitDir], denyRead: deps.denyRead ?? [],
       timeoutMs: budget.timeoutMs, maxTurns: budget.maxTurns, ...(model ? { model } : {}),
     }))
-    const result = await runAgent(
-      promptParts.join('\n'),
-      worktree.path,
-      agent.llm.model,
+
+    const uncommittedSummary = async (): Promise<string> => writtenSummary(
+      await gitText(worktree.path, ['diff', '--stat', 'HEAD']),
+      await gitText(worktree.path, ['ls-files', '--others', '--exclude-standard']),
     )
 
-    costTracker.recordCost(issue.id, result.cost)
-    state = await advanceState(state, 'calling_llm', { costUsd: costTracker.getTaskCost(issue.id), llmResponse: result.resultText }, stateStore)
-    console.log(`[${agent.id}] native agent: ${formatDuration(result.durationMs)}, $${result.cost.toFixed(4)}, exit ${result.exitCode}`)
-
-    if (result.exitCode !== 0) {
-      // A killed or capped turn leaves no result, and "failed (exit 1)" reads
-      // like a crash: say which budget ran out and where to raise it, and
-      // carry what the worktree holds so the issue can show it.
-      const written = writtenSummary(
-        await gitText(worktree.path, ['diff', '--stat']),
-        await gitText(worktree.path, ['ls-files', '--others', '--exclude-standard']),
-      )
-      throw new AgentStopped(`${agent.llm.provider} agent ${failureReason(result.exitCode, result.subtype, budget)}: ${result.resultText.slice(0, 500)}`.trimEnd().replace(/:$/, ''), written)
+    const cumulativeDiff = async (): Promise<string> => {
+      const tree = await snapshotWorktree(worktree)
+      return gitText(worktree.path, ['diff', '--stat', state.baseSha ?? worktree.initialSha, tree])
     }
 
-    state = await verifyAndCommit(
-      worktree, deps.project, deps.guardrails, state, stateStore,
-      `${issue.title}\n\nAutomated by Floor Agents (${agent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`,
-    )
+    const runTurn = async (prompt: string): Promise<NativeRunResult> => {
+      const result = await runAgent(prompt, worktree.path, agent.llm.model)
+      costTracker.recordCost(issue.id, result.cost)
+      state = await advanceState(state, 'calling_llm', { costUsd: costTracker.getTaskCost(issue.id), llmResponse: result.resultText }, stateStore)
+      console.log(`[${agent.id}] native agent: ${formatDuration(result.durationMs)}, $${result.cost.toFixed(4)}, exit ${result.exitCode}`)
+      if (result.exitCode !== 0) {
+        throw new AgentStopped(
+          `${agent.llm.provider} agent ${failureReason(result.exitCode, result.subtype, budget)}: ${result.resultText.slice(0, 500)}`.trimEnd().replace(/:$/, ''),
+          await uncommittedSummary(),
+        )
+      }
+      return result
+    }
+
+    let result: NativeRunResult = { resultText: state.llmResponse ?? '', cost: 0, durationMs: 0, exitCode: 0 }
+    let sessionDuration = 0
+    let sessionCost = 0
+    const allowance = deps.project.fixTurns ?? DEFAULT_FIX_TURNS
+    const commitMessage = `${issue.title}\n\nAutomated by Floor Agents (${agent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`
+
+    if (!skipInitial) {
+      result = await runTurn(promptBase.join('\n'))
+      sessionDuration = result.durationMs
+      sessionCost = result.cost
+    }
+
+    for (;;) {
+      try {
+        state = await verifyAndCommit(worktree, deps.project, deps.guardrails, state, stateStore, commitMessage)
+        break
+      } catch (err) {
+        if (err instanceof VerificationFailed) state = err.saved
+        if (!isRepairableGateFailure(err) || allowance <= 0) throw err
+        const used = state.fixTurnsUsed ?? 0
+        const failing = latestFailingCheck(err.verification)
+        const written = await uncommittedSummary()
+        if (!failing || used >= allowance) {
+          throw new GateExhausted(
+            err.message,
+            failing ?? { name: 'gate', command: [], exitCode: 1, timedOut: false, durationMs: 0, stdout: '', stderr: '' },
+            used + 1,
+            written,
+          )
+        }
+        state = await advanceState(state, 'calling_llm', { fixTurnsUsed: used + 1 }, stateStore)
+        console.log(`[${agent.id}] gate failure: ${failing.name} (exit ${failing.exitCode}) — fix turn ${used + 1}/${allowance}`)
+        await addComment(issue.id, `🔧 **${agent.name}** is fixing a gate failure (\`${failing.name}\`, exit ${failing.exitCode}) — fix turn ${used + 1} of ${allowance}`)
+        result = await runTurn([...promptBase, '', ...gateFailureSection(failing, await cumulativeDiff())].join('\n'))
+        sessionDuration += result.durationMs
+        sessionCost += result.cost
+      }
+    }
 
     const diffText = await gitText(worktree.path, ['diff', state.baseSha!, state.commitSha!, '--stat'])
+    const gateMs = (state.gateRuns ?? []).reduce((sum, g) => sum + g.durationMs, 0)
 
     await addComment(issue.id, [
       `✅ **${agent.name}** completed work (native mode):`,
       '```',
       diffText,
       '```',
-      `> ${metaLine([formatDuration(result.durationMs), costNote(result.cost)])}`,
+      `> ${metaLine([formatDuration(sessionDuration + gateMs), costNote(sessionCost)])}`,
       verificationSummary(state.verification!),
     ].join('\n'))
 

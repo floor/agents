@@ -22,7 +22,7 @@ import { requireVerification } from './verified-commit.ts'
 import { gitText } from './worktree.ts'
 import { buildPrBody } from './pr-body.ts'
 import { costNote, metaLine } from './cost-note.ts'
-import { AgentStopped, stopReport, crashReport } from './stop-report.ts'
+import { AgentStopped, GateExhausted, stopReport, crashReport, gateExhaustedReport } from './stop-report.ts'
 import { signComments, agentSignature, sign, ENGINE_SIGNATURE } from './comment-signature.ts'
 import { discussionSection } from './discussion.ts'
 import { committeePrReviewEnabled, executeCommitteePrReview } from './committee-pr-review.ts'
@@ -59,6 +59,12 @@ async function advanceState(state: ExecutionState, step: ExecutionStep, updates:
   const next: ExecutionState = { ...state, step, ...updates, updatedAt: new Date().toISOString() }
   await store.save(next)
   return next
+}
+
+/** Review comments still pending on a revision; kept on state so a crash mid-agent can resume them. */
+function pendingReviewFeedback(state: ExecutionState): string | undefined {
+  if (state.reviewVerdict?.decision !== 'request_changes') return undefined
+  return state.reviewVerdict.comments.trim() || 'Changes requested.'
 }
 
 /** Comments the implementer should read this turn; a fetch failure is no comments. */
@@ -275,9 +281,11 @@ export async function executeTask(
       ].filter(Boolean).join('\n'))
     }
 
-    // Step: dev writes code (two paths)
+    // Step: dev writes code (two paths). A revision that crashed mid-agent
+    // resumes here (`calling_llm`) and must still see the review comments.
     if (state.step === 'building_context' || state.step === 'calling_llm' || state.step === 'parsing_output') {
       const discussion = await loadDiscussion(unsigned, issue.id)
+      const feedback = pendingReviewFeedback(state)
       if (devIsNative) {
         state = await runNativeDevAgent(issue, devAgent, state, {
           contextBuilder: deps.contextBuilder,
@@ -289,9 +297,9 @@ export async function executeTask(
           denyRead: privateSourceDenials(company, devAgent.llm.provider),
           ...(deps.runAgent ? { runAgent: deps.runAgent } : {}),
           ...(discussion ? { discussion } : {}),
-        })
+        }, feedback)
       } else {
-        state = await runApiDevAgent(issue, devAgent, state, deps, undefined, discussion)
+        state = await runApiDevAgent(issue, devAgent, state, deps, feedback, discussion)
       }
     }
 
@@ -359,9 +367,16 @@ export async function executeTask(
         state = await advanceState(state, 'failed', { error: 'Max review cycles reached; needs human review' }, stateStore)
         return
       } else {
-        const feedback = state.reviewVerdict?.comments ?? 'Changes requested.'
+        const feedback = pendingReviewFeedback(state) ?? 'Changes requested.'
         console.log(`[orchestrator] revision ${state.reviewCycle}: ${devAgent.name} addressing feedback...`)
-        state = await advanceState(state, 'building_context', { parsedOutput: null, reviewVerdict: null, verification: undefined }, stateStore)
+        state = await advanceState(state, 'building_context', {
+          parsedOutput: null,
+          verification: undefined,
+          fixTurnsUsed: 0,
+          llmResponse: null,
+          workspacePath: undefined,
+          initialSha: undefined,
+        }, stateStore)
         const discussion = await loadDiscussion(unsigned, issue.id)
 
         if (devIsNative) {
@@ -447,7 +462,9 @@ export async function executeTask(
     // The engine is the one reporting — the agent that stopped did not write
     // this — so the comment carries the engine's signature, not the agent's.
     const key = issue.key ?? issue.id
-    const report = err instanceof AgentStopped ? stopReport(devAgent.name, err.message, err.written, key) : crashReport(message, key)
+    const report = err instanceof AgentStopped ? stopReport(devAgent.name, err.message, err.written, key)
+      : err instanceof GateExhausted ? gateExhaustedReport(devAgent.name, err, key)
+      : crashReport(message, key)
     try {
       await unsigned.addComment(issue.id, sign(report, ENGINE_SIGNATURE))
       await unsigned.setLabel(issue.id, 'needs-human')

@@ -178,12 +178,17 @@ describe.skipIf(!sandboxAvailable())('spawnNativeAgent under sandbox-exec', () =
 
 describe('nativeImplementerInstructions', () => {
   test('never names API-path tools, and tells the agent to edit the tree instead of printing it', () => {
-    const text = nativeImplementerInstructions([{ command: ['bun', 'test'] }]).join('\n')
+    const text = nativeImplementerInstructions().join('\n')
     expect(text).not.toContain('write_file')
     expect(text).not.toContain('pr_description')
     expect(text).toContain('Do not commit, push, or open a PR')
     expect(text).toContain('own editing tools')
     expect(text).toContain('The engine reads the working tree, not your message')
+    expect(text).toContain('run the type check and the tests of the files you touched')
+    expect(text).toContain('The engine runs the full gate and hands you any failure')
+    expect(text).not.toContain('iterate until the code is correct')
+    expect(text).not.toContain('bun test')
+    expect(text).not.toContain('Project checks:')
   })
 })
 

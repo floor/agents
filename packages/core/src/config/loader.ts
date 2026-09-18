@@ -1,6 +1,7 @@
 import type { CompanyConfig } from '../types/company.ts'
 import type { AgentDefinition, AgentCapability, AutonomyTier } from '../types/agent.ts'
-import type { ProjectConfig } from '../types/project.ts'
+import type { ProjectConfig, ProjectCommand } from '../types/project.ts'
+import { DEFAULT_FIX_TURNS } from '../types/project.ts'
 import type { WorkflowDefinition } from '../types/workflow.ts'
 import type { ChainOfCommand } from '../types/chain.ts'
 import type { AutonomyConfig } from '../types/autonomy.ts'
@@ -41,13 +42,30 @@ function parseAgents(raw: unknown[]): AgentDefinition[] {
   }))
 }
 
+function parseCommand(raw: unknown): ProjectCommand {
+  // Malformed entries stay objects the validator can report; do not throw here.
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
+  return {
+    name: src.name as ProjectCommand['name'],
+    command: src.command as ProjectCommand['command'],
+    ...(src.timeoutMs !== undefined ? { timeoutMs: src.timeoutMs as number } : {}),
+    ...(src.flaky !== undefined ? { flaky: src.flaky as boolean } : {}),
+  }
+}
+
+function parseCommands(raw: unknown): readonly ProjectCommand[] | undefined {
+  if (raw === undefined) return undefined
+  return Array.isArray(raw) ? raw.map(parseCommand) : raw as readonly ProjectCommand[]
+}
+
 function parseProject(raw: any): ProjectConfig {
   return {
     root: raw.root,
     owner: raw.owner,
     baseBranch: raw.baseBranch,
-    setup: raw.setup,
-    verification: raw.verification,
+    setup: parseCommands(raw.setup),
+    verification: parseCommands(raw.verification),
+    fixTurns: raw.fixTurns ?? DEFAULT_FIX_TURNS,
     name: raw.name ?? '',
     repo: raw.repo ?? '',
     language: raw.language ?? '',

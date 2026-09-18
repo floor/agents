@@ -13,6 +13,7 @@ orchestrates agents, or embed the engine in your own Bun app.
 - [Agents & the Team](./agents.md) — agents are fully configurable; capabilities, modes, personas
 - [CLI](./cli.md) — the `floor-agents` binary: flags, env vars, modes, trigger tags
 - [Scripts](./scripts.md) — committee runner + gateway bridges (`scripts/`) reference
+- [The Run Path](./run-path.md) — `run --issue` step by step: what each step writes, how it fails, what failing costs; the working map for polishing the engine
 - [Orchestrator Agent](./orchestrator-agent.md) — the LLM conductor: tool surface, the five guardrails, what is wired
 - [Known Issues](./known-issues.md) — tracked issues and their resolution status
 - [Next Steps](./next-steps.md) — prioritized roadmap after three sprints of dogfooding
@@ -56,3 +57,4 @@ Each package has its own documentation:
 - [2026-04-07: Second Sprint](./experiments/2026-04-07-second-sprint.md) — 5 issues, 5 PRs, Claude Code Sonnet + Opus, $1.23 total
 - [2026-04-08: Third Sprint](./experiments/2026-04-08-third-sprint.md) — 5 complex issues, 2 timeouts, architectural lessons learned
 - [2026-04-08: Fourth Sprint](./experiments/2026-04-08-fourth-sprint.md) — native worktree execution, editing works, push pending
+- [2026-09-18: First Self-Hosted Day](./experiments/2026-09-18-first-self-hosted-day.md) — three projects on Linear, a four-seat committee, one product PR in four hours: what the engine cost and why

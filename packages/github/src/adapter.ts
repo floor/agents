@@ -275,7 +275,8 @@ export function createGitHubAdapter(config: GitHubAdapterConfig): GitAdapter {
     async mergePR(repo, prId) {
       await api(`/repos/${owner}/${repo}/pulls/${prId}/merge`, {
         method: 'PUT',
-        body: JSON.stringify({ merge_method: 'squash' }),
+        // A merge commit: the branch's own history stays readable; never a squash.
+        body: JSON.stringify({ merge_method: 'merge' }),
       })
     },
 

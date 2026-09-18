@@ -83,6 +83,15 @@ describe('buildPrBody', () => {
     expect(body).not.toContain('$0.0000')
   })
 
+  test('a task from a private tracker is referenced by its key and its text stays off the public PR', () => {
+    const linear = { ...issue, url: 'https://linear.app/floor/issue/FLO-31/carousel-and-selection', key: 'FLO-31', body: 'private evidence: create.ts:546 …' }
+    const body = buildPrBody({ issue: linear, agent, state, repo: 'vlist' })
+    expect(body).toContain('Refs FLO-31')
+    expect(body).toContain('**Task:** FLO-31 — docs: migration notes')
+    expect(body).not.toContain('private evidence')
+    expect(body).not.toContain('<details>')
+  })
+
   test('prefers the agent-written PR description on the API path, and lists its files without a diff stat', () => {
     const api = buildPrBody({
       issue, agent, repo: 'vlist',

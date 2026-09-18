@@ -5,7 +5,7 @@ import { agentLabel } from './comment-signature.ts'
 const SUMMARY_LIMIT = 2000
 
 export type PrBodyInput = {
-  readonly issue: Pick<Issue, 'id' | 'title' | 'body' | 'url'>
+  readonly issue: Pick<Issue, 'id' | 'title' | 'body' | 'url' | 'key'>
   readonly agent: Pick<AgentDefinition, 'name' | 'llm'>
   readonly state: Pick<ExecutionState, 'costUsd' | 'llmResponse' | 'parsedOutput' | 'verification'>
   /** The repository the PR is opened in, to tell whether the issue lives there too. */
@@ -21,11 +21,20 @@ export type PrBodyInput = {
  * elsewhere would point at an unrelated issue. GitHub acts on the keyword only
  * for PRs into the default branch; otherwise it remains a readable link.
  */
-export function issueReference(issue: Pick<Issue, 'url'>, repo: string): string | null {
-  if (!issue.url) return null
-  const match = issue.url.match(/^https:\/\/github\.com\/[^/]+\/([^/]+)\/issues\/(\d+)$/)
-  if (match && match[1]!.toLowerCase() === repo.toLowerCase()) return `Closes #${match[2]}`
-  return `Refs ${issue.url}`
+export function issueReference(issue: Pick<Issue, 'url' | 'key'>, repo: string): string | null {
+  if (issue.url) {
+    const match = issue.url.match(/^https:\/\/github\.com\/[^/]+\/([^/]+)\/issues\/(\d+)$/)
+    if (match && match[1]!.toLowerCase() === repo.toLowerCase()) return `Closes #${match[2]}`
+  }
+  // A private tracker: the key names the task for anyone who may open it, and
+  // gives nothing to anyone who may not.
+  if (issue.key) return `Refs ${issue.key}`
+  return issue.url ? `Refs ${issue.url}` : null
+}
+
+/** Only a public issue's text may be repeated on a public pull request. */
+export function isPublicIssue(issue: Pick<Issue, 'url'>): boolean {
+  return Boolean(issue.url && /^https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+$/.test(issue.url))
 }
 
 const trim = (text: string): string =>
@@ -83,11 +92,20 @@ export function buildPrBody(input: PrBodyInput): string {
 
   if (reference) sections.push('', reference)
 
+  // The task text is folded in only when the task is public. A finding that
+  // lives in a private tracker keeps its evidence there; the PR carries the
+  // title and the key.
+  if (isPublicIssue(issue)) {
+    sections.push(
+      '', '<details>',
+      `<summary>Task: ${issue.title}</summary>`,
+      '', issue.body?.trim() || '_No description._', '',
+      '</details>',
+    )
+  } else {
+    sections.push('', `**Task:** ${issue.key ? `${issue.key} — ` : ''}${issue.title}`)
+  }
   sections.push(
-    '', '<details>',
-    `<summary>Task: ${issue.title}</summary>`,
-    '', issue.body?.trim() || '_No description._', '',
-    '</details>',
     '',
     // Who wrote it and with what, and nothing else. A cost belongs to the run
     // log, not to a public page: a CLI on a subscription reports none, so this

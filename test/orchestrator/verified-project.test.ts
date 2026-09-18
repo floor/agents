@@ -288,6 +288,56 @@ test('blocked deletions, binary size, and symlinks fail actual-diff guardrails',
   await expect(validateWorktree(worktree, worktree.initialSha, company.guardrails)).rejects.toThrow('Unsupported file mode')
 })
 
+describe('the gate runs on a clean export of the tree, not in the agent\'s worktree', () => {
+  const needsCache = { name: 'Needs the cache', command: [process.execPath, '-e', 'process.exit(require("node:fs").existsSync("cache/answer.json") ? 0 : 1)'] }
+  const gateDirs = async () => (await Array.fromAsync(new Bun.Glob('gate-*').scan({ cwd: join(root, '.agents', 'worktrees'), onlyFiles: false }))).length
+  const ignoreCache = async () => {
+    await Bun.write(join(root, '.gitignore'), '.agents/*\n!.agents/agents.yaml\ncache/\n')
+    await gitText(root, ['add', '-A'])
+    await gitText(root, ['commit', '-m', 'ignore cache/'])
+    await gitText(root, ['push', 'origin', `HEAD:refs/heads/${branch}`, '--force'])
+  }
+
+  test('a file the commit will not carry cannot help the gate pass', async () => {
+    // Measured before the fix: this gate was green, and the published commit had no cache/answer.json.
+    await ignoreCache()
+    const worktree = await createWorktree(branch, root)
+    await Bun.write(join(worktree.path, 'feature.txt'), 'the change')
+    await Bun.write(join(worktree.path, 'cache', 'answer.json'), '{}')
+    const result = await verifyWorktree(worktree, [needsCache])
+    expect(result.passed).toBe(false)
+    expect(result.checks[0]).toMatchObject({ name: 'Needs the cache', exitCode: 1 })
+    expect(await gateDirs()).toBe(0)
+  })
+
+  test('what the change adds — tracked or new — is in the export; setup runs there first', async () => {
+    await ignoreCache()
+    const worktree = await createWorktree(branch, root)
+    await Bun.write(join(worktree.path, 'answer.txt'), '42')
+    await Bun.write(join(worktree.path, 'new-file.txt'), 'untracked until the snapshot')
+    const seesBoth = { name: 'Sees the change', command: [process.execPath, '-e', 'const fs=require("node:fs"); process.exit(fs.readFileSync("answer.txt","utf8")==="42" && fs.existsSync("new-file.txt") ? 0 : 1)'] }
+    const makeCache = { name: 'Build the cache', command: [process.execPath, '-e', 'require("node:fs").mkdirSync("cache"); require("node:fs").writeFileSync("cache/answer.json","{}")'] }
+    const result = await verifyWorktree(worktree, [seesBoth, needsCache], [makeCache])
+    expect(result.passed).toBe(true)
+    expect(result.checks.map(c => c.name)).toEqual(['Sees the change', 'Needs the cache'])
+    // The agent's worktree was not touched by the gate's setup.
+    expect(await Bun.file(join(worktree.path, 'cache', 'answer.json')).exists()).toBe(false)
+    expect(await gateDirs()).toBe(0)
+  })
+
+  test('a setup that fails is a gate that fails, and says which step', async () => {
+    const worktree = await createWorktree(branch, root)
+    await Bun.write(join(worktree.path, 'answer.txt'), '42')
+    const broken = { name: 'Install dependencies', command: [process.execPath, '-e', 'console.error("lockfile out of date"); process.exit(3)'] }
+    const result = await verifyWorktree(worktree, project.verification!, [broken])
+    expect(result.passed).toBe(false)
+    expect(result.checks).toHaveLength(1)
+    expect(result.checks[0]).toMatchObject({ name: 'Setup: Install dependencies', exitCode: 3 })
+    expect(result.checks[0]!.stderr).toContain('lockfile out of date')
+    expect(await gateDirs()).toBe(0)
+  })
+})
+
 test('checks that edit tracked files cannot certify their new output', async () => {
   const worktree = await createWorktree(branch, root)
   const result = await verifyWorktree(worktree, [{ name: 'mutating check', command: [process.execPath, '-e', 'await Bun.write("answer.txt", "42")'] }])

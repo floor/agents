@@ -32,7 +32,7 @@ export async function verifyAndCommit(
 ): Promise<ExecutionState> {
   requireVerification(project)
   await validateWorktree(worktree, state.baseSha ?? worktree.initialSha, guardrails)
-  const verification = await verifyWorktree(worktree, project.verification!)
+  const verification = await verifyWorktree(worktree, project.verification!, project.setup ?? [])
   // The gate run joins the attempt's history before anything can throw: a failed
   // gate is exactly the run a person will want to read afterwards.
   const checked = recordGate({ ...state, verification, updatedAt: new Date().toISOString() }, verification)

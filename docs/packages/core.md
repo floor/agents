@@ -22,6 +22,7 @@ packages/core/src/
 │   ├── loader.ts            ← loadCompanyConfig(path?) → CompanyConfig
 │   └── validator.ts         ← validateCompanyConfig(config) → string[]
 └── utils/
+    ├── children.ts          ← trackChild, stopChildren, engineStopping, signalGroup — the processes the engine started
     ├── excerpt.ts           ← excerpt(text, max?), createExcerptBuffer(head, tail)
     └── tokens.ts            ← estimateTokens(text) → number
 ```

@@ -11,7 +11,7 @@ import { createGeminiAdapter } from '@floor-agents/gemini'
 import { createGitHubAdapter } from '@floor-agents/github'
 import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
-import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, freshState, historyOf, historyText, lastAttempt, verifyPreservedAttempt, verifyRefusal, reseatRefusal, verifyFailedReport, sign, ENGINE_SIGNATURE, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
+import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, freshState, historyOf, historyText, lastAttempt, verifyPreservedAttempt, verifyRefusal, reseatRefusal, stopChildren, liveChildren, verifyFailedReport, sign, ENGINE_SIGNATURE, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
 import { createDiscussionsAdapter } from '@floor-agents/github'
 import { createGateway } from '@floor-agents/gateway'
 import { mkdir, rename } from 'node:fs/promises'
@@ -282,6 +282,27 @@ const oneShotDeps = (): Parameters<typeof executeTask>[2] => ({
   externalVoters: { start: agents => startExternalVoters(agents, externalVoterOpts) },
 })
 
+// ── Stopping ─────────────────────────────────────────────────────
+// One handler for every command. A stop ends what the engine started — the agent
+// CLI, the project's checks, the reviewers' bridges — before the engine exits;
+// the turn in progress is recorded as stopped by the engine and resumes at the
+// next start. Registered here so that `run`, `verify` and `review` are covered,
+// not only `watch`.
+const stopHooks: (() => unknown)[] = []
+let stopRequested = false
+async function shutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
+  if (stopRequested) return
+  stopRequested = true
+  console.log(`\n[engine] ${signal}: stopping ${liveChildren()} child process(es)...`)
+  const ended = await stopChildren()
+  await Promise.allSettled(stopHooks.map(hook => hook()))
+  // The pipeline closes the interrupted turn as soon as its child is gone.
+  if (ended) await new Promise(resolve => setTimeout(resolve, 500))
+  process.exit(0)
+}
+process.on('SIGINT', () => { void shutdown('SIGINT') })
+process.on('SIGTERM', () => { void shutdown('SIGTERM') })
+
 if (args.command === 'verify') {
   // Take the last attempt's preserved tree forward without another agent turn.
   const issue = await task.getIssue(args.issue!)
@@ -451,18 +472,6 @@ console.log(`  task:      ${TASK_ADAPTER}`)
 console.log(`  providers: ${[...llmAdapters.keys()].join(', ')}`)
 console.log()
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('\nShutting down...')
-  gateway?.stop()
-  await Promise.all(orchestrators.map(o => o.stop()))
-  process.exit(0)
-})
-
-process.on('SIGTERM', async () => {
-  gateway?.stop()
-  await Promise.all(orchestrators.map(o => o.stop()))
-  process.exit(0)
-})
+stopHooks.push(() => gateway?.stop(), ...orchestrators.map(o => () => o.stop()))
 
 await Promise.all(orchestrators.map(o => o.start()))

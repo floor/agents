@@ -1,5 +1,5 @@
 import type { LLMAdapter, LLMConfig, LLMResponse, ToolCall } from '@floor-agents/core'
-import { excerpt } from '@floor-agents/core'
+import { excerpt, signalGroup, trackChild } from '@floor-agents/core'
 import { sandboxed, type SandboxSpec } from '@floor-agents/sandbox'
 
 export type ClaudeCodeAdapterConfig = {
@@ -149,14 +149,21 @@ export function createClaudeCodeAdapter(config: ClaudeCodeAdapterConfig = {}): L
         cwd: config.cwd ?? process.cwd(),
         stdout: 'pipe',
         stderr: 'pipe',
+        // The prompt is an argument. A background process group that reads the
+        // terminal is stopped by it (SIGTTIN), so stdin is closed, as on the native path.
+        stdin: 'ignore',
         env: {
           ...cleanEnv,
           CI: 'true',
         },
+        // Its own process group, tracked: a stop of the engine, or this timeout, ends
+        // the CLI and whatever it started, not just the wrapper.
+        detached: process.platform !== 'win32',
       })
+      trackChild(proc, proc.exited)
 
       // Set up timeout
-      const timeoutId = setTimeout(() => proc.kill(), TIMEOUT_MS)
+      const timeoutId = setTimeout(() => signalGroup(proc.pid, 'SIGKILL'), TIMEOUT_MS)
 
       const stdout = await new Response(proc.stdout).text()
       const stderr = await new Response(proc.stderr).text()

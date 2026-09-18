@@ -10,6 +10,8 @@ import type { ContextBuilder } from '@floor-agents/context-builder'
 import type { Gateway } from '@floor-agents/gateway'
 import { resolveAgent } from './dispatcher.ts'
 import { executeTask } from './pipeline.ts'
+import { closeInterrupted, processTable } from './lifecycle.ts'
+import { sign, ENGINE_SIGNATURE } from './comment-signature.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import { committeePrReviewEnabled, committeeVoters } from './committee-pr-review.ts'
 import type { ExternalVoterHost } from './committee-pipeline.ts'
@@ -89,11 +91,23 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
       if (incomplete.length > 0) {
         console.log(`[orchestrator] resuming ${incomplete.length} incomplete tasks`)
-        for (const state of incomplete) {
-          const issue = await taskAdapter.getIssue(state.issueId)
+        for (const recorded of incomplete) {
+          const issue = await taskAdapter.getIssue(recorded.issueId)
           if (!issue) continue
-          const agent = findAgent(state.agentId)
+          const agent = findAgent(recorded.agentId)
           if (!agent) continue
+          // A turn still marked running has nobody running it: a crash or a kill left
+          // it open. It is closed, its agent ended if it somehow survived, and the
+          // issue is told — then the task goes on with a new turn.
+          const { state, interrupted } = await closeInterrupted(recorded, processTable)
+          if (interrupted) {
+            await stateStore.save(state)
+            console.log(`[orchestrator] attempt ${interrupted.n} of ${issue.key ?? issue.id} was left open${interrupted.killed ? '; its agent was still running and was ended' : ''}`)
+            await taskAdapter.addComment(issue.id, sign([
+              `🔁 **The engine restarted.** Attempt ${interrupted.n} was interrupted${interrupted.killed ? ' — its agent was still running and has been ended' : ''}; a new turn starts now.`,
+              interrupted.worktreePath ? `> Its tree was kept: \`${interrupted.worktreePath}\`` : '',
+            ].filter(Boolean).join('\n'), ENGINE_SIGNATURE)).catch(() => {})
+          }
           await executeTask(issue, agent, pipelineDeps, state)
         }
       }

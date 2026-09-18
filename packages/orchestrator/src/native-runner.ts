@@ -19,6 +19,7 @@ import { buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
 import { buildAgyArgs, parseAgyResult } from '@floor-agents/antigravity'
 import { costNote, metaLine } from './cost-note.ts'
 import { AgentStopped, writtenSummary } from './stop-report.ts'
+import { engineStopping, STOPPED_BY_ENGINE, trackChild } from './lifecycle.ts'
 import { closeAttempt, lastAttempt, openAttempt, outcomeOf, patchAttempt, recordTurn, reopenAttempt, sessionToContinue } from './attempts.ts'
 
 /** Providers whose CLI runs as a full agent on a worktree, rather than through tool calls. */
@@ -229,6 +230,8 @@ export async function spawnNativeAgent(opts: {
   readonly home?: string
   /** Continue this session of the CLI instead of opening a new one. */
   readonly resume?: string
+  /** Told the CLI's pid as soon as it runs, so the attempt can name its process. */
+  readonly onSpawn?: (pid: number) => void
 }): Promise<NativeRunResult> {
   // API keys are stripped so each CLI authenticates through its logged-in
   // subscription session instead of metered per-token API billing.
@@ -250,6 +253,9 @@ export async function spawnNativeAgent(opts: {
     detached: process.platform !== 'win32',
     env: { ...cleanEnv, CLAUDE_CODE_SKIP_HOOKS: '1', ...(opts.provider === 'cursor' || opts.provider === 'antigravity' ? { CI: 'true' } : {}) },
   })
+
+  trackChild(proc, proc.exited)
+  opts.onSpawn?.(proc.pid)
 
   let timedOut = false
   const timeout = setTimeout(() => {
@@ -395,6 +401,10 @@ export async function verifyPreservedAttempt(
     console.error(`[verify] workspace preserved: ${worktree.path}`)
     const latest = await deps.stateStore.get(issue.id) ?? state
     const message = err instanceof Error ? err.message : String(err)
+    if (engineStopping()) {
+      await deps.stateStore.save(closeAttempt(latest, 'stopped', { error: STOPPED_BY_ENGINE }))
+      throw err
+    }
     await deps.stateStore.save({ ...closeAttempt(latest, outcomeOf(err), { error: message }), step: 'failed', error: message, updatedAt: new Date().toISOString() })
     throw err
   }
@@ -477,6 +487,8 @@ export async function runNativeDevAgent(
     const runAgent = deps.runAgent ?? ((prompt: string, cwd: string, model?: string, turn?: { readonly resume?: string }) => spawnNativeAgent({
       provider: agent.llm.provider, role: 'implement', prompt, cwd, writable: [cwd, gitDir], denyRead: deps.denyRead ?? [],
       timeoutMs: budget.timeoutMs, maxTurns: budget.maxTurns, ...(model ? { model } : {}), ...(turn?.resume ? { resume: turn.resume } : {}),
+      // The attempt names its process: a start after a crash can end what the crash left behind.
+      onSpawn: (pid) => { state = patchAttempt(state, { pid }); void stateStore.save(state).catch(() => {}) },
     }))
     let result: NativeRunResult
     if (continued) {
@@ -526,6 +538,12 @@ export async function runNativeDevAgent(
     // The store may be ahead of this function's copy (the gate saves its own
     // result), so the attempt is closed on what was last written.
     const latest = await stateStore.get(issue.id) ?? state
+    if (engineStopping()) {
+      // The agent did not fail: the engine ended its process. The turn is closed as
+      // stopped, the step is left where it was, and the next start takes it up again.
+      await stateStore.save(closeAttempt(latest, 'stopped', { error: STOPPED_BY_ENGINE }))
+      throw err
+    }
     await stateStore.save(closeAttempt(latest, outcomeOf(err), { error: err instanceof Error ? err.message : String(err) }))
     throw err
   }

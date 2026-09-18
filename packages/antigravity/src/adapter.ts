@@ -1,5 +1,5 @@
 import type { LLMAdapter, LLMConfig, LLMResponse, ToolCall } from '@floor-agents/core'
-import { excerpt } from '@floor-agents/core'
+import { excerpt, signalGroup, trackChild } from '@floor-agents/core'
 import { sandboxed, type SandboxSpec } from '@floor-agents/sandbox'
 
 /**
@@ -179,9 +179,13 @@ export function createAntigravityAdapter(config: AntigravityAdapterConfig): LLMA
         stderr: 'pipe',
         stdin: 'ignore',
         env: { ...cleanEnv, CI: 'true' },
+        // Its own process group, tracked: a stop of the engine, or this timeout, ends
+        // the CLI and whatever it started, not just the wrapper.
+        detached: process.platform !== 'win32',
       })
+      trackChild(proc, proc.exited)
 
-      const timeoutId = setTimeout(() => proc.kill(), timeoutMs)
+      const timeoutId = setTimeout(() => signalGroup(proc.pid, 'SIGKILL'), timeoutMs)
       const [stdout, stderr, exitCode] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),

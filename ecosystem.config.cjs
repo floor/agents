@@ -20,6 +20,9 @@ const common = {
   max_restarts: 10,
   min_uptime: 5000,
   restart_delay: 3000,
+  // A stop ends the agent CLI, the checks and the bridges before the engine exits
+  // (SIGTERM, then SIGKILL after 1.5 s): pm2's default of 1.6 s would cut that short.
+  kill_timeout: 10000,
   merge_logs: true,
   log_date_format: 'YYYY-MM-DD HH:mm:ss',
 }

@@ -10,6 +10,7 @@
 
 import { standingBlockers, type StandingBlocker } from './standing-blockers.ts'
 import { discussionSection } from './discussion.ts'
+import { engineStopping } from './lifecycle.ts'
 import type {
   CompanyConfig,
   GitAdapter,
@@ -239,6 +240,11 @@ export async function executeCommitteePrReview(
     ...(deps.externalAgents ? { externalAgents: deps.externalAgents } : {}),
     ...(deps.externalVoters ? { externalVoters: deps.externalVoters } : {}),
   }, { userMessage, assignmentBody: userMessage })
+
+  // A stop ends the reviewers' processes: what came back is the stop, not a review.
+  // Nothing is tallied, posted or recorded; the step stays `reviewing` and the next
+  // start seats the committee again.
+  if (engineStopping()) throw new Error('The engine was stopped during the review')
 
   const { outcome, reviewComments } = tallyCommitteePrReview(votes)
   // What each member listed as must-fix, kept on the record: the next cycle is compared with it.

@@ -719,6 +719,44 @@ describe('external voter bridges', () => {
     expect(result.outcome).toBe('approved')
   })
 
+  test('a bridge whose CLI failed is a failed seat, never a vote read out of its error', async () => {
+    // Codex out of quota (vlist #259): the error quotes the prompt, vote markers included.
+    let resolvePending: ((result: TaskResult) => void) | undefined
+    const gateway: Gateway = {
+      start() {},
+      stop() {},
+      assign(_agentId, task) {
+        resolvePending?.({
+          taskId: task.id,
+          agentId: _agentId,
+          content: "Error processing task: codex exec failed (exit 1): …end with VOTE: APPROVE or VOTE: REJECT…\nERROR: You've hit your usage limit",
+          failed: true,
+          receivedAt: new Date(),
+        })
+      },
+      waitForResult() {
+        return new Promise<TaskResult>(resolve => { resolvePending = resolve })
+      },
+      getConnectedAgents() { return [] },
+      isAgentConnected() { return true },
+      onAgentConnect() {},
+      onAgentDisconnect() {},
+    }
+    const host: ExternalVoterHost = {
+      async start(agents) {
+        return { gateway, started: new Map(agents.map(a => [a.id, { ok: true as const }])), stop() {} }
+      },
+    }
+
+    const deps = makeDeps('VOTE: APPROVE', { externalVoters: host, externalAgents: { timeoutMs: 1000 } })
+    const result = await executeCommitteeReview(makeIssue(), [makeAgent('claude'), makeAgent('codex', 'codex-cli', true)], deps)
+
+    const codex = result.votes.find(v => v.agentId === 'codex')!
+    expect(codex.vote).toBe('abstain')
+    expect(codex.execution).toBe('failed')
+    expect(codex.summary).toContain('usage limit')
+  })
+
   test('a bridge that fails to start abstains immediately and is still stopped', async () => {
     const trace = { started: 0, stopped: 0 }
     const taskAdapter = mockTaskAdapter()

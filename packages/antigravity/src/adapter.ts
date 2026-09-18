@@ -1,4 +1,5 @@
 import type { LLMAdapter, LLMConfig, LLMResponse, ToolCall } from '@floor-agents/core'
+import { excerpt } from '@floor-agents/core'
 import { sandboxed, type SandboxSpec } from '@floor-agents/sandbox'
 
 /**
@@ -143,7 +144,7 @@ export function parseAgyResult(stdout: string): AgyResult {
       // Not the envelope; keep walking back.
     }
   }
-  throw new Error(`agy returned no JSON result: ${stdout.slice(0, 500)}`)
+  throw new Error(`agy returned no JSON result: ${excerpt(stdout)}`)
 }
 
 export function createAntigravityAdapter(config: AntigravityAdapterConfig): LLMAdapter {
@@ -188,7 +189,7 @@ export function createAntigravityAdapter(config: AntigravityAdapterConfig): LLMA
       ]).finally(() => clearTimeout(timeoutId))
 
       if (exitCode !== 0 && !stdout) {
-        throw new Error(`agy failed (exit ${exitCode}): ${stderr.trim().slice(0, 500)}`)
+        throw new Error(`agy failed (exit ${exitCode}): ${excerpt(stderr)}`)
       }
 
       const data = parseAgyResult(stdout)

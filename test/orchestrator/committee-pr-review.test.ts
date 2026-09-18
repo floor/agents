@@ -423,10 +423,13 @@ describe('executeCommitteePrReview', () => {
     const next = await executeCommitteePrReview(makeIssue(), makeState(), deps)
 
     expect(next.reviewVerdict?.decision).toBe('approve')
-    const claudeComment = deps.git.prComments.find(c => c.includes('## Claude Review'))
+    // A failed seat is named as one — not as a review that chose to abstain.
+    const claudeComment = deps.git.prComments.find(c => c.includes('## Claude did not review'))
     expect(claudeComment).toContain('**Vote:** ABSTAIN')
     expect(claudeComment).toContain('error_max_turns')
     expect(deps.git.prComments.at(-1)).toContain('| Claude | **ABSTAIN** |')
+    // The summary says why, from the end of the error — and never quotes a vote marker as the reason.
+    expect(deps.git.prComments.at(-1)).toContain('Claude did not review: Error: Claude Code error (error_max_turns): Looks correct.')
   })
 
   test('a completed review without a vote marker still registers its blockers', async () => {
@@ -497,7 +500,9 @@ describe('executeCommitteePrReview', () => {
     expect(next.reviewVerdict?.decision).toBe('approve')
     expect(next.reviewVerdict?.comments).not.toContain('sandbox write')
     expect(deps.git.prComments.at(-1)).toContain('APPROVED')
-    expect(deps.git.prComments.at(-1)).not.toContain('sandbox write')
+    // The failed seat's error is quoted as the reason it did not review — never as a blocker.
+    expect(deps.git.prComments.at(-1)).not.toContain('### Blockers')
+    expect(deps.git.prComments.at(-1)).toContain('Claude did not review:')
   })
 
   test('three abstentions → in_review, no verdict', async () => {

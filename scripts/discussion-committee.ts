@@ -151,7 +151,7 @@ async function reviewOnce(
         createdAt: new Date().toISOString(),
       })
       const result = await resultP
-      return { agent, vote: extractVote(result.content), text: result.content, costUsd: 0 }
+      return { agent, vote: result.failed ? 'abstain' : extractVote(result.content), text: result.content, costUsd: 0 }
     }
     const messages: LLMMessage[] = [{ role: 'user', content: claudeUserContent(title, body) }]
     const result = await runToolUseLoop(agent, systemPrompt, messages, [], getAdapter)

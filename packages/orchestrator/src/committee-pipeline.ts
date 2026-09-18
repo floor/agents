@@ -248,6 +248,13 @@ async function dispatchExternalAgent(
 
   try {
     const result = await resultP
+    if (result.failed) {
+      // The bridge answered, but only to say its CLI failed. That is not a
+      // member abstaining: it is a seat that did not review, and the reason
+      // (quota, login, crash) is what a person needs to read on the PR.
+      console.log(`[committee] ${agent.id}: bridge reported a failure — ${result.content.split('\n')[0]}`)
+      return abstainVote(agent, result.content)
+    }
     const vote = extractVote(result.content)
     console.log(`[committee] ${agent.id}: gateway vote received — ${vote}`)
 

@@ -167,6 +167,16 @@ function prReviewUserMessage(issue: Issue, diff: string): string {
   ].join('\n')
 }
 
+/**
+ * Why a seat failed, in one line: the last thing its error says. A CLI opens with
+ * a banner and closes with the reason ("You've hit your usage limit…").
+ */
+export function failureLine(reason: string): string {
+  const lines = reason.split('\n').map(l => l.trim()).filter(l => l && !/^VOTE\s*:/i.test(l))
+  const last = lines.at(-1) ?? 'no reason given'
+  return last.length > 240 ? `${last.slice(0, 240)}…` : last
+}
+
 export async function executeCommitteePrReview(
   issue: Issue,
   state: ExecutionState,
@@ -204,7 +214,7 @@ export async function executeCommitteePrReview(
   for (const vote of votes) {
     const voter = byId.get(vote.agentId)
     const body = [
-      `## ${vote.agentName} Review (cycle ${cycle})`,
+      vote.execution === 'failed' ? `## ${vote.agentName} did not review (cycle ${cycle})` : `## ${vote.agentName} Review (cycle ${cycle})`,
       '',
       vote.response || vote.summary,
       '',
@@ -227,6 +237,7 @@ export async function executeCommitteePrReview(
     '| Agent | Vote |',
     '|-------|------|',
     ...votes.map(v => `| ${v.agentName} | **${v.vote.toUpperCase()}** |`),
+    ...votes.filter(v => v.execution === 'failed').map(v => `\n${v.agentName} did not review: ${failureLine(v.summary)}`),
     '',
     `**Outcome: ${outcomeLabel}**`,
     outcome === 'no_decision'

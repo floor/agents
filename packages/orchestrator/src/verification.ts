@@ -1,25 +1,29 @@
 import type { CommandResult, GuardrailsConfig, ProjectCommand, VerificationResult } from '@floor-agents/core'
+import { createExcerptBuffer } from '@floor-agents/core'
 import { validateAgentOutput } from './guardrails.ts'
 import { gitText, snapshotWorktree, type Worktree } from './worktree.ts'
 import { mkdtemp } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { projectCommandSandbox, sandboxed } from '@floor-agents/sandbox'
 
-const OUTPUT_LIMIT = 32_768
+/**
+ * What is kept of each stream: 32 KB, most of it from the end. A test run names
+ * its failures and prints its summary last; the first 32 KB of a long suite are
+ * passing tests, and keeping those left a failed gate with no reason in its record.
+ */
+const OUTPUT_HEAD = 4_096
+const OUTPUT_TAIL = 28_672
 
 async function readOutput(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
-  let output = ''
-  let truncated = false
+  const kept = createExcerptBuffer(OUTPUT_HEAD, OUTPUT_TAIL)
   while (true) {
     const { value, done } = await reader.read()
     if (done) break
-    const text = decoder.decode(value, { stream: true })
-    if (output.length + text.length > OUTPUT_LIMIT) truncated = true
-    output += text.slice(0, Math.max(0, OUTPUT_LIMIT - output.length))
+    kept.push(decoder.decode(value, { stream: true }))
   }
-  return output + (truncated ? '\n[output truncated]' : '')
+  return kept.text()
 }
 
 export async function runProjectCommand(cwd: string, check: ProjectCommand): Promise<CommandResult> {

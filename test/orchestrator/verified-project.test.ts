@@ -369,6 +369,13 @@ test('timeouts and missing executables fail with structured results', async () =
   const result = await runProjectCommand(root, { name: 'timeout', command: [process.execPath, '-e', 'await Bun.sleep(10000)'], timeoutMs: 40 })
   expect(result.timedOut).toBe(true)
   expect(result.exitCode).not.toBe(0)
+  // A long run says why it failed at the end: 200 KB of passing tests must not push the reason out of the record.
+  const long = await runProjectCommand(root, { name: 'long', command: [process.execPath, '-e', 'console.log("first line"); for (let i = 0; i < 4000; i++) console.log("ok ".repeat(16)); console.log("1 fail: expected 42"); process.exit(1)'] })
+  expect(long.exitCode).toBe(1)
+  expect(long.stdout.startsWith('first line')).toBe(true)
+  expect(long.stdout.trimEnd().endsWith('1 fail: expected 42')).toBe(true)
+  expect(long.stdout).toMatch(/\[… \d+ characters omitted …\]/)
+  expect(long.stdout.length).toBeLessThan(34_000)
   const missing = await runProjectCommand(root, { name: 'missing', command: ['floor-command-does-not-exist'] })
   expect(missing.exitCode).not.toBe(0)
 })

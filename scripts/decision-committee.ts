@@ -107,6 +107,7 @@ async function decideOnce(
         createdAt: new Date().toISOString(),
       })
       const r = await resultP
+      if (r.failed) throw new Error(r.content) // the reason, never a pick read out of an error
       return { agent, pick: extractPick(r.content), text: r.content, costUsd: 0 }
     }
     const messages: LLMMessage[] = [{ role: 'user', content: claudeContent(body) }]

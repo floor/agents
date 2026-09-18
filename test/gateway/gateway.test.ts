@@ -407,4 +407,31 @@ describe('reconnection / task re-queue', () => {
 
     expect(taskId).toBe('task-requeue')
   })
+
+  test('a result flagged as failed reaches the waiter as failed', async () => {
+    gateway = createGateway({ port: TEST_PORT })
+    gateway.start()
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws`)
+    await new Promise<void>(resolve => {
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'register', agentId: 'codex', name: 'Codex', capabilities: ['vote'] }))
+      ws.onmessage = (event) => { if ((JSON.parse(event.data as string) as { type: string }).type === 'welcome') resolve() }
+    })
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data as string) as { type: string; task?: { id: string } }
+      if (msg.type === 'assignment' && msg.task) {
+        ws.send(JSON.stringify({ type: 'result', taskId: msg.task.id, content: 'Error processing task: out of quota', failed: true }))
+      }
+    }
+    gateway.assign('codex', { id: 'task-failed', issueId: 'i', title: 't', body: 'b', systemPrompt: 's', createdAt: new Date().toISOString() })
+    const result = await gateway.waitForResult('task-failed', 5000)
+    ws.close()
+    expect(result.failed).toBe(true)
+    expect(result.content).toContain('out of quota')
+  })
+
+  test('a result whose failed flag is not a boolean is refused', () => {
+    expect(validateAgentMessage({ type: 'result', taskId: 't', content: 'c', failed: 'yes' })).toBe(false)
+    expect(validateAgentMessage({ type: 'result', taskId: 't', content: 'c', failed: true })).toBe(true)
+    expect(validateAgentMessage({ type: 'result', taskId: 't', content: 'c' })).toBe(true)
+  })
 })

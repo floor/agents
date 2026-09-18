@@ -17,6 +17,7 @@
 
 import type { TaskAssignment } from '@floor-agents/gateway'
 import { createGatewayClient } from '@floor-agents/gateway'
+import { excerpt } from '@floor-agents/core'
 import { buildGrokPrompt, buildGrokArgs } from './lib/grok.ts'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -69,7 +70,7 @@ async function reviewWithGrok(task: TaskAssignment): Promise<string> {
   const second = await runGrok(prompt, true)
   if (second.exitCode === 0 && second.review) return second.review
 
-  const detail = (second.stderr || first.stderr).slice(0, 400)
+  const detail = excerpt(second.stderr || first.stderr, 1_000)
   throw new Error(`grok review produced no output after retry (exit ${second.exitCode}): ${detail}`)
 }
 

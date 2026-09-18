@@ -20,6 +20,7 @@ export function validateAgentMessage(data: unknown): data is AgentMessage {
     case 'result':
       return typeof obj.taskId === 'string' && obj.taskId.length > 0
         && typeof obj.content === 'string'
+        && (obj.failed === undefined || typeof obj.failed === 'boolean')
     case 'heartbeat':
       return true
     default:
@@ -45,7 +46,8 @@ export type ServerMessage =
 // Agent → Server messages
 export type AgentMessage =
   | { readonly type: 'register'; readonly agentId: string; readonly name: string; readonly capabilities: readonly string[] }
-  | { readonly type: 'result'; readonly taskId: string; readonly content: string }
+  // `failed`: the agent never produced an answer — `content` is the reason, not a review.
+  | { readonly type: 'result'; readonly taskId: string; readonly content: string; readonly failed?: boolean }
   | { readonly type: 'heartbeat' }
 
 export type TaskAssignment = {
@@ -61,6 +63,8 @@ export type TaskResult = {
   readonly taskId: string
   readonly agentId: string
   readonly content: string
+  /** The agent's handler threw: `content` says why, and must not be read as an answer. */
+  readonly failed?: boolean
   readonly receivedAt: Date
 }
 

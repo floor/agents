@@ -193,7 +193,7 @@ bun scripts/codex-agent.ts
 
 See the [Gateway documentation](../gateway.md) for the full protocol, REST fallback, and building custom agents.
 
-If an external agent disconnects mid-review, the gateway re-queues its task and re-dispatches on reconnect. If it times out entirely, the agent's vote counts as ABSTAIN. If its bridge never starts, the engine abstains immediately rather than waiting for a poll timeout.
+If an external agent disconnects mid-review, the gateway re-queues its task and re-dispatches on reconnect. If it times out entirely, the agent's vote counts as ABSTAIN. If its bridge answers only to report that its CLI failed (quota, login, crash), the seat is recorded as a failed execution: its PR comment is headed "did not review", the summary quotes the last line of the error, and nothing in that error is read as a vote or a blocker. If its bridge never starts, the engine abstains immediately rather than waiting for a poll timeout.
 
 An external member that should vote by posting on the issue instead of through a CLI bridge sets `voteByComment: true`. That is the only path that still polls issue comments.
 

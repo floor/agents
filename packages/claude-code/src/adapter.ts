@@ -1,4 +1,5 @@
 import type { LLMAdapter, LLMConfig, LLMResponse, ToolCall } from '@floor-agents/core'
+import { excerpt } from '@floor-agents/core'
 import { sandboxed, type SandboxSpec } from '@floor-agents/sandbox'
 
 export type ClaudeCodeAdapterConfig = {
@@ -172,7 +173,7 @@ export function createClaudeCodeAdapter(config: ClaudeCodeAdapterConfig = {}): L
       try {
         data = JSON.parse(stdout)
       } catch {
-        throw new Error(`Claude Code returned invalid JSON: ${stdout.slice(0, 500)}`)
+        throw new Error(`Claude Code returned invalid JSON: ${excerpt(stdout)}`)
       }
 
       const resultText = interpretClaudeCodeTurn(data, stderr)

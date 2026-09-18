@@ -22,6 +22,7 @@ packages/core/src/
 │   ├── loader.ts            ← loadCompanyConfig(path?) → CompanyConfig
 │   └── validator.ts         ← validateCompanyConfig(config) → string[]
 └── utils/
+    ├── excerpt.ts           ← excerpt(text, max?), createExcerptBuffer(head, tail)
     └── tokens.ts            ← estimateTokens(text) → number
 ```
 
@@ -93,3 +94,20 @@ estimateTokens('hello world') // → 3 (Math.ceil(11 / 4))
 ```
 
 Rough estimation at ~4 characters per token. Used by the context builder for budget allocation.
+
+## Excerpts
+
+```typescript
+import { excerpt, createExcerptBuffer } from '@floor-agents/core'
+
+excerpt(stderr)            // at most 1,500 characters: a quarter from the start, the rest from the end
+excerpt(stderr, 500)
+
+const kept = createExcerptBuffer(4_096, 28_672)   // for a stream: head as it arrives, a sliding tail
+kept.push(chunk)
+kept.text()
+```
+
+A process says why it failed in its last lines, so anything the engine cuts to fit — an adapter
+error, a bridge error, the output of a verification command — keeps its end, with
+`[… N characters omitted …]` where the middle was. Do not write `text.slice(0, n)` on process output.

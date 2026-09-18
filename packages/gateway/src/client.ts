@@ -99,10 +99,13 @@ export function createGatewayClient(config: GatewayClientConfig): GatewayClient 
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err)
             console.error(`[client:${config.agentId}] task handler error: ${message}`)
+            // Flagged, not just worded: the reason may quote the prompt, vote
+            // markers included, and must never be parsed as an answer.
             ws!.send(JSON.stringify({
               type: 'result',
               taskId: task.id,
               content: `Error processing task: ${message}\n\nVOTE: ABSTAIN`,
+              failed: true,
             }))
           }
           break

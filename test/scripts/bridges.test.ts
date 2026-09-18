@@ -167,6 +167,45 @@ describe('startExternalVoters', () => {
     expect(state.stopped).toBe(true)
   })
 
+  test('two reviews at once do not fight over a port: each owned gateway takes a free one', async () => {
+    // Measured: two `run`s, both on the configured 3100 — the second lost Codex ("Is port 3100 in use?", mtrl #92).
+    const urls: string[] = []
+    const open = () => startExternalVoters([agent('codex', 'codex-cli')], {
+      port: 3199,
+      repo: '/r',
+      log: m => logs.push(m),
+      manifest,
+      connectTimeoutMs: 20,
+      spawn: (_script, env) => { urls.push(env.GATEWAY_URL!); return deadProc(1, [], 'codex') },
+    })
+    const first = await open()
+    const second = await open()
+    try {
+      const ports = [first, second].map(s => s.gateway.getPort!())
+      expect(ports[0]).toBeGreaterThan(0)
+      expect(ports[1]).toBeGreaterThan(0)
+      expect(ports[0]).not.toBe(ports[1])
+      expect(ports).not.toContain(3199)
+      // The bridge is sent to the port that was bound, not to the configured one.
+      expect(urls).toEqual(ports.map(p => `ws://localhost:${p}`))
+    } finally {
+      first.stop()
+      second.stop()
+    }
+  })
+
+  test('a gateway the caller holds keeps its own port for the bridges', async () => {
+    const connected = new Set<string>()
+    const { gateway } = fakeGateway(connected)
+    let url = ''
+    const session = await startExternalVoters([agent('codex', 'codex-cli')], {
+      port: 3199, repo: '/r', log: m => logs.push(m), manifest, gateway: { ...gateway, getPort: () => 4242 },
+      spawn: (_script, env) => { url = env.GATEWAY_URL!; return connectedProc(env.AGENT_ID!, connected, []) },
+    })
+    session.stop()
+    expect(url).toBe('ws://localhost:4242')
+  })
+
   test('reuses a running gateway and does not stop it', async () => {
     const connected = new Set<string>()
     const killed: string[] = []

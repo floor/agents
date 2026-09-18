@@ -180,7 +180,7 @@ If you need a custom prompt, set `promptTemplate` to a different path in the age
 
 ## External agents
 
-External agents (marked `external: true`) connect to the gateway WebSocket to receive assignments. The gateway starts automatically when external agents are present in `watch` mode. In `run --issue`, a gateway is started only for the committee PR review (if any external voter needs a bridge) and is torn down with the bridges when the votes are in.
+External agents (marked `external: true`) connect to the gateway WebSocket to receive assignments. The gateway starts automatically when external agents are present in `watch` mode. In `run --issue`, a gateway is started only for the committee PR review (if any external voter needs a bridge), on a free port handed to its bridges, and is torn down with them when the votes are in. Two runs reviewing at once therefore never collide on `GATEWAY_PORT`.
 
 To run the included Codex agent yourself (for example alongside `watch`, if you are not using the engine-spawned bridges):
 

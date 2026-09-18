@@ -25,6 +25,7 @@ const gateway = createGateway({
 })
 
 gateway.start()
+gateway.getPort()               // the port actually bound — useful with `port: 0`, which takes any free one
 
 // Assign a task to an agent (queued if not connected)
 gateway.assign('codex', {
@@ -39,6 +40,7 @@ gateway.assign('codex', {
 // Wait for the result
 const result = await gateway.waitForResult('task-1', 60_000)
 console.log(result.content) // "Analysis... VOTE: APPROVE"
+if (result.failed) { /* the agent's handler threw: content is the reason, not an answer */ }
 ```
 
 ### Authentication

@@ -8,6 +8,7 @@
  * Merging stays with the coordinator.
  */
 
+import { discussionSection } from './discussion.ts'
 import type {
   CompanyConfig,
   GitAdapter,
@@ -150,10 +151,19 @@ async function advanceState(
   return next
 }
 
-function prReviewUserMessage(issue: Issue, diff: string): string {
+/**
+ * What a reviewer is given: the issue, what was said under it, and the diff.
+ *
+ * The discussion was missing. On mtrl #92 the owner had decided the behaviour
+ * change under the issue; the reviewers saw only the issue body, which still
+ * said "decide". Codex blocked three cycles running on "this is a behaviour
+ * change" — a point the implementer could not answer and the owner already had.
+ */
+export function prReviewUserMessage(issue: Issue, diff: string, discussion = ''): string {
   return [
     `## Pull Request for Review\n\n**${issue.title}**`,
     issue.body ? `\n${issue.body}` : '',
+    discussion ? `\n${discussion}\n\nA decision recorded in this discussion by the project owner or the coordinator is settled: review the change against it. If you disagree with the decision itself, say so as a concern for the owner — not as a BLOCKER, which only the implementer is asked to resolve.` : '',
     '\n## PR Diff',
     '```diff',
     diff,
@@ -189,7 +199,14 @@ export async function executeCommitteePrReview(
   state = await advanceState(state, 'reviewing', {}, stateStore)
 
   const diff = await gitAdapter.getPRDiff(company.project.repo, state.prId!)
-  const userMessage = prReviewUserMessage(issue, diff)
+  let discussion = ''
+  try {
+    discussion = taskAdapter.getComments ? discussionSection(await taskAdapter.getComments(issue.id)) : ''
+  } catch (err) {
+    // A comments outage must not cost the review: it runs on the issue and the diff, as before.
+    console.error(`[committee] could not read discussion: ${err instanceof Error ? err.message : String(err)}`)
+  }
+  const userMessage = prReviewUserMessage(issue, diff, discussion)
 
   console.log(`[committee] PR review: "${issue.title}" with ${voters.length} members (${diff.length} chars of diff)`)
 

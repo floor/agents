@@ -52,4 +52,5 @@ A one-minute review of a *brief* by Codex found seven gaps before any code was w
 - Nothing is mergeable without a committee verdict on its latest commit.
 - Grok left the review seat where it implements; Gemini reviews on request; Codex and Claude review
   every PR.
-- Product work paused; the engine is polished first, by hand, against the run-path map.
+- Product work paused; the engine is polished first, by hand, against the run-path map. What
+  followed is in [The Polish Sprint](../polish-sprint.md) and [the benchmarks](./2026-09-18-benchmarks.md).

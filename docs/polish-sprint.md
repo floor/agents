@@ -89,6 +89,7 @@ All merged into `staging` on 2026-09-18, in order. "Found by" says what made the
 | #80 | A review's own gateway binds a free port and hands it to its bridges; `Gateway.getPort()` | benchmark 2: two runs at once, both on port 3100, and one lost its Codex seat |
 | #81 | **`review --issue`.** Seats the committee again on the same PR when the last review ended with no decision. Refuses when there is a verdict | both benchmarks: an unjudged PR could only be judged by redoing the whole run |
 | #82 | **Reviewers read the issue discussion.** A decision recorded there by the owner or the coordinator is settled; disagreement with it is a concern for the owner, not a BLOCKER | benchmark 2: three cycles blocked on a decision the owner had already recorded |
+| #84 | **A blocker that stood through a revision stops the loop** for a person, named in both wordings; `review --issue` reopens it once the point is settled on the issue. `BLOCKER` headings and bullets are recognised; each member's blockers are kept on the review record | benchmark 2: mtrl #92 spent three cycles on one sentence; on vlist #260 Claude's `## BLOCKER 1:` headings were not read, and the implementer got the first 500 characters of the review instead |
 
 Open: **#73** (Grok's "a gate failure becomes a fix turn"). It reached the maximum review cycles
 with Codex's recovery blockers outstanding. Its tests are worth keeping when typed outcomes are
@@ -151,8 +152,8 @@ Recorded on the evening of 2026-09-18.
    verifies what is published~~ (#78). ~~Readable failures~~ (#79). ~~`review`~~ (#81).
 2. **Service safety:** FLO-182 (shutdown and restart), FLO-196 (machine slots), then the pm2
    watcher on one project with the label trigger.
-3. **The revision loop:** a blocker repeated unchanged across two cycles ends the loop as "needs a
-   person" (typed outcomes, FLO-198); a revision continues the previous session in the same
+3. **The revision loop:** ~~a blocker repeated across two cycles ends the loop as "needs a
+   person"~~ (#84); typed outcomes (FLO-198); a revision continues the previous session in the same
    worktree with a small prompt (FLO-192, 197, 199, and `--add-dir` for `agy`, FLO-203).
 4. **`--continue`** instead of a force reset (FLO-187), and `floor-agents clean` for kept
    worktrees and any `gate-*` directory left by a killed process.

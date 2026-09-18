@@ -138,9 +138,15 @@ export type ReviewRecord = {
   readonly at: string
   readonly commitSha: string | null
   readonly durationMs: number
-  readonly votes: readonly { readonly agentId: string; readonly agentName: string; readonly vote: string; readonly execution?: string }[]
+  readonly votes: readonly {
+    readonly agentId: string; readonly agentName: string; readonly vote: string; readonly execution?: string
+    /** The `BLOCKER:` lines this member wrote — what the next cycle is compared with. */
+    readonly blockers?: readonly string[]
+  }[]
   readonly outcome: string
   readonly blockers?: string
+  /** Blockers a member repeated after a revision: the review loop stopped on them for a person. */
+  readonly standing?: readonly string[]
 }
 
 export type StateStore = {

@@ -114,6 +114,9 @@ describe('seating the committee again', () => {
     expect(reseatRefusal({ ...done('no_decision'), prId: null })).toContain('no pull request')
     expect(reseatRefusal({ ...done('no_decision'), step: 'failed' })).toContain('failed')
     expect(reseatRefusal({ ...done('no_decision'), reviews: [] })).toContain('no review')
+    // A loop stopped on a standing blocker is reopened once a person has settled the point.
+    expect(reseatRefusal({ ...done('request_changes'), step: 'failed', reviews: [{ ...review('request_changes'), standing: ['Codex: keep 0.9.x behaviour'] }] })).toBeNull()
+    expect(reseatRefusal({ ...done('request_changes'), step: 'failed' })).toContain('failed')
     // The last review counts, not an earlier one.
     expect(reseatRefusal({ ...done('no_decision'), reviews: [review('no_decision'), review('approve')] })).toContain('approve')
   })

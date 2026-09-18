@@ -336,7 +336,8 @@ if (args.command === 'review') {
     // The pipeline is entered at its review step: it checks that the pull request
     // still carries the verified commit, seats the committee, and goes on from the
     // verdict as any run does — a revision on a rejection, done on an approval.
-    const reviewing = { ...recorded!, step: 'reviewing' as const, updatedAt: new Date().toISOString() }
+    await task.removeLabel(issue.id, 'needs-human')
+    const reviewing = { ...recorded!, step: 'reviewing' as const, error: null, updatedAt: new Date().toISOString() }
     await stateStore.save(reviewing)
     await executeTask(issue, agent, oneShotDeps(), reviewing)
     const state = await stateStore.get(issue.id)

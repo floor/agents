@@ -138,14 +138,19 @@ export function recordReview(state: ExecutionState, review: ReviewRecord): Execu
  * A review that ends with no decision is not a verdict: a seat was out of quota,
  * a bridge lost its port. The pull request is fine and unjudged, and the only
  * way to have it judged used to be a whole new run. Seating the committee again
- * is for that case only: a rejected change goes to a revision, an approved one
- * is done, and neither is reopened by asking again.
+ * is for that case, and for a loop that stopped on a blocker which stood through
+ * a revision — once a person has settled the point on the issue. Otherwise a
+ * rejected change goes to a revision, an approved one is done, and neither is
+ * reopened by asking again.
  */
 export function reseatRefusal(state: ExecutionState | null | undefined): string | null {
   if (!state) return 'no run is recorded for it'
   if (!state.prId) return 'its run opened no pull request'
-  if (state.step !== 'done') return `its run is ${state.step}, not done`
   const last = state.reviews?.at(-1)
+  // A loop that stopped on a standing blocker waits for a person to settle the
+  // point on the issue; once that is done the same pull request is judged again.
+  if (state.step === 'failed' && last?.standing?.length) return null
+  if (state.step !== 'done') return `its run is ${state.step}, not done`
   if (!last) return 'no review is recorded for it'
   if (last.outcome !== 'no_decision') return `its last review ended with ${last.outcome}, not with no decision`
   return null
@@ -184,6 +189,7 @@ export function historyText(state: ExecutionState, exists: (path: string) => boo
   if (reviews.length) lines.push('', 'reviews:')
   for (const r of reviews) {
     lines.push(`  cycle ${r.cycle} · ${minutes(r.durationMs)} · ${r.outcome} · ${r.votes.map(v => `${v.agentName} ${v.vote}${v.execution === 'failed' ? ' (failed)' : ''}`).join(', ')}`)
+    for (const blocker of r.standing ?? []) lines.push(`     stood through a revision — ${blocker.slice(0, 160)}`)
   }
   return lines.join('\n')
 }

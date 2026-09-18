@@ -124,6 +124,8 @@ export type Attempt = {
   readonly worktreePath?: string
   readonly exitCode?: number
   readonly subtype?: string
+  /** The agent CLI's process, while the turn runs: what a restart ends if a crash left it behind. */
+  readonly pid?: number
   /** The CLI's own session, when it names one: what a revision resumes instead of starting over. */
   readonly sessionId?: string
   /** The attempt whose session this turn continued. */

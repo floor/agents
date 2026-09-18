@@ -19,7 +19,7 @@ import {
   type CommitteePrReviewDeps,
   type ExternalVoterHost,
 } from '@floor-agents/orchestrator'
-import { createCostTracker, DEFAULT_MAX_TURNS } from '@floor-agents/orchestrator'
+import { createCostTracker, DEFAULT_MAX_TURNS, resetLifecycle, stopChildren } from '@floor-agents/orchestrator'
 import type { CommitteeVote, CommitteeVoteExecution } from '@floor-agents/orchestrator'
 import type { Gateway, TaskResult } from '@floor-agents/gateway'
 
@@ -421,6 +421,27 @@ describe('executeCommitteePrReview', () => {
     expect(next.reviews?.at(-1)?.standing).toBeUndefined()
     // Each member's blockers are on the record for the cycle after this one.
     expect(next.reviews?.at(-1)?.votes.find(v => v.agentId === 'codex')?.blockers).toEqual(['The CHANGELOG must record the type-level breaks.'])
+  })
+
+  test('a stop during the review records nothing: the committee is seated again at the next start', async () => {
+    const agents = [makeVoter('claude'), makeVoter('codex')]
+    const deps = makeDeps(agents, {}, {
+      getAdapter: () => ({
+        async run() {
+          await stopChildren(0) // SIGTERM: the engine ends the reviewers' processes
+          throw new Error('killed')
+        },
+      }),
+    })
+    try {
+      await expect(executeCommitteePrReview(makeIssue(), makeState(), deps)).rejects.toThrow('stopped during the review')
+      expect(deps.git.prComments).toEqual([])
+      const saved = await deps.store.get('issue-1')
+      expect(saved?.step).toBe('reviewing')
+      expect(saved?.reviews ?? []).toEqual([])
+    } finally {
+      resetLifecycle()
+    }
   })
 
   test('a comments outage does not cost the review', async () => {

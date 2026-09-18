@@ -5,6 +5,7 @@ import { gitText, snapshotWorktree, type Worktree } from './worktree.ts'
 import { mkdtemp } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { projectCommandSandbox, sandboxed } from '@floor-agents/sandbox'
+import { trackChild } from './lifecycle.ts'
 
 /**
  * What is kept of each stream: 32 KB, most of it from the end. A test run names
@@ -35,6 +36,7 @@ export async function runProjectCommand(cwd: string, check: ProjectCommand): Pro
     // the checkout and package caches. Refused where the sandbox is unavailable.
     const argv = sandboxed([...check.command], projectCommandSandbox([cwd]))
     const proc = Bun.spawn(argv, { cwd, stdout: 'pipe', stderr: 'pipe', stdin: 'ignore', detached: process.platform !== 'win32' })
+    trackChild(proc, proc.exited)
     const timeout = setTimeout(() => {
       timedOut = true
       // Test runners commonly spawn children which keep output pipes open.

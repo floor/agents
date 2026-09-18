@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { AgentDefinition, CompanyConfig, ExecutionState, GitAdapter, Issue, LLMAdapter, ProjectConfig, TaskAdapter } from '@floor-agents/core'
 import { loadCompanyConfig } from '@floor-agents/core'
-import { createStateStore, createCostTracker, executeTask, freshState, historyOf, runNativeDevAgent, verifyFailedReport, verifyPreservedAttempt, verifyRefusal } from '@floor-agents/orchestrator'
+import { createStateStore, createCostTracker, executeTask, freshState, historyOf, runNativeDevAgent, verifyFailedReport, verifyPreservedAttempt, verifyRefusal, resetLifecycle, stopChildren, STOPPED_BY_ENGINE } from '@floor-agents/orchestrator'
 import { createContextBuilder } from '@floor-agents/context-builder'
 import { commitWorktree, createWorktree, gitText } from '../../packages/orchestrator/src/worktree.ts'
 import { validateWorktree, verifyWorktree, runProjectCommand } from '../../packages/orchestrator/src/verification.ts'
@@ -736,5 +736,33 @@ describe('a revision continues the implementer’s session', () => {
     } finally {
       delete process.env.FLOOR_AGENTS_RESUME
     }
+  })
+})
+
+describe('the engine is stopped during a turn', () => {
+  afterEach(() => resetLifecycle())
+
+  test('the turn is recorded as stopped by the engine, the task is not failed, and nobody is called', async () => {
+    const { task, git, comments } = adapters('42')
+    const labels: string[] = []
+    task.setLabel = async (_id, label) => { labels.push(label) }
+    const nativeDev: AgentDefinition = { ...agent, llm: { ...agent.llm, provider: 'cursor' } }
+    const store = createStateStore(join(dir, 'state'))
+    await executeTask(issue, nativeDev, {
+      company, taskAdapter: task, gitAdapter: git, stateStore: store, costTracker: createCostTracker(),
+      contextBuilder: createContextBuilder({ taskAdapter: task, gitAdapter: git }),
+      getAdapter: () => { throw new Error('not used') }, findReviewer: () => undefined,
+      runAgent: async (_prompt, cwd) => {
+        await Bun.write(join(cwd, 'answer.txt'), 'half')
+        await stopChildren(0) // SIGTERM arrives: the engine ends its children, the CLI dies
+        return { resultText: '', cost: 0, durationMs: 5_000, exitCode: 143 }
+      },
+    })
+    const saved = await store.get(issue.id)
+    expect(saved?.step).not.toBe('failed')
+    expect(saved?.error).toBeNull()
+    expect(saved?.attempts?.at(-1)).toMatchObject({ outcome: 'stopped', error: STOPPED_BY_ENGINE })
+    expect(labels).not.toContain('needs-human')
+    expect(comments.some(c => c.includes('stopped') || c.includes('crash') || c.includes('did not finish'))).toBe(false)
   })
 })

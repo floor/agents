@@ -109,9 +109,11 @@ export function closeAttempt(
 ): ExecutionState {
   const current = lastAttempt(state)
   if (!current || current.outcome !== 'running') return state
-  const { worktreePath, ...rest } = current
+  // A closed turn has no process; a published one has no worktree either.
+  const { pid: _pid, ...ended } = current
+  const { worktreePath: _worktreePath, ...rest } = ended
   const closed: Attempt = {
-    ...(outcome === 'published' ? rest : current),
+    ...(outcome === 'published' ? rest : ended),
     outcome, endedAt: now(),
     ...(extra.commitSha ? { commitSha: extra.commitSha } : {}),
     ...(extra.error ? { error: extra.error.slice(0, 1_000) } : {}),

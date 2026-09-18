@@ -52,6 +52,26 @@ mode; otherwise it uses the developer/reviewer flow triggered by `agent`. PM and
 QA workflow integration is not active. A configured verification pipeline runs
 preflight at service startup, too.
 
+## Stopping and restarting
+
+The engine starts processes of its own: the agent CLI (in its own process group, with whatever it
+runs — test runners, browsers), the project's setup and checks, and the reviewers' bridges.
+
+**A stop** (`SIGINT`, `SIGTERM`; `Ctrl-C`, `pm2 stop`, `pm2 reload`) is handled the same way by
+every command. The engine ends each child's whole process group — `SIGTERM`, then `SIGKILL` 1.5
+seconds later — stops the gateway and the watchers, and exits 0. The turn that was running is
+closed as `stopped` with the note that the *engine* stopped it: the task is not failed, nothing is
+posted on the issue, no `needs-human`, and its worktree is kept. Under pm2 set `kill_timeout` above
+pm2's default of 1.6 seconds (the shipped `ecosystem.config.cjs` uses 10 seconds), or pm2 kills the
+engine before it has ended its children.
+
+**A start** of `watch` resumes every task that is neither done nor failed, from the step it was
+at. If a task's last turn is still marked `running` — a crash, a `kill -9`, a power cut — nobody is
+running it: the turn is closed as `stopped`, and if the process recorded on it is still alive *and
+still carries that turn's worktree in its command line* (so a recycled pid is never touched) it is
+ended. The issue gets a signed note — "The engine restarted. Attempt N was interrupted…" with the
+path of the kept tree — and a new turn starts. One agent per issue, whatever happened.
+
 Developer commands and prompt paths are project-specific; paths resolve relative
 to the manifest, not the launch directory. Missing prompts fail preflight rather
 than silently degrading the new one-shot workflow.

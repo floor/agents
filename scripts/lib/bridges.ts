@@ -23,6 +23,7 @@ import { privateSourceDenials } from '@floor-agents/core'
 import { denyReadEnv } from '@floor-agents/sandbox'
 import { createGateway, type Gateway, type GatewayConfig } from '@floor-agents/gateway'
 import { join } from 'node:path'
+import { trackChild } from '../../packages/orchestrator/src/lifecycle.ts'
 
 export type BridgePlan = {
   readonly script: string
@@ -139,11 +140,25 @@ export type StartExternalVotersOpts = {
 }
 
 function defaultSpawn(script: string, env: Record<string, string | undefined>): SpawnedBridge {
-  return Bun.spawn(['bun', join(import.meta.dir, '..', script)], {
+  // Its own process group: a bridge runs a reviewer CLI, and ending the bridge
+  // alone left that CLI reviewing for nobody.
+  const proc = Bun.spawn(['bun', join(import.meta.dir, '..', script)], {
     env,
     stdout: 'inherit',
     stderr: 'inherit',
+    detached: process.platform !== 'win32',
   })
+  trackChild(proc, proc.exited)
+  return {
+    exited: proc.exited,
+    get exitCode() { return proc.exitCode },
+    kill() {
+      try {
+        if (process.platform !== 'win32') process.kill(-proc.pid, 'SIGTERM')
+        else proc.kill()
+      } catch { proc.kill() }
+    },
+  }
 }
 
 async function waitForConnect(

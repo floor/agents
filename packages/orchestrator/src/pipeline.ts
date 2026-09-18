@@ -1,3 +1,4 @@
+import { engineStopping } from './lifecycle.ts'
 import type {
   CompanyConfig,
   TaskAdapter,
@@ -450,6 +451,12 @@ export async function executeTask(
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
+    if (engineStopping()) {
+      // Whatever broke, broke because the engine is stopping and ended its children.
+      // Nothing failed: no report, no label, and the step stays where a start resumes it.
+      console.log(`[orchestrator] stopped during ${state.step}: ${issue.key ?? issue.id} resumes at the next start`)
+      return
+    }
     console.error(`[orchestrator] error: ${message}`)
     state = await advanceState(await stateStore.get(issue.id) ?? state, 'failed', { error: message }, stateStore)
     // The engine is the one reporting — the agent that stopped did not write

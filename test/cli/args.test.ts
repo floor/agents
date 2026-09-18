@@ -16,6 +16,12 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['run', '--retry'])).toThrow('Usage: floor-agents run --issue')
   })
 
+  test('status reads one issue', () => {
+    expect(parseArgs(['status', '--issue', 'FLO-191'])).toEqual({ command: 'status', config: undefined, issue: 'FLO-191' })
+    expect(() => parseArgs(['status'])).toThrow('Usage: floor-agents status --issue')
+    expect(() => parseArgs(['doctor', '--issue', 'FLO-1'])).toThrow('--issue is only supported with run and status')
+  })
+
   test('no command means watch', () => {
     expect(parseArgs([])).toEqual({ command: 'watch', config: undefined, issue: undefined })
   })

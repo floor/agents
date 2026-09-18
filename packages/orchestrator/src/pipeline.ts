@@ -45,6 +45,14 @@ function formatDuration(ms: number): string {
   return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
 }
 
+/**
+ * The state a run starts from. A retry starts over — a new branch tip, a new
+ * turn — but not from nothing: the attempts and reviews so far come along.
+ */
+export function freshState(issueId: string, agentId: string, history: Pick<ExecutionState, 'attempts' | 'reviews'> = {}): ExecutionState {
+  return { ...makeState(issueId, agentId), ...history }
+}
+
 function makeState(issueId: string, agentId: string): ExecutionState {
   const now = new Date().toISOString()
   return {

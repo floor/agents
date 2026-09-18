@@ -32,6 +32,7 @@ import { costNote } from './cost-note.ts'
 import type { LLMAdapterResolver } from './llm-runner.ts'
 import { DEFAULT_MAX_TURNS } from './native-runner.ts'
 import { MAX_REVIEW_CYCLES } from './review.ts'
+import { recordReview } from './attempts.ts'
 
 /**
  * PR review is the only caller that gets the native reviewer's turn cap.
@@ -240,6 +241,12 @@ export async function executeCommitteePrReview(
   const signedSummary = sign(summary, ENGINE_SIGNATURE)
   await gitAdapter.addPRComment(company.project.repo, state.prId!, signedSummary)
   await taskAdapter.addComment(issue.id, signedSummary)
+
+  state = recordReview(state, {
+    cycle, at: new Date().toISOString(), commitSha: state.commitSha, durationMs: duration, outcome,
+    votes: votes.map(v => ({ agentId: v.agentId, agentName: v.agentName, vote: v.vote, ...(v.execution ? { execution: v.execution } : {}) })),
+    ...(reviewComments && outcome === 'request_changes' ? { blockers: reviewComments.slice(0, 2_000) } : {}),
+  })
 
   if (outcome === 'no_decision') {
     await taskAdapter.setStatus(issue.id, 'in_review')

@@ -9,11 +9,12 @@ import { createContextBuilder } from '@floor-agents/context-builder'
 import { commitWorktree, createWorktree, gitText } from '../../packages/orchestrator/src/worktree.ts'
 import { validateWorktree, verifyWorktree, runProjectCommand } from '../../packages/orchestrator/src/verification.ts'
 import { verifyAndCommit } from '../../packages/orchestrator/src/verified-commit.ts'
+import { sandboxAvailable } from '../helpers/sandbox.ts'
 
-// Project commands run inside sandbox-exec, which exists only on macOS and is
-// refused elsewhere. On macOS these tests exercise the real sandbox; on CI's
-// Linux runner they run the same pipeline uncontained, explicitly.
-if (process.platform !== 'darwin') process.env.FLOOR_AGENTS_SANDBOX = 'off'
+// Project commands run inside sandbox-exec. Where that cannot run — not macOS,
+// or nested inside the engine's own verification (macOS refuses to nest
+// sandbox-exec) — these tests exercise the same pipeline uncontained.
+if (!sandboxAvailable()) process.env.FLOOR_AGENTS_SANDBOX = 'off'
 
 let dir: string
 let root: string

@@ -1,8 +1,9 @@
 import { test, expect, describe } from 'bun:test'
-import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sandboxProfile, sandboxed, reviewerSandbox, implementerSandbox, projectCommandSandbox, withDenyRead, denyReadEnv } from '@floor-agents/sandbox'
+import { sandboxAvailable } from '../helpers/sandbox.ts'
 
 const HOME = '/Users/someone'
 
@@ -123,9 +124,31 @@ describe('sandboxed', () => {
   })
 })
 
+describe('sandboxAvailable', () => {
+  async function withFakeSandboxExec(exitCode: number, run: (env: Record<string, string | undefined>) => void) {
+    const bin = await mkdtemp(join(tmpdir(), 'floor-sandbox-probe-'))
+    try {
+      await Bun.write(join(bin, 'sandbox-exec'), `#!/bin/sh\nexit ${exitCode}\n`)
+      await chmod(join(bin, 'sandbox-exec'), 0o755)
+      run({ ...process.env, PATH: `${bin}:${process.env.PATH}` })
+    } finally {
+      await rm(bin, { recursive: true, force: true })
+    }
+  }
+
+  test('a sandbox-exec that exits 71 is unavailable; one that exits 0 is available', async () => {
+    await withFakeSandboxExec(71, env => {
+      expect(sandboxAvailable(env, 'darwin')).toBe(false)
+    })
+    await withFakeSandboxExec(0, env => {
+      expect(sandboxAvailable(env, 'darwin')).toBe(true)
+    })
+  })
+})
+
 // The profile's actual effect, enforced by the operating system. It uses a
 // temporary directory as "home", so nothing outside it is ever written.
-describe.skipIf(process.platform !== 'darwin' || !Bun.which('sandbox-exec'))('sandbox-exec enforcement', () => {
+describe.skipIf(!sandboxAvailable())('sandbox-exec enforcement', () => {
   test('writes outside the allowed folder fail; writes inside succeed; denied reads fail', async () => {
     const home = await mkdtemp(join(tmpdir(), 'floor-sandbox-'))
     try {

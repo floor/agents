@@ -7,9 +7,11 @@ import type {
   AgentDefinition,
 } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
+import type { Gateway } from '@floor-agents/gateway'
 import { resolveAgent } from './dispatcher.ts'
 import { executeTask } from './pipeline.ts'
 import type { CostTracker } from './cost-tracker.ts'
+import { committeePrReviewEnabled, committeeVoters } from './committee-pr-review.ts'
 
 export type OrchestratorConfig = {
   readonly company: CompanyConfig
@@ -21,6 +23,8 @@ export type OrchestratorConfig = {
   readonly costTracker: CostTracker
   /** Labels that hand an issue to the implementer. The manifest's `tasks.labels`; default `agent`. */
   readonly labels?: readonly string[]
+  /** Shared with committee PR review so external voters can take part. */
+  readonly gateway?: Gateway
 }
 
 export type Orchestrator = {
@@ -44,7 +48,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
   }
 
   function findReviewer(): AgentDefinition | undefined {
-    return company.agents.find(a => a.capabilities.includes('review_pr'))
+    return company.agents.find(a => a.capabilities.includes('review_pr') && !a.external)
   }
 
   const pipelineDeps = {
@@ -56,17 +60,23 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     costTracker,
     getAdapter: getLLMAdapter,
     findReviewer,
+    ...(config.gateway ? { gateway: config.gateway } : {}),
   }
 
   return {
     async start() {
       console.log('[orchestrator] starting...')
 
-      const reviewer = findReviewer()
-      if (reviewer) {
-        console.log(`[orchestrator] team mode: dev agents + ${reviewer.name} (${reviewer.llm.provider}/${reviewer.llm.model})`)
+      if (committeePrReviewEnabled(company)) {
+        const voters = committeeVoters(company.agents)
+        console.log(`[orchestrator] committee PR review: ${voters.map(a => a.name).join(', ')}`)
       } else {
-        console.log('[orchestrator] solo mode: no reviewer configured')
+        const reviewer = findReviewer()
+        if (reviewer) {
+          console.log(`[orchestrator] team mode: dev agents + ${reviewer.name} (${reviewer.llm.provider}/${reviewer.llm.model})`)
+        } else {
+          console.log('[orchestrator] solo mode: no reviewer configured')
+        }
       }
 
       // Resume incomplete tasks

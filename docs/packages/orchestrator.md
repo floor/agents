@@ -10,6 +10,7 @@ packages/orchestrator/src/
 ├── orchestrator.ts             ← dev mode: main loop + state machine
 ├── committee-orchestrator.ts   ← committee mode: watches for proposals, dispatches reviews
 ├── committee-pipeline.ts       ← parallel agent review, vote tally, Discussions sync
+├── committee-pr-review.ts      ← committee review of an implementer's PR diff
 ├── dispatcher.ts               ← resolves which agent handles an issue
 ├── llm-runner.ts               ← tool use conversation loop
 ├── output-parser.ts            ← extracts files from LLM tool calls

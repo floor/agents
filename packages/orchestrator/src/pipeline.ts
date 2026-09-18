@@ -13,7 +13,7 @@ import { privateSourceDenials } from '@floor-agents/core'
 import { runToolUseLoop, type LLMAdapterResolver } from './llm-runner.ts'
 import { parseToolCallOutput } from './output-parser.ts'
 import { validateAgentOutput } from './guardrails.ts'
-import { runReviewAgent, MAX_REVIEW_CYCLES, type ReviewDeps } from './review.ts'
+import { runReviewAgent, MAX_REVIEW_CYCLES } from './review.ts'
 import { NATIVE_PROVIDERS, runNativeDevAgent, runNativeReviewAgent, type NativeAgentDeps } from './native-runner.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import { commitApiWorkspace } from './api-workspace.ts'
@@ -25,6 +25,8 @@ import { costNote, metaLine } from './cost-note.ts'
 import { AgentStopped, stopReport, crashReport } from './stop-report.ts'
 import { signComments, agentSignature, sign, ENGINE_SIGNATURE } from './comment-signature.ts'
 import { discussionSection } from './discussion.ts'
+import { committeePrReviewEnabled, executeCommitteePrReview } from './committee-pr-review.ts'
+import type { Gateway } from '@floor-agents/gateway'
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -82,6 +84,8 @@ export type PipelineDeps = {
   readonly findReviewer: () => AgentDefinition | undefined
   /** For tests: the native implementer's CLI, instead of spawning one. */
   readonly runAgent?: NativeAgentDeps['runAgent']
+  /** Shared with the committee pipeline so external voters can review a PR. */
+  readonly gateway?: Gateway
 }
 
 // ── API dev agent (tool use) ─────────────────────────────────────
@@ -195,6 +199,31 @@ async function dispatchReview(
   })
 }
 
+async function runConfiguredReview(
+  issue: Issue,
+  state: ExecutionState,
+  deps: PipelineDeps,
+  unsigned: TaskAdapter,
+  useCommittee: boolean,
+  reviewer: AgentDefinition | undefined,
+): Promise<ExecutionState> {
+  await assertVerified(state, deps)
+  if (useCommittee) {
+    return executeCommitteePrReview(issue, state, {
+      company: deps.company,
+      taskAdapter: unsigned,
+      gitAdapter: deps.gitAdapter,
+      contextBuilder: deps.contextBuilder,
+      stateStore: deps.stateStore,
+      costTracker: deps.costTracker,
+      getAdapter: deps.getAdapter,
+      ...(deps.gateway ? { gateway: deps.gateway } : {}),
+    })
+  }
+  if (reviewer) return dispatchReview(issue, reviewer, state, deps, unsigned)
+  return state
+}
+
 // ── Main task pipeline ───────────────────────────────────────────
 
 export async function executeTask(
@@ -209,6 +238,7 @@ export async function executeTask(
   deps = { ...deps, taskAdapter }
   const { guardrails } = company
   const reviewer = deps.findReviewer()
+  const useCommitteeReview = committeePrReviewEnabled(company)
   const taskStart = performance.now()
   const devIsNative = isNative(devAgent)
 
@@ -231,11 +261,13 @@ export async function executeTask(
         '',
         '**Team:**',
         `- Developer: **${devAgent.name}** (\`${devAgent.llm.model}\` via ${devAgent.llm.provider})`,
-        reviewer ? `- Reviewer: **${reviewer.name}** (\`${reviewer.llm.model}\` via ${reviewer.llm.provider})` : '',
+        useCommitteeReview
+          ? `- Reviewers: committee (${company.agents.filter(a => a.capabilities.includes('vote')).map(a => a.name).join(', ')})`
+          : reviewer ? `- Reviewer: **${reviewer.name}** (\`${reviewer.llm.model}\` via ${reviewer.llm.provider})` : '',
         '',
         `**Branch:** \`${branchName}\``,
         `**Mode:** ${devIsNative ? 'native (worktree)' : 'API (tool use)'}`,
-        `**Pipeline:** branch → code → guardrails${company.project.verification ? ' → checks' : ''} → commit → PR${reviewer ? ' → review' : ''}`,
+        `**Pipeline:** branch → code → guardrails${company.project.verification ? ' → checks' : ''} → commit → PR${(useCommitteeReview || reviewer) ? ' → review' : ''}`,
       ].filter(Boolean).join('\n'))
     }
 
@@ -305,14 +337,13 @@ export async function executeTask(
       console.log(`[orchestrator] PR created: ${pr.url}`)
       await taskAdapter.addComment(issue.id, `📝 **PR created:** ${pr.url}`)
 
-      const nextStep = reviewer ? 'reviewing' : 'updating_issue'
+      const nextStep = (useCommitteeReview || reviewer) ? 'reviewing' : 'updating_issue'
       state = await advanceState(state, nextStep, { prUrl: pr.url, prId: pr.id }, stateStore)
     }
 
     // Step: review (dispatches to native or API based on reviewer's provider)
-    if (state.step === 'reviewing' && reviewer && state.prId) {
-      await assertVerified(state, deps)
-      state = await dispatchReview(issue, reviewer, state, deps, unsigned)
+    if (state.step === 'reviewing' && state.prId) {
+      state = await runConfiguredReview(issue, state, deps, unsigned, useCommitteeReview, reviewer)
     }
 
     // Step: revision loop
@@ -374,9 +405,8 @@ export async function executeTask(
         }
 
         // Re-review
-        if (state.step === 'reviewing' && reviewer && state.prId) {
-          await assertVerified(state, deps)
-          state = await dispatchReview(issue, reviewer, state, deps, unsigned)
+        if (state.step === 'reviewing' && state.prId) {
+          state = await runConfiguredReview(issue, state, deps, unsigned, useCommitteeReview, reviewer)
           if (state.step === 'revision') {
             return executeTask(issue, devAgent, deps, state)
           }
@@ -394,7 +424,7 @@ export async function executeTask(
 
       await taskAdapter.addComment(issue.id, [
         wasApproved
-          ? `✅ **Done** — approved by ${reviewer?.name ?? 'reviewer'} and ready for human review`
+          ? `✅ **Done** — approved by ${useCommitteeReview ? 'the committee' : (reviewer?.name ?? 'reviewer')} and ready for human review`
           : state.prUrl ? `✅ **Done** — PR ready for human review` : '✅ **Done**',
         '', '| Metric | Value |', '|--------|-------|',
         `| Duration | ${totalDuration} |`, totalCost ? `| Cost | ${totalCost} |` : '', `| Review cycles | ${cycles} |`,

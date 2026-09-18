@@ -10,6 +10,8 @@ Run a multi-agent technical committee that reviews proposals in parallel, votes,
 4. Votes are tallied (simple majority), results posted to Linear
 5. If a GitHub Discussion is linked, the outcome is synced there
 
+The same committee also reviews every PR an implementer opens, before a person sees it. Each member reads the diff inside its reviewer sandbox, the engine posts one signed PR comment per member plus a summary, and a majority approve with no blockers is the verdict. Timeouts abstain; fewer than two answers leaves the issue `in_review`. Merging stays with the coordinator. See [`review`](../configuration.md#review) in the configuration reference.
+
 ## Setup
 
 ### 1. Create a project config

@@ -50,6 +50,7 @@ chain: { ... }           # Chain of command (Phase 1: defined only)
 autonomy: { ... }        # Autonomy rules (Phase 1: defined only)
 guardrails: { ... }      # Safety boundaries
 sources: { ... }         # Material beside the repository, public or private
+review: { ... }          # How implementer PRs are reviewed
 costs: { ... }           # Spending limits
 statusMapping: { ... }   # Internal → task manager status mapping
 ```
@@ -168,6 +169,30 @@ notes and the engine's own reports (a stop report, a retry hint). Progress comme
 an implementer, reviewer or committee member are skipped, so the prompt is the conversation
 rather than the run talking to itself. A failure to read comments is logged and the turn
 continues without them.
+
+### `review`
+
+How an implementer's pull request is reviewed before a person (the coordinator) sees it. Merging is never automatic.
+
+```yaml
+review:
+  committee: true                    # every agent with `vote` reviews the PR diff
+```
+
+**Default.** When `review` is omitted:
+
+- a manifest that seats a `review_pr` agent keeps the single-reviewer path (that agent reviews alone)
+- a manifest that seats voters and no `review_pr` agent turns committee PR review on
+
+Set `review.committee: true` to send every implementer PR to the committee even when a `review_pr` agent is also seated. Set `review.committee: false` to skip committee review.
+
+When committee PR review runs, each member with `vote` reads the PR diff (`getPRDiff`) inside its reviewer sandbox, returns findings and a vote (`VOTE: APPROVE` / `VOTE: REJECT`, with must-fix issues as `BLOCKER: …`), and the engine posts one signed PR comment per member plus one summary. The pipeline verdict is:
+
+- **approve** — a majority of answers approve and no member found a blocker
+- **changes requested** — otherwise; blockers are fed to the implementer as review comments, up to the usual review-cycle cap
+- **no decision** — fewer than two members returned a vote (timeouts and errors abstain). The issue is left `in_review` for a person; there is no verdict
+
+A member that times out or errors abstains and says so on the PR. Two answering votes are enough to decide, so one abstention in a four-member committee does not block a result.
 
 ### `sources`
 

@@ -64,3 +64,32 @@ tasks: { source: linear }
   expect(validateCompanyConfig(await loadCompanyConfig(path))).toContain('tasks.linear.team is required when tasks.source is linear')
   await (await import('node:fs/promises')).rm(dir, { recursive: true, force: true })
 })
+
+test('a project may send implementer PRs to the committee', async () => {
+  const dir = await (await import('node:fs/promises')).mkdtemp((await import('node:path')).join((await import('node:os')).tmpdir(), 'floor-review-'))
+  const { join } = await import('node:path')
+  const path = join(dir, 'agents.yaml')
+  await Bun.write(path, `
+name: t
+project: { name: t, repo: t }
+agents:
+  - { id: dev, name: Dev, promptTemplate: dev.md, llm: { provider: cursor, model: m }, capabilities: [write_code] }
+  - { id: claude, name: Claude, promptTemplate: c.md, llm: { provider: anthropic, model: m }, capabilities: [vote] }
+review:
+  committee: true
+`)
+  const config = await loadCompanyConfig(path)
+  expect(config.review).toEqual({ committee: true })
+  const { validateCompanyConfig } = await import('@floor-agents/core')
+  expect(validateCompanyConfig(config)).toEqual([])
+  await Bun.write(path, `
+name: t
+project: { name: t, repo: t }
+agents:
+  - { id: dev, name: Dev, promptTemplate: dev.md, llm: { provider: cursor, model: m }, capabilities: [write_code] }
+review:
+  committee: true
+`)
+  expect(validateCompanyConfig(await loadCompanyConfig(path))).toContain('review.committee is true but no agent has the vote capability')
+  await (await import('node:fs/promises')).rm(dir, { recursive: true, force: true })
+})

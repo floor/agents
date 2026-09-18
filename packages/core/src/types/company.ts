@@ -4,6 +4,7 @@ import type { ChainOfCommand } from './chain.ts'
 import type { CostConfig } from './costs.ts'
 import type { GuardrailsConfig } from './guardrails.ts'
 import type { ProjectConfig } from './project.ts'
+import type { ReviewConfig } from './review.ts'
 import type { SourceDefinition } from './sources.ts'
 import type { TasksConfig } from './tasks.ts'
 import type { WorkflowDefinition } from './workflow.ts'
@@ -21,6 +22,11 @@ export type CompanyConfig = {
   readonly sources?: Readonly<Record<string, SourceDefinition>>
   /** Where this project's tasks live; absent means GitHub issues in the project's repository. */
   readonly tasks?: TasksConfig
+  /**
+   * How implementer PRs are reviewed. Absent means committee review when no
+   * `review_pr` agent is seated, and the single-reviewer path when one is.
+   */
+  readonly review?: ReviewConfig
   readonly costs: CostConfig
   readonly statusMapping: Record<string, string>
   readonly createdAt: Date

@@ -163,6 +163,12 @@ tasks:
 private tracker references it as `Refs FLO-31` and never repeats its text; `Closes #n` is
 written only for a public GitHub issue in the same repository.
 
+Each turn, the implementer is given the issue's comments as a Discussion section: people's
+notes and the engine's own reports (a stop report, a retry hint). Progress comments signed by
+an implementer, reviewer or committee member are skipped, so the prompt is the conversation
+rather than the run talking to itself. A failure to read comments is logged and the turn
+continues without them.
+
 ### `sources`
 
 Named material agents consult beside the repository. Paths are relative to the manifest.

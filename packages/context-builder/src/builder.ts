@@ -23,6 +23,8 @@ export type BuildContextParams = {
   readonly project: ProjectConfig
   readonly reviewComments?: string
   readonly previousAttempt?: string
+  /** Issue comments already rendered as a `## Discussion` block, or omitted. */
+  readonly discussion?: string
 }
 
 export type ContextBuilderDeps = {
@@ -84,6 +86,10 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
 
       if (issue.body) {
         parts.push(`\n${issue.body}`)
+      }
+
+      if (params.discussion) {
+        parts.push(`\n${params.discussion}`)
       }
 
       if (params.reviewComments) {

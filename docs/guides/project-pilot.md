@@ -114,7 +114,8 @@ directory does not choose which repository receives the changes.
 Both native and configured API execution validate the cumulative diff, including
 blocked deletions, file counts, binary sizes and file modes. Symlinks and submodule
 changes are rejected by the native diff validator. Checks capture up to 32 KiB per
-stdout/stderr stream, continue draining larger output, and record truncation.
+stdout/stderr stream — the first 4 KiB and the last 28 KiB, because a test run names
+its failures last — continue draining larger output, and mark what was omitted.
 Timeouts fail; on POSIX, the check's process group is terminated as well.
 
 The gate does not run in the agent's worktree. The engine snapshots the turn's

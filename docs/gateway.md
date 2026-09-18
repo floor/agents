@@ -111,6 +111,20 @@ Agent sends back its review:
 }
 ```
 
+When the agent could not produce an answer — its CLI crashed, ran out of quota, lost its login —
+it says so with `failed`, and `content` carries the reason:
+```json
+{
+  "type": "result",
+  "taskId": "issue-123:codex",
+  "content": "Error processing task: codex exec failed (exit 1): …\nERROR: You've hit your usage limit",
+  "failed": true
+}
+```
+`createGatewayClient` sends this by itself when the task handler throws. A failed result is never
+parsed for a vote: the reason may quote the prompt, vote markers included. `waitForResult` resolves
+with `failed: true`, and the committee records the seat as a failed execution.
+
 ### 4. Heartbeat
 
 Server sends periodic heartbeats. Agents should echo them back:
@@ -213,7 +227,7 @@ All incoming messages are validated before processing. Invalid messages receive 
 { "type": "error", "message": "Invalid message shape" }
 ```
 
-A `register` message must have non-empty `agentId`, `name`, and a `capabilities` array of strings. A `result` message must have a non-empty `taskId` and a `content` string.
+A `register` message must have non-empty `agentId`, `name`, and a `capabilities` array of strings. A `result` message must have a non-empty `taskId` and a `content` string; `failed`, when present, must be a boolean.
 
 ## Server Messages Reference
 

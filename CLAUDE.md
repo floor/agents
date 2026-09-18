@@ -28,6 +28,7 @@ AI engineering team as a service. Connects to GitHub + Linear + LLM providers â†
 | `@floor-agents/github` | GitHub git adapter + Discussions sync |
 | `@floor-agents/task` | Task manager adapters (Linear, Things 3, GitHub Issues) |
 | `@floor-agents/gateway` | WebSocket server for external agents (auth, validation, reconnection) |
+| `@floor-agents/api` | Read-only HTTP API of one project (`serve`, `watch`) â€” what a control panel reads; see `docs/api.md` |
 
 **Entry point:** `src/main.ts` (the orchestrator lives in `src/`, not under `packages/`)
 

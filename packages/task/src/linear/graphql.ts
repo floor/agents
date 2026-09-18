@@ -44,6 +44,8 @@ export type LinearIssue = {
   readonly state: { readonly name: string; readonly type: string }
   readonly labels: { readonly nodes: { readonly name: string }[] }
   readonly parent: { readonly id: string } | null
+  readonly priority?: number | null
+  readonly projectMilestone?: { readonly name: string } | null
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -57,6 +59,8 @@ const ISSUE_FIELDS = `
   state { name type }
   labels { nodes { name } }
   parent { id }
+  priority
+  projectMilestone { name }
   createdAt
   updatedAt
 `
@@ -109,6 +113,49 @@ export async function getIssuesByLabel(config: LinearAdapterConfig, label: strin
   `, variables)
 
   return data.issues.nodes
+}
+
+/**
+ * Every issue of the team — of the project, when the config names one — that is
+ * neither completed nor cancelled. The project's to-do list, not the agents' queue:
+ * no label filter. Paged, because a backlog outgrows one page.
+ */
+export async function getOpenIssues(config: LinearAdapterConfig): Promise<LinearIssue[]> {
+  const variables: Record<string, unknown> = { teamId: config.teamId }
+  let projectFilter = ''
+  const projectId = await resolveProjectId(config)
+  if (projectId) {
+    projectFilter = 'project: { id: { eq: $projectId } }'
+    variables.projectId = projectId
+  }
+  const isUuid = config.teamId.includes('-')
+  const teamFilter = isUuid ? 'team: { id: { eq: $teamId } }' : 'team: { key: { eq: $teamId } }'
+
+  const issues: LinearIssue[] = []
+  let after: string | null = null
+  for (let page = 0; page < 10; page++) {
+    const data = await gql(config, `
+      query($teamId: ${isUuid ? 'ID' : 'String'}!${projectId ? ', $projectId: ID!' : ''}, $after: String) {
+        issues(
+          filter: {
+            ${teamFilter}
+            state: { type: { nin: ["completed", "canceled"] } }
+            ${projectFilter}
+          }
+          orderBy: updatedAt
+          first: 100
+          after: $after
+        ) {
+          nodes { ${ISSUE_FIELDS} }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    `, { ...variables, after })
+    issues.push(...data.issues.nodes)
+    if (!data.issues.pageInfo?.hasNextPage) break
+    after = data.issues.pageInfo.endCursor
+  }
+  return issues
 }
 
 export async function getIssueById(config: LinearAdapterConfig, issueId: string): Promise<LinearIssue | null> {

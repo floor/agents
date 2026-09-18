@@ -1,5 +1,5 @@
 export type CliArgs = {
-  readonly command: 'watch' | 'init' | 'doctor' | 'run' | 'verify' | 'review' | 'status' | 'help' | 'version'
+  readonly command: 'watch' | 'serve' | 'init' | 'doctor' | 'run' | 'verify' | 'review' | 'status' | 'help' | 'version'
   readonly config?: string
   readonly issue?: string
   /** `run` only: archive a failed attempt and start over. */
@@ -16,7 +16,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
   let retry = false
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
-    if (['watch', 'init', 'doctor', 'run', 'verify', 'review', 'status'].includes(arg) && !hasCommand) {
+    if (['watch', 'serve', 'init', 'doctor', 'run', 'verify', 'review', 'status'].includes(arg) && !hasCommand) {
       command = arg as CliArgs['command']
       hasCommand = true
     } else if (arg === '--config' || arg === '--issue') {

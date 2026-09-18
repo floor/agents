@@ -35,6 +35,12 @@ export type ExecutionState = {
   readonly baseSha?: string
   readonly verification?: VerificationResult
   readonly issueId: string
+  /** The key a person uses for the issue (FLO-96), kept so a run can be named without asking the task source. */
+  readonly issueKey?: string
+  /** The issue's title when the run began. */
+  readonly issueTitle?: string
+  /** The repository the run works on (`floor/mtrl`): several projects may share one state directory. */
+  readonly repo?: string
   readonly agentId: string
   readonly step: ExecutionStep
   readonly startedAt: string

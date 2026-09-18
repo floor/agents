@@ -10,7 +10,7 @@ import type {
   AgentDefinition,
 } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
-import { privateSourceDenials } from '@floor-agents/core'
+import { privateSourceDenials, repoSlug } from '@floor-agents/core'
 import { runToolUseLoop, type LLMAdapterResolver } from './llm-runner.ts'
 import { parseToolCallOutput } from './output-parser.ts'
 import { validateAgentOutput } from './guardrails.ts'
@@ -243,6 +243,15 @@ export async function executeTask(
   issue: Issue, devAgent: AgentDefinition, deps: PipelineDeps, existingState?: ExecutionState,
 ): Promise<void> {
   let state = existingState ?? makeState(issue.id, devAgent.id)
+  // A run names its issue and its repository itself: the record can then be listed
+  // and read (the API, `status`) without asking the task source what `issueId` was,
+  // and several projects can share a state directory without mixing.
+  state = {
+    ...state,
+    ...(issue.key ? { issueKey: issue.key } : {}),
+    issueTitle: issue.title,
+    repo: repoSlug(deps.company.project, process.env.GITHUB_OWNER),
+  }
   // Every comment this run posts is signed with the agent that is working, so
   // the account's name is not the only thing a reader sees.
   const { company, gitAdapter, stateStore } = deps

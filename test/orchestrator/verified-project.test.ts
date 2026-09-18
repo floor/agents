@@ -650,3 +650,91 @@ test('discussion sits after the issue body and before review feedback', async ()
   expect(prompt).toContain('start here')
   expect(prompt).toContain('please add tests')
 })
+
+describe('a revision continues the implementer’s session', () => {
+  type Call = { prompt: string; resume: string | undefined }
+
+  /** A first pass that names its session, then a revision on the state it left. */
+  async function firstPassThenRevision(
+    revisionTurn: (call: Call, cwd: string, n: number) => Promise<{ resultText: string; cost: number; durationMs: number; exitCode: number; sessionId?: string }>,
+  ) {
+    const store = createStateStore(join(dir, 'state'))
+    const base = {
+      project, guardrails: company.guardrails, stateStore: store, costTracker: createCostTracker(),
+      addComment: async () => {}, setLabel: async () => {},
+      contextBuilder: { build: async () => ({ systemPrompt: 'THE FULL BRIEF', userMessage: '', tools: [], estimatedTokens: 0 }) },
+    }
+    const first = await runNativeDevAgent(issue, agent, state(), {
+      ...base,
+      runAgent: async (_prompt, cwd) => {
+        await Bun.write(join(cwd, 'answer.txt'), '42')
+        return { resultText: 'Implemented', cost: 0, durationMs: 1, exitCode: 0, sessionId: 'sess-1' }
+      },
+    })
+    expect(first.attempts?.at(-1)).toMatchObject({ outcome: 'published', sessionId: 'sess-1' })
+
+    const calls: Call[] = []
+    const revised = await runNativeDevAgent(issue, agent, first, {
+      ...base,
+      discussion: '## Discussion\n\n**Owner** (2026-09-18):\nkeep it small',
+      runAgent: async (prompt, cwd, _model, turn) => {
+        calls.push({ prompt, resume: turn?.resume })
+        return revisionTurn(calls.at(-1)!, cwd, calls.length)
+      },
+    }, 'BLOCKER: add a note')
+    return { calls, revised }
+  }
+
+  test('it resumes the session with the feedback, not the whole brief', async () => {
+    const { calls, revised } = await firstPassThenRevision(async (_call, cwd) => {
+      await Bun.write(join(cwd, 'note.txt'), 'a note')
+      return { resultText: 'Added the note', cost: 0, durationMs: 1, exitCode: 0, sessionId: 'sess-1' }
+    })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.resume).toBe('sess-1')
+    expect(calls[0]!.prompt).not.toContain('THE FULL BRIEF')
+    expect(calls[0]!.prompt).toContain('BLOCKER: add a note')
+    expect(calls[0]!.prompt).toContain('keep it small')
+    expect(calls[0]!.prompt).toContain('fresh checkout of your branch')
+    expect(calls[0]!.prompt).toContain('Do not commit, push, or open a PR')
+    expect(revised.attempts?.at(-1)).toMatchObject({ n: 2, kind: 'revision', continues: 1, outcome: 'published', sessionId: 'sess-1' })
+  })
+
+  test('a session that cannot be resumed costs seconds: the revision runs again with the full brief', async () => {
+    const { calls, revised } = await firstPassThenRevision(async (call, cwd) => {
+      if (call.resume) return { resultText: 'Error: session not found', cost: 0, durationMs: 900, exitCode: 1 }
+      await Bun.write(join(cwd, 'note.txt'), 'a note')
+      return { resultText: 'Added the note', cost: 0, durationMs: 1, exitCode: 0, sessionId: 'sess-2' }
+    })
+    expect(calls.map(c => c.resume)).toEqual(['sess-1', undefined])
+    expect(calls[1]!.prompt).toContain('THE FULL BRIEF')
+    expect(calls[1]!.prompt).toContain('BLOCKER: add a note')
+    const attempt = revised.attempts!.at(-1)!
+    expect(attempt.continues).toBeUndefined()
+    expect(attempt).toMatchObject({ outcome: 'published', sessionId: 'sess-2' })
+  })
+
+  test('a resumed turn that worked and failed is a failed turn, not a reason to start over', async () => {
+    let calls = 0
+    await expect(firstPassThenRevision(async (_call, cwd) => {
+      calls++
+      await Bun.write(join(cwd, 'half.txt'), 'half done')
+      return { resultText: 'ran out of turns', cost: 0, durationMs: 900, exitCode: 1 }
+    })).rejects.toThrow()
+    expect(calls).toBe(1)
+  })
+
+  test('FLOOR_AGENTS_RESUME=off keeps the old behaviour', async () => {
+    process.env.FLOOR_AGENTS_RESUME = 'off'
+    try {
+      const { calls } = await firstPassThenRevision(async (_call, cwd) => {
+        await Bun.write(join(cwd, 'note.txt'), 'a note')
+        return { resultText: 'ok', cost: 0, durationMs: 1, exitCode: 0 }
+      })
+      expect(calls[0]!.resume).toBeUndefined()
+      expect(calls[0]!.prompt).toContain('THE FULL BRIEF')
+    } finally {
+      delete process.env.FLOOR_AGENTS_RESUME
+    }
+  })
+})

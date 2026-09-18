@@ -42,12 +42,13 @@ export function patchAttempt(state: ExecutionState, patch: Partial<Omit<Attempt,
 /** What the CLI turn itself produced, before any gate. */
 export function recordTurn(
   state: ExecutionState,
-  turn: { readonly durationMs: number; readonly exitCode: number; readonly subtype?: string; readonly reply: string },
+  turn: { readonly durationMs: number; readonly exitCode: number; readonly subtype?: string; readonly reply: string; readonly sessionId?: string },
 ): ExecutionState {
   return patchAttempt(state, {
     turnMs: turn.durationMs,
     exitCode: turn.exitCode,
     ...(turn.subtype ? { subtype: turn.subtype } : {}),
+    ...(turn.sessionId ? { sessionId: turn.sessionId } : {}),
     reply: turn.reply.trim().slice(0, REPLY_CHARS),
   })
 }
@@ -55,6 +56,20 @@ export function recordTurn(
 function tail(text: string): string {
   const lines = text.split('\n').filter(line => line.trim())
   return lines.slice(-TAIL_LINES).join('\n')
+}
+
+/**
+ * The session a revision can continue: the latest earlier turn of the same agent
+ * that was published and whose CLI named its session. The attempt in progress —
+ * the last one — is the revision itself and is not a candidate.
+ */
+export function sessionToContinue(state: ExecutionState, agentId: string): { readonly n: number; readonly sessionId: string } | undefined {
+  const earlier = (state.attempts ?? []).slice(0, -1)
+  for (let i = earlier.length - 1; i >= 0; i--) {
+    const a = earlier[i]!
+    if (a.agentId === agentId && a.outcome === 'published' && a.sessionId) return { n: a.n, sessionId: a.sessionId }
+  }
+  return undefined
 }
 
 /** A gate run as the history keeps it: every check's verdict and time, and the end of what a failing one printed. */
@@ -181,7 +196,7 @@ export function historyText(state: ExecutionState, exists: (path: string) => boo
     const failing = gate?.checks.find(c => c.exitCode !== 0 || c.timedOut)
     const gateText = !gate ? 'no gate' : gate.passed ? `gate passed (${minutes(gate.durationMs)})` : `gate failed at ${failing?.name ?? 'the workspace check'}`
     const tree = a.worktreePath ? (exists(a.worktreePath) ? `tree kept at ${a.worktreePath}` : 'tree gone') : ''
-    lines.push(`  ${a.n}. ${a.kind} · ${a.agentId} (${a.model}) · turn ${minutes(a.turnMs)} · ${a.outcome} · ${gateText}${a.commitSha ? ` · ${a.commitSha.slice(0, 8)}` : ''}${tree ? ` · ${tree}` : ''}`)
+    lines.push(`  ${a.n}. ${a.kind}${a.continues ? ` (continues ${a.continues})` : ''} · ${a.agentId} (${a.model}) · turn ${minutes(a.turnMs)} · ${a.outcome} · ${gateText}${a.commitSha ? ` · ${a.commitSha.slice(0, 8)}` : ''}${tree ? ` · ${tree}` : ''}`)
     if (a.outcome !== 'published' && a.error) lines.push(`     ${a.error.split('\n')[0]}`)
     if (failing?.tail) lines.push(...failing.tail.split('\n').slice(-6).map(l => `     | ${l}`))
   }

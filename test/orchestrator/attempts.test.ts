@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { ExecutionState, VerificationResult } from '@floor-agents/core'
 import {
-  closeAttempt, gateRunOf, historyOf, historyText, lastAttempt, openAttempt, outcomeOf, recordGate, recordReview, recordTurn, reseatRefusal,
+  closeAttempt, gateRunOf, historyOf, historyText, lastAttempt, openAttempt, outcomeOf, recordGate, recordReview, recordTurn, reseatRefusal, sessionToContinue,
 } from '../../packages/orchestrator/src/attempts.ts'
 import { freshState } from '../../packages/orchestrator/src/pipeline.ts'
 import { AgentStopped } from '../../packages/orchestrator/src/stop-report.ts'
@@ -119,5 +119,24 @@ describe('seating the committee again', () => {
     expect(reseatRefusal({ ...done('request_changes'), step: 'failed' })).toContain('failed')
     // The last review counts, not an earlier one.
     expect(reseatRefusal({ ...done('no_decision'), reviews: [review('no_decision'), review('approve')] })).toContain('approve')
+  })
+})
+
+describe('the session a revision continues', () => {
+  const attempt = (n: number, over: Record<string, unknown>) => ({
+    n, kind: 'implement' as const, agentId: 'dev', model: 'm', startedAt: '2026-09-18T20:00:00Z', baseSha: 'b', gates: [], outcome: 'published' as const, ...over,
+  })
+  const withAttempts = (...attempts: ReturnType<typeof attempt>[]): ExecutionState => ({ ...freshState('issue', 'dev', {}), attempts })
+
+  test('the latest published turn of the same agent that named a session', () => {
+    const s = withAttempts(attempt(1, { sessionId: 'one' }), attempt(2, { sessionId: 'two' }), attempt(3, { outcome: 'running' }))
+    expect(sessionToContinue(s, 'dev')).toEqual({ n: 2, sessionId: 'two' })
+  })
+
+  test('not the attempt in progress, not another agent, not a turn that was never published', () => {
+    expect(sessionToContinue(withAttempts(attempt(1, { sessionId: 'mine', outcome: 'running' })), 'dev')).toBeUndefined()
+    expect(sessionToContinue(withAttempts(attempt(1, { sessionId: 'x', agentId: 'other' }), attempt(2, { outcome: 'running' })), 'dev')).toBeUndefined()
+    expect(sessionToContinue(withAttempts(attempt(1, { sessionId: 'x', outcome: 'gate-failed' }), attempt(2, { outcome: 'running' })), 'dev')).toBeUndefined()
+    expect(sessionToContinue(withAttempts(attempt(1, {}), attempt(2, { outcome: 'running' })), 'dev')).toBeUndefined()
   })
 })

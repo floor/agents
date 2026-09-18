@@ -124,6 +124,10 @@ export type Attempt = {
   readonly worktreePath?: string
   readonly exitCode?: number
   readonly subtype?: string
+  /** The CLI's own session, when it names one: what a revision resumes instead of starting over. */
+  readonly sessionId?: string
+  /** The attempt whose session this turn continued. */
+  readonly continues?: number
   /** The first characters of the agent's reply — what it said it did. */
   readonly reply?: string
   readonly gates: readonly GateRun[]

@@ -281,7 +281,7 @@ Recovered tasks are flagged in metrics (`wasRecovered: true`) so crash recovery 
 
 | | Written by | Holds |
 |---|---|---|
-| `Attempt` | `runNativeDevAgent` (`openAttempt`, `recordTurn`, `closeAttempt`) | number (continues across retries), kind (`implement` / `revision`), agent and model, base SHA, turn time, exit code, the start of the agent's reply, its gate runs, its outcome (`published`, `stopped`, `no-changes`, `guardrail`, `gate-failed`, `error`), and — for every outcome but `published` — the path of the preserved worktree |
+| `Attempt` | `runNativeDevAgent` (`openAttempt`, `recordTurn`, `closeAttempt`) | number (continues across retries), kind (`implement` / `revision`), agent and model, base SHA, turn time, exit code, the CLI's session id and — for a revision that resumed it — the attempt it `continues`, the start of the agent's reply, its gate runs, its outcome (`published`, `stopped`, `no-changes`, `guardrail`, `gate-failed`, `error`), and — for every outcome but `published` — the path of the preserved worktree |
 | `GateRun` | `verifyAndCommit` (`recordGate`), before anything can throw | tree SHA, every check's verdict and duration, and for a failing check the last 80 lines it printed |
 | `ReviewRecord` | `executeCommitteePrReview` (`recordReview`) | cycle, commit reviewed, duration, each member's vote, its `BLOCKER:` lines and whether its execution failed, the outcome, the blockers, and — when the loop stopped on them — the blockers that stood through a revision (`standing-blockers.ts`) |
 

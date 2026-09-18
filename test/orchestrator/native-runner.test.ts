@@ -223,3 +223,27 @@ describe("turn caps", () => {
     expect(failureReason(1, 'error_during_execution', budget)).toBe('failed (exit 1, error_during_execution)')
   })
 })
+
+describe('continuing a session', () => {
+  test('cursor and claude resume by id; a fresh turn carries no resume flag', () => {
+    const cursor = nativeAgentArgv({ provider: 'cursor', role: 'implement', prompt: 'p', resume: 'abc' })
+    expect(cursor.slice(0, 3)).toEqual(['cursor-agent', '--resume', 'abc'])
+    const claude = nativeAgentArgv({ provider: 'claude-code', role: 'implement', prompt: 'p', resume: 'abc' })
+    expect(claude[claude.indexOf('--resume') + 1]).toBe('abc')
+    for (const provider of ['cursor', 'claude-code', 'antigravity']) {
+      expect(nativeAgentArgv({ provider, role: 'implement', prompt: 'p' })).not.toContain('--resume')
+    }
+  })
+
+  test('agy has no resume: the flag is not invented for it', () => {
+    expect(nativeAgentArgv({ provider: 'antigravity', role: 'implement', prompt: 'p', resume: 'abc' })).not.toContain('--resume')
+  })
+
+  test('the session id is read from the envelope of the CLIs that give one', () => {
+    const cursor = parseNativeResult('cursor', '{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"result":"ok","session_id":"19862f6c"}', '')
+    expect(cursor.sessionId).toBe('19862f6c')
+    const claude = parseNativeResult('claude-code', '{"result":"ok","total_cost_usd":0.1,"is_error":false,"session_id":"s-9"}', '')
+    expect(claude.sessionId).toBe('s-9')
+    expect(parseNativeResult('cursor', '{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"result":"ok"}', '').sessionId).toBeUndefined()
+  })
+})

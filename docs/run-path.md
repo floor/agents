@@ -14,7 +14,7 @@ through `ExecutionState.step`, saved as one JSON file per issue in `STATE_DIR`.
 
 | # | Step | Where | Writes | Fails when | Today that means |
 |---|------|-------|--------|------------|------------------|
-| 0 | **Admission.** Read the issue; refuse if a state file exists (unless `--retry` archives a failed one). | `main.ts` | — | the issue has a state that is not `failed` | the run refuses; a person edits files in `STATE_DIR` |
+| 0 | **Admission.** Read the issue; refuse if a state file exists (unless `--retry` archives a failed one and carries its history). | `main.ts` | the history carried over | the issue has a state that is not `failed` | the run refuses; a person edits files in `STATE_DIR` |
 | 1 | **Branch.** `createBranch` from the base; on 422 the existing branch is **force-moved to the base**. Issue → In Progress, pickup comment. | `pipeline.ts`, `github/adapter.ts` | `branchName`, step `building_context` | — (it never fails: it destroys) | an open PR on that branch loses its commits and GitHub closes it by itself (vlist #249) — FLO-187 |
 | 2 | **Discussion.** Issue comments rendered into the prompt, progress comments dropped, capped at 8,000 characters — by dropping comments until it fits. | `discussion.ts` | — | one comment is larger than the cap | ~~the whole discussion became empty, silently; three hints never reached a run~~ — **fixed (FLO-184):** a long comment is shortened, the newest is never dropped, 16,000 characters |
 | 3 | **Worktree.** `git fetch origin <branch>` (not forced), detached worktree under `.agents/worktrees/`, then every `setup` command. | `worktree.ts`, `verified-commit.ts` | `workspacePath`, `baseSha` | the local clone has seen the branch before a retry reset it (non-fast-forward) | ~~`git fetch failed`, run over before it began, three times in a day~~ — **fixed (FLO-188):** the fetch is forced. Setup itself costs a `bun install` (and on mtrl a Chromium install) per turn — FLO-199 |
@@ -66,7 +66,9 @@ under load — FLO-196); a shutdown leaves the agent running and a restart start
 
 Not twenty patches on the table above — four ideas, each removing a family of them.
 
-1. **An attempt is a record, and its tree has a name.** Each implementer turn produces an
+1. **An attempt is a record, and its tree has a name.** *(First slice done: `attempts`, gate runs and
+   reviews are recorded, survive `--retry`, and `status --issue` prints them. Next: the operations on
+   an attempt — `verify`, `--continue`.)* Each implementer turn produces an
    *attempt*: worktree path, tree SHA, the turn's duration and session id, then every gate run on
    it. The state becomes `{ issue, attempts[], review cycles[] }`, append-only. Everything that
    today needs a person and a preserved directory (`verify`, `--continue`, "apply attempt 4")

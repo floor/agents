@@ -11,10 +11,11 @@ import { createGeminiAdapter } from '@floor-agents/gemini'
 import { createGitHubAdapter } from '@floor-agents/github'
 import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
-import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
+import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, freshState, historyOf, historyText, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
 import { createDiscussionsAdapter } from '@floor-agents/github'
 import { createGateway } from '@floor-agents/gateway'
 import { mkdir, rename } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { parseArgs } from './cli/args.ts'
 import { doctorProject, initProject } from './cli/project.ts'
@@ -43,7 +44,8 @@ Usage:
   floor-agents init                     Create .agents/agents.yaml and a developer prompt
   floor-agents doctor                   Check project setup without running an agent
   floor-agents run --issue <id>         Implement one issue and exit (defaults to GitHub Issues)
-  floor-agents run --issue <id> --retry Archive a failed attempt and run the issue again
+  floor-agents run --issue <id> --retry Archive a failed attempt and run the issue again (its history is kept)
+  floor-agents status --issue <id>      Show an issue's attempts, gate runs and reviews
   floor-agents [watch]                  Watch the configured task source (defaults to Linear)
   floor-agents --config <path>          Select a manifest (also CONFIG_PATH)
   floor-agents --version
@@ -263,6 +265,17 @@ const externalVoterOpts = {
   manifest: company,
 }
 
+if (args.command === 'status') {
+  // The history of one issue's runs: attempts, their gates, the reviews.
+  const issue = await task.getIssue(args.issue!)
+  if (!issue) { console.error(`Issue not found: ${args.issue}`); process.exit(1) }
+  const recorded = await stateStore.get(issue.id)
+  console.log(recorded
+    ? `${issue.key ?? issue.id} — ${issue.title}\n${historyText(recorded, existsSync)}`
+    : `${issue.key ?? issue.id} — ${issue.title}\nno run recorded in ${STATE_DIR}`)
+  process.exit(0)
+}
+
 if (args.command === 'run') {
   try {
     const issue = await task.getIssue(args.issue!)
@@ -293,7 +306,7 @@ if (args.command === 'run') {
       // up for the PR review (if any external voter needs a bridge) and stops
       // it with the bridges when the votes are in.
       externalVoters: { start: agents => startExternalVoters(agents, externalVoterOpts) },
-    })
+    }, freshState(issue.id, agent.id, args.retry ? historyOf(existing) : {}))
     const state = await stateStore.get(issue.id)
     if (state?.step !== 'done') throw new Error(state?.error ?? `Task did not complete (${state?.step ?? 'no state'})`)
     console.log(`Ready for human review: ${state.prUrl}\nExecution state: ${STATE_DIR}`)

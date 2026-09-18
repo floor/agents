@@ -49,6 +49,10 @@ export type ExecutionState = {
   readonly costUsd: number
   readonly error: string | null
   readonly updatedAt: string
+  /** Append-only: every implementer turn of this issue, across retries. */
+  readonly attempts?: readonly Attempt[]
+  /** Append-only: every review cycle, across retries. */
+  readonly reviews?: readonly ReviewRecord[]
 }
 
 export type CommandResult = {
@@ -68,6 +72,73 @@ export type VerificationResult = {
   readonly checkedAt: string
   readonly checks: readonly CommandResult[]
   readonly error?: string
+}
+
+/** One run of the gate on an attempt's tree. Outputs are kept for the checks that failed, as tails. */
+export type GateRun = {
+  readonly at: string
+  readonly treeSha: string
+  readonly passed: boolean
+  readonly durationMs: number
+  readonly checks: readonly {
+    readonly name: string
+    readonly exitCode: number
+    readonly timedOut: boolean
+    readonly durationMs: number
+    /** Last lines of stdout and stderr — only for a check that did not pass. */
+    readonly tail?: string
+  }[]
+  readonly error?: string
+}
+
+/** How an implementer turn ended. */
+export type AttemptOutcome =
+  | 'running'
+  | 'published'     // verified, committed, pushed
+  | 'stopped'       // the turn ran out of a budget or the CLI failed
+  | 'no-changes'    // the turn ended with an empty diff
+  | 'guardrail'     // the change broke a guardrail
+  | 'gate-failed'   // a verification command failed
+  | 'error'         // anything else
+
+/**
+ * One implementer turn and what became of its tree.
+ *
+ * The state used to be a cursor: one record per issue, overwritten as the run
+ * advanced and archived whole by a retry, so a finished tree that failed the
+ * gate by five bytes existed only as an unnamed directory. An attempt names it.
+ */
+export type Attempt = {
+  readonly n: number
+  readonly kind: 'implement' | 'revision'
+  readonly agentId: string
+  readonly model: string
+  readonly startedAt: string
+  readonly endedAt?: string
+  /** The CLI turn alone, without setup and gate. */
+  readonly turnMs?: number
+  readonly baseSha: string
+  /** The worktree, for as long as it is preserved; cleared once the attempt is published. */
+  readonly worktreePath?: string
+  readonly exitCode?: number
+  readonly subtype?: string
+  /** The first characters of the agent's reply — what it said it did. */
+  readonly reply?: string
+  readonly gates: readonly GateRun[]
+  readonly outcome: AttemptOutcome
+  readonly commitSha?: string
+  readonly error?: string
+}
+
+/** One review cycle on a pull request. */
+export type ReviewRecord = {
+  readonly cycle: number
+  readonly at: string
+  readonly commitSha: string | null
+  readonly durationMs: number
+  readonly votes: readonly { readonly agentId: string; readonly agentName: string; readonly vote: string; readonly execution?: string }[]
+  readonly outcome: string
+  readonly blockers?: string
 }
 
 export type StateStore = {

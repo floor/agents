@@ -7,6 +7,7 @@ See the [project pilot guide](./guides/project-pilot.md) for a complete setup.
 floor-agents init
 floor-agents doctor
 floor-agents run --issue 123
+floor-agents status --issue 123
 ```
 
 | Command | Behavior |
@@ -14,7 +15,8 @@ floor-agents run --issue 123
 | `init` | Create `.agents/agents.yaml` and a developer prompt; infer origin, base branch and project commands; never overwrite existing files |
 | `doctor` | Check config, repository identity/access, command availability, prompts and credential presence without invoking an agent |
 | `run --issue <id>` | Implement one issue, run configured checks, create a PR, then exit; refuses an existing execution state |
-| `run --issue <id> --retry` | Archive a failed attempt under `STATE_DIR/archive/`, drop the `needs-human` label, and run the issue again; refuses an attempt that is not failed |
+| `run --issue <id> --retry` | Archive a failed attempt under `STATE_DIR/archive/`, drop the `needs-human` label, and run the issue again; refuses an attempt that is not failed. The new run starts over from the base but carries the issue's history: attempts and reviews keep their numbering |
+| `status --issue <id>` | Print the issue's history: each implementer turn (agent, turn time, outcome, the gate step that failed and the end of what it printed, whether its tree is still on disk) and each review cycle with its votes |
 | `watch` or no command | Start the existing developer or committee watch loop |
 | `--help`, `-h` | Show usage |
 | `--version`, `-v` | Show version |

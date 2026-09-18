@@ -4,11 +4,12 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { AgentDefinition, CompanyConfig, ExecutionState, GitAdapter, Issue, LLMAdapter, ProjectConfig, TaskAdapter } from '@floor-agents/core'
 import { loadCompanyConfig } from '@floor-agents/core'
-import { createStateStore, createCostTracker, executeTask, runNativeDevAgent } from '@floor-agents/orchestrator'
+import { createStateStore, createCostTracker, executeTask, freshState, historyOf, runNativeDevAgent } from '@floor-agents/orchestrator'
 import { createContextBuilder } from '@floor-agents/context-builder'
 import { commitWorktree, createWorktree, gitText } from '../../packages/orchestrator/src/worktree.ts'
 import { validateWorktree, verifyWorktree, runProjectCommand } from '../../packages/orchestrator/src/verification.ts'
 import { verifyAndCommit } from '../../packages/orchestrator/src/verified-commit.ts'
+import { openAttempt } from '../../packages/orchestrator/src/attempts.ts'
 import { agentSignature, sign } from '../../packages/orchestrator/src/comment-signature.ts'
 import { sandboxAvailable } from '../helpers/sandbox.ts'
 
@@ -82,6 +83,55 @@ test('failed engine checks preserve logs and never push', async () => {
   expect(await remoteHead()).toBe(before)
   expect((await store.get(issue.id))?.verification?.checks[0]?.exitCode).toBe(1)
   expect(await Bun.file(join(worktree.path, 'answer.txt')).exists()).toBe(true)
+})
+
+test('a run records its attempt, and a retry adds a second one to the same history', async () => {
+  const store = createStateStore(join(dir, 'state'))
+  const nativeAgent: AgentDefinition = { ...agent, llm: { ...agent.llm, provider: 'cursor' } }
+  const { task, git } = adapters('42')
+  const deps = (answer: string) => ({
+    company, taskAdapter: task, gitAdapter: git, stateStore: store, costTracker: createCostTracker(),
+    contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+    getAdapter: () => { throw new Error('unused') }, findReviewer: () => undefined,
+    runAgent: async (_prompt: string, cwd: string) => {
+      await Bun.write(join(cwd, 'answer.txt'), answer)
+      return { resultText: `wrote ${answer}`, cost: 0, durationMs: 1_234, exitCode: 0 }
+    },
+  })
+
+  await executeTask(issue, nativeAgent, deps('41'))
+  const failed = (await store.get(issue.id))!
+  expect(failed.step).toBe('failed')
+  expect(failed.attempts).toHaveLength(1)
+  expect(failed.attempts![0]).toMatchObject({ n: 1, kind: 'implement', agentId: 'developer', turnMs: 1_234, reply: 'wrote 41', outcome: 'gate-failed' })
+  expect(failed.attempts![0]!.gates[0]!.passed).toBe(false)
+  // The tree of a failed attempt is the work: it is kept, and the record says where.
+  expect(await Bun.file(join(failed.attempts![0]!.worktreePath!, 'answer.txt')).text()).toBe('41')
+
+  await executeTask(issue, nativeAgent, deps('42'), freshState(issue.id, nativeAgent.id, historyOf(failed)))
+  const done = (await store.get(issue.id))!
+  expect(done.step).toBe('done')
+  expect(done.attempts!.map(a => [a.n, a.outcome])).toEqual([[1, 'gate-failed'], [2, 'published']])
+  expect(done.attempts![1]!.worktreePath).toBeUndefined()
+  expect(done.attempts![1]!.commitSha).toBe(done.commitSha!)
+})
+
+test('a failed gate and a published tree are both in the history', async () => {
+  const store = createStateStore(join(dir, 'state'))
+  const worktree = await createWorktree(branch, root)
+  await Bun.write(join(worktree.path, 'answer.txt'), '41')
+  const opened = openAttempt(state(), { kind: 'implement', agentId: agent.id, model: 'mock', baseSha: worktree.initialSha, worktreePath: worktree.path })
+  await expect(verifyAndCommit(worktree, project, company.guardrails, opened, store, 'wrong')).rejects.toThrow('Verification failed')
+  const failed = (await store.get(issue.id))!
+  expect(failed.attempts![0]!.gates).toHaveLength(1)
+  expect(failed.attempts![0]!.gates[0]).toMatchObject({ passed: false, checks: [{ name: 'Answer check', exitCode: 1 }] })
+  expect(failed.attempts![0]!.gates[0]!.checks[0]!.tail).toContain('checking answer')
+
+  // The same attempt, corrected: the second gate run joins the first.
+  await Bun.write(join(worktree.path, 'answer.txt'), '42')
+  const published = await verifyAndCommit(worktree, project, company.guardrails, failed, store, 'right')
+  expect(published.attempts![0]!.gates.map(g => g.passed)).toEqual([false, true])
+  expect(published.commitSha).toBe(await remoteHead())
 })
 
 test('size guardrails measure the change, not the files it touches', async () => {

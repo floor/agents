@@ -1,6 +1,7 @@
 import type { ExecutionState, GuardrailsConfig, ProjectConfig, StateStore } from '@floor-agents/core'
 import { commitWorktree, gitText, pushWorktree, type Worktree } from './worktree.ts'
 import { runProjectCommand, validateWorktree, verifyWorktree } from './verification.ts'
+import { recordGate } from './attempts.ts'
 
 export function requireVerification(project: ProjectConfig): void {
   if (!project.root || !project.verification?.length) {
@@ -32,7 +33,9 @@ export async function verifyAndCommit(
   requireVerification(project)
   await validateWorktree(worktree, state.baseSha ?? worktree.initialSha, guardrails)
   const verification = await verifyWorktree(worktree, project.verification!)
-  const checked = { ...state, verification, updatedAt: new Date().toISOString() }
+  // The gate run joins the attempt's history before anything can throw: a failed
+  // gate is exactly the run a person will want to read afterwards.
+  const checked = recordGate({ ...state, verification, updatedAt: new Date().toISOString() }, verification)
   await store.save(checked)
   if (!verification.passed) {
     const failure = verification.checks.find(c => c.exitCode !== 0 || c.timedOut)

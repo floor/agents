@@ -18,6 +18,7 @@ import { buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
 import { buildAgyArgs, parseAgyResult } from '@floor-agents/antigravity'
 import { costNote, metaLine } from './cost-note.ts'
 import { AgentStopped, writtenSummary } from './stop-report.ts'
+import { closeAttempt, openAttempt, outcomeOf, recordTurn } from './attempts.ts'
 
 /** Providers whose CLI runs as a full agent on a worktree, rather than through tool calls. */
 export const NATIVE_PROVIDERS = new Set(['claude-code', 'cursor', 'antigravity'])
@@ -298,6 +299,12 @@ export async function runNativeDevAgent(
     workspacePath: worktree.path, baseSha: await resolveBaseSha(worktree, deps.project, state), verification: undefined,
   }, stateStore)
   const isRevision = !!reviewComments
+  // The turn gets a record of its own: which tree, how long, what the gate said.
+  state = openAttempt(state, {
+    kind: isRevision ? 'revision' : 'implement', agentId: agent.id, model: agent.llm.model,
+    baseSha: state.baseSha!, worktreePath: worktree.path,
+  })
+  await stateStore.save(state)
 
   console.log(`[${agent.id}] native agent on worktree: ${worktree.path}`)
 
@@ -358,6 +365,7 @@ export async function runNativeDevAgent(
     )
 
     costTracker.recordCost(issue.id, result.cost)
+    state = recordTurn(state, { durationMs: result.durationMs, exitCode: result.exitCode, reply: result.resultText, ...(result.subtype ? { subtype: result.subtype } : {}) })
     state = await advanceState(state, 'calling_llm', { costUsd: costTracker.getTaskCost(issue.id), llmResponse: result.resultText }, stateStore)
     console.log(`[${agent.id}] native agent: ${formatDuration(result.durationMs)}, $${result.cost.toFixed(4)}, exit ${result.exitCode}`)
 
@@ -388,6 +396,7 @@ export async function runNativeDevAgent(
       verificationSummary(state.verification!),
     ].join('\n'))
 
+    state = closeAttempt(state, 'published', { commitSha: state.commitSha! })
     state = await advanceState(state, 'creating_pr', {
       costUsd: costTracker.getTaskCost(issue.id),
       llmResponse: result.resultText,
@@ -396,6 +405,10 @@ export async function runNativeDevAgent(
     return state
   } catch (err) {
     console.error(`[${agent.id}] workspace preserved: ${worktree.path}`)
+    // The store may be ahead of this function's copy (the gate saves its own
+    // result), so the attempt is closed on what was last written.
+    const latest = await stateStore.get(issue.id) ?? state
+    await stateStore.save(closeAttempt(latest, outcomeOf(err), { error: err instanceof Error ? err.message : String(err) }))
     throw err
   }
 }

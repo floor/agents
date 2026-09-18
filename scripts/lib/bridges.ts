@@ -3,12 +3,13 @@
  *
  * `provider` names the transport. For an external agent it picks the bridge
  * script, and `model` is passed to it, so a project decides per agent whether
- * Grok comes through Cursor or through xAI's own CLI.
+ * Grok comes through Cursor or through xAI's own CLI, and whether Gemini comes
+ * through the Antigravity CLI (`agy`) on the Google subscription.
  *
  * A bridge also carries the private sources its provider is not trusted with.
- * The Cursor and Codex bridges run their CLI in a reviewer sandbox that denies
- * those paths. The xAI CLI and Antigravity run uncontained, so a manifest that
- * does not trust their provider cannot seat them: the run is refused.
+ * The Cursor, Codex and Antigravity (`agy`) bridges run their CLI in a reviewer
+ * sandbox that denies those paths. The xAI CLI runs uncontained, so a manifest
+ * that does not trust that provider cannot seat it: the run is refused.
  */
 
 import type { AgentDefinition, PrivateSourcePolicy } from '@floor-agents/core'
@@ -69,16 +70,22 @@ export function bridgeFor(
         script: 'codex-agent.ts',
         env: { AGENT_ID: agent.id, CODEX_CWD: repo, ...modelEnv('CODEX_MODEL', agent.llm.model), ...denyEnv(denyRead, env) },
       }
-    case 'grok-cli':
     case 'antigravity':
+      if (!agent.llm.model || agent.llm.model === 'local') {
+        throw new Error(`Agent "${agent.id}" uses provider antigravity but names no model; set llm.model (e.g. gemini-3.1-pro-high)`)
+      }
+      return {
+        script: 'agy-agent-bridge.ts',
+        env: { AGENT_ID: agent.id, AGENT_NAME: agent.name, AGY_MODEL: agent.llm.model, REVIEW_CWD: repo, ...denyEnv(denyRead, env) },
+      }
+    case 'grok-cli':
       if (denyRead.length) {
         throw new Error(
           `Agent "${agent.id}" (provider ${provider}) may not read this project's private sources, ` +
           'and its bridge cannot be sandboxed to stop it. Seat it through a contained bridge ' +
-          '(cursor, codex-cli) or add its provider to guardrails.privateSourceProviders.',
+          '(cursor, codex-cli, antigravity) or add its provider to guardrails.privateSourceProviders.',
         )
       }
-      if (provider === 'antigravity') return { script: 'antigravity-relay.ts', env: {} }
       return { script: 'grok-agent.ts', env: { AGENT_ID: agent.id, GROK_CWD: repo, ...modelEnv('GROK_MODEL', agent.llm.model) } }
     default:
       throw new Error(

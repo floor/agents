@@ -414,6 +414,8 @@ floor-agents/
 │   ├── core/                 Types, config loader, YAML validation
 │   ├── anthropic/            Anthropic LLM adapter (tool use)
 │   ├── claude-code/          Claude Code CLI adapter (worktree execution)
+│   ├── cursor/               Cursor CLI adapter (subscription models)
+│   ├── antigravity/          Antigravity CLI adapter (`agy`, Gemini on the Google subscription)
 │   ├── lmstudio/             LM Studio adapter (local models)
 │   ├── openai/               OpenAI-compatible adapter
 │   ├── gemini/               Google Gemini adapter

@@ -13,6 +13,7 @@
     "@floor-agents/task": "workspace:*",
     "@floor-agents/context-builder": "workspace:*",
     "@floor-agents/cursor": "workspace:*",
+    "@floor-agents/antigravity": "workspace:*",
     "@floor-agents/sandbox": "workspace:*"
   }
 }

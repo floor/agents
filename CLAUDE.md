@@ -20,6 +20,7 @@ AI engineering team as a service. Connects to GitHub + Linear + LLM providers �
 | `@floor-agents/anthropic` | Anthropic adapter (tool use) |
 | `@floor-agents/claude-code` | Claude Code adapter (spawns CLI, full codebase access) |
 | `@floor-agents/cursor` | Cursor CLI adapter — any Cursor-hosted model on the subscription |
+| `@floor-agents/antigravity` | Antigravity CLI adapter (`agy`) — Gemini on the Google AI Pro subscription |
 | `@floor-agents/sandbox` | `sandbox-exec` containment for agent CLIs (see `docs/guides/sandbox.md`) |
 | `@floor-agents/lmstudio` | Local model adapter (Gemma, Llama, Qwen, etc.) |
 | `@floor-agents/gemini` | Google Gemini adapter |

@@ -6,9 +6,10 @@ import { NATIVE_PROVIDERS, DEFAULT_TURN_TIMEOUT_MS, DEFAULT_MAX_TURNS, turnTimeo
 import { sandboxAvailable } from '../helpers/sandbox.ts'
 
 describe('nativeAgentArgv', () => {
-  test('cursor is a native provider alongside claude-code', () => {
+  test('cursor is a native provider alongside claude-code and antigravity', () => {
     expect(NATIVE_PROVIDERS.has('cursor')).toBe(true)
     expect(NATIVE_PROVIDERS.has('claude-code')).toBe(true)
+    expect(NATIVE_PROVIDERS.has('antigravity')).toBe(true)
   })
 
   test('a Claude implementer gets edit tools; a Claude reviewer does not', () => {
@@ -21,6 +22,19 @@ describe('nativeAgentArgv', () => {
   test('a Cursor implementer may run the shell; a Cursor reviewer may not', () => {
     expect(nativeAgentArgv({ provider: 'cursor', role: 'implement', prompt: 'p' })).toContain('--force')
     expect(nativeAgentArgv({ provider: 'cursor', role: 'review', prompt: 'p' })).toContain('--trust')
+  })
+
+  test('an Antigravity implementer skips permission prompts; a reviewer stays in plan mode', () => {
+    const impl = nativeAgentArgv({ provider: 'antigravity', role: 'implement', prompt: 'p', model: 'gemini-3.1-pro-high', timeoutMs: 2_400_000 })
+    expect(impl[0]).toBe('agy')
+    expect(impl).toContain('--dangerously-skip-permissions')
+    expect(impl).not.toContain('--mode')
+    expect(impl[impl.indexOf('--model') + 1]).toBe('gemini-3.1-pro-high')
+    expect(impl[impl.indexOf('--print-timeout') + 1]).toBe('40m')
+    const review = nativeAgentArgv({ provider: 'antigravity', role: 'review', prompt: 'p' })
+    expect(review[review.indexOf('--mode') + 1]).toBe('plan')
+    expect(review).not.toContain('--dangerously-skip-permissions')
+    expect(review[review.indexOf('--print-timeout') + 1]).toBe('10m')
   })
 
   test('passes the manifest model through', () => {
@@ -47,6 +61,22 @@ describe('parseNativeResult', () => {
   test('Cursor output with no envelope is an error, not a success', () => {
     expect(parseNativeResult('cursor', 'command not found', '').isError).toBe(true)
   })
+
+  test('reads the agy envelope after progress output; status other than SUCCESS is an error', () => {
+    const out = 'working…\n{"conversation_id":"x","status":"ERROR","response":"boom","duration_seconds":1,"num_turns":0}'
+    expect(parseNativeResult('antigravity', out, '')).toEqual({ resultText: 'boom', cost: 0, isError: true, subtype: 'ERROR' })
+  })
+
+  test('agy output with no envelope is an error, not a success', () => {
+    expect(parseNativeResult('antigravity', 'command not found', '').isError).toBe(true)
+  })
+
+  test('agy print-timeout is reported as a budget, not a crash', () => {
+    const parsed = parseNativeResult('antigravity', '{"status":"ERROR","response":"print timeout exceeded"}', '')
+    expect(parsed.isError).toBe(true)
+    expect(parsed.subtype).toBe('TIMEOUT')
+    expect(failureReason(1, parsed.subtype, { timeoutMs: 600_000, maxTurns: 300 })).toContain('did not finish within 10 minutes')
+  })
 })
 
 // The native launch path end to end, enforced by the operating system. Fake
@@ -71,8 +101,10 @@ describe.skipIf(!sandboxAvailable())('spawnNativeAgent under sandbox-exec', () =
     ]
     await Bun.write(join(bin, 'cursor-agent'), [...attempt, `echo '{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"result":"cursor done"}'`].join('\n'))
     await Bun.write(join(bin, 'claude'), [...attempt, `echo '{"result":"claude done","total_cost_usd":0}'`].join('\n'))
+    await Bun.write(join(bin, 'agy'), [...attempt, `echo '{"conversation_id":"x","status":"SUCCESS","response":"agy done","duration_seconds":1,"num_turns":1}'`].join('\n'))
     await chmod(join(bin, 'cursor-agent'), 0o755)
     await chmod(join(bin, 'claude'), 0o755)
+    await chmod(join(bin, 'agy'), 0o755)
     process.env.PATH = `${bin}:${savedPath}`
     process.env.FLOOR_TEST_HOME = home
   })
@@ -92,10 +124,27 @@ describe.skipIf(!sandboxAvailable())('spawnNativeAgent under sandbox-exec', () =
     expect(await Bun.file(join(home, 'outside.txt')).exists()).toBe(false)
   })
 
+  test('an antigravity implementer writes its worktree and nothing else', async () => {
+    await rm(join(work, 'inside.txt'), { force: true })
+    const result = await spawnNativeAgent({ provider: 'antigravity', role: 'implement', prompt: 'p', cwd: work, writable: [work], home, timeoutMs: 20_000 })
+    expect(result.exitCode).toBe(0)
+    expect(result.resultText).toBe('agy done')
+    expect(await Bun.file(join(work, 'inside.txt')).exists()).toBe(true)
+    expect(await Bun.file(join(home, 'outside.txt')).exists()).toBe(false)
+  })
+
   test('a reviewer writes nothing, not even its working directory', async () => {
     await rm(join(work, 'inside.txt'), { force: true })
     const result = await spawnNativeAgent({ provider: 'claude-code', role: 'review', prompt: 'p', cwd: work, writable: [], home, timeoutMs: 20_000 })
     expect(result.resultText).toBe('claude done')
+    expect(await Bun.file(join(work, 'inside.txt')).exists()).toBe(false)
+    expect(await Bun.file(join(home, 'outside.txt')).exists()).toBe(false)
+  })
+
+  test('an antigravity reviewer writes nothing, not even its working directory', async () => {
+    await rm(join(work, 'inside.txt'), { force: true })
+    const result = await spawnNativeAgent({ provider: 'antigravity', role: 'review', prompt: 'p', cwd: work, writable: [], home, timeoutMs: 20_000 })
+    expect(result.resultText).toBe('agy done')
     expect(await Bun.file(join(work, 'inside.txt')).exists()).toBe(false)
     expect(await Bun.file(join(home, 'outside.txt')).exists()).toBe(false)
   })
@@ -115,6 +164,10 @@ describe.skipIf(!sandboxAvailable())('spawnNativeAgent under sandbox-exec', () =
       await rm(leak, { force: true })
       const denied = await spawnNativeAgent({ provider: 'cursor', role: 'implement', prompt: 'p', cwd: work, writable: [work], denyRead: [secret], home, timeoutMs: 20_000 })
       expect(denied.exitCode).toBe(0)
+      expect(await Bun.file(leak).exists() ? await Bun.file(leak).text() : '').toBe('')
+      await rm(leak, { force: true })
+      const agyDenied = await spawnNativeAgent({ provider: 'antigravity', role: 'implement', prompt: 'p', cwd: work, writable: [work], denyRead: [secret], home, timeoutMs: 20_000 })
+      expect(agyDenied.exitCode).toBe(0)
       expect(await Bun.file(leak).exists() ? await Bun.file(leak).text() : '').toBe('')
     } finally {
       delete process.env.FLOOR_TEST_PRIVATE

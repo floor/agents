@@ -8,6 +8,7 @@
  * Merging stays with the coordinator.
  */
 
+import { standingBlockers, type StandingBlocker } from './standing-blockers.ts'
 import { discussionSection } from './discussion.ts'
 import type {
   CompanyConfig,
@@ -83,13 +84,20 @@ export function committeePrReviewEnabled(company: Pick<CompanyConfig, 'agents' |
   return !company.agents.some(a => a.capabilities.includes('review_pr') && !a.external)
 }
 
+/**
+ * The must-fix lines of a review. Reviewers were asked for `**BLOCKER: …**`; they
+ * also write `## BLOCKER 1: …` and `- BLOCKER 2: …`. A heading that was not
+ * recognised cost a cycle on vlist #260: the implementer was handed the first 500
+ * characters of the review instead of its two blockers.
+ */
 export function extractBlockers(text: string): string[] {
   const found: string[] = []
-  const re = /(?:^|\n)\s*\*{0,2}BLOCKER:\*{0,2}\s*(.+)/gi
+  const re = /(?:^|\n)[ \t]*(?:#{1,6}[ \t]*|[-*][ \t]+)?\*{0,2}BLOCKER(?:[ \t]*#?\d+)?[ \t]*:\*{0,2}[ \t]*(.+)/gi
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
-    const line = m[1]!.trim()
-    if (line) found.push(line)
+    const line = m[1]!.trim().replace(/\*+$/, '').trim()
+    // "BLOCKER: none" is a reviewer saying there is none.
+    if (line && !/^(none|n\/a|nothing|no blockers?)\b[\s.]*$/i.test(line)) found.push(line)
   }
   return found
 }
@@ -177,6 +185,16 @@ export function prReviewUserMessage(issue: Issue, diff: string, discussion = '')
   ].join('\n')
 }
 
+/** What a person reads when the loop stops: which blocker, whose, and what to do about it. */
+export function standingNote(standing: readonly StandingBlocker[]): string {
+  return [
+    ...standing.map(s => `- **${s.agentName}:** ${s.blocker}\n  - before the revision: ${s.earlier}`),
+    '',
+    'The implementer revised the change and the same blocker came back, so the review loop stops here instead of spending another cycle on it.',
+    'A person decides: settle the point in a comment on the issue (reviewers read the discussion and treat a recorded decision as settled), then `floor-agents review --issue <id>` seats the committee again on this pull request; or change the brief and `run --issue <id> --retry`; or close the pull request.',
+  ].join('\n')
+}
+
 /**
  * Why a seat failed, in one line: the last thing its error says. A CLI opens with
  * a banner and closes with the reason ("You've hit your usage limit…").
@@ -223,6 +241,11 @@ export async function executeCommitteePrReview(
   }, { userMessage, assignmentBody: userMessage })
 
   const { outcome, reviewComments } = tallyCommitteePrReview(votes)
+  // What each member listed as must-fix, kept on the record: the next cycle is compared with it.
+  const listed = votes
+    .filter(v => v.execution !== 'failed')
+    .map(v => ({ agentId: v.agentId, agentName: v.agentName, blockers: extractBlockers(v.response || v.summary).map(b => b.slice(0, 400)).slice(0, 12) }))
+  const standing = outcome === 'request_changes' ? standingBlockers(state.reviews?.at(-1), listed, state.commitSha) : []
   const totalCost = votes.reduce((sum, v) => sum + v.costUsd, 0)
   const duration = Math.round(performance.now() - startTime)
   const cycle = state.reviewCycle + 1
@@ -261,6 +284,7 @@ export async function executeCommitteePrReview(
       ? '\nFewer than two members returned a vote. Left for human review — the committee did not decide.'
       : '',
     outcome === 'request_changes' && reviewComments ? `\n### Blockers\n\n${reviewComments}` : '',
+    standing.length ? `\n### Stood through a revision\n\n${standingNote(standing)}` : '',
     '',
     `> Duration: ${formatDuration(duration)}`,
     costNote(totalCost) ? `> Total cost: ${costNote(totalCost)}` : '',
@@ -272,8 +296,12 @@ export async function executeCommitteePrReview(
 
   state = recordReview(state, {
     cycle, at: new Date().toISOString(), commitSha: state.commitSha, durationMs: duration, outcome,
-    votes: votes.map(v => ({ agentId: v.agentId, agentName: v.agentName, vote: v.vote, ...(v.execution ? { execution: v.execution } : {}) })),
+    votes: votes.map(v => {
+      const blockers = listed.find(l => l.agentId === v.agentId)?.blockers ?? []
+      return { agentId: v.agentId, agentName: v.agentName, vote: v.vote, ...(v.execution ? { execution: v.execution } : {}), ...(blockers.length ? { blockers } : {}) }
+    }),
     ...(reviewComments && outcome === 'request_changes' ? { blockers: reviewComments.slice(0, 2_000) } : {}),
+    ...(standing.length ? { standing: standing.map(s => `${s.agentName}: ${s.blocker}`) } : {}),
   })
 
   if (outcome === 'no_decision') {
@@ -287,6 +315,20 @@ export async function executeCommitteePrReview(
   const verdict: ReviewVerdict = {
     decision: outcome === 'approve' ? 'approve' : 'request_changes',
     comments: reviewComments,
+  }
+
+  if (standing.length) {
+    // The implementer has had its try at these. Another revision would cost a turn,
+    // a gate and a review to hear the same sentence again: a person decides.
+    console.log(`[committee] ${standing.length} blocker(s) stood through a revision — the loop stops for a person`)
+    await taskAdapter.setLabel(issue.id, 'needs-human')
+    await taskAdapter.setStatus(issue.id, 'in_review')
+    return advanceState(state, 'failed', {
+      reviewVerdict: verdict,
+      reviewCycle: cycle,
+      costUsd: costTracker.getTaskCost(issue.id),
+      error: `A blocker stood through a revision (${standing.map(s => s.agentName).filter((n, i, a) => a.indexOf(n) === i).join(', ')}); needs a person: ${standing[0]!.blocker.slice(0, 200)}`,
+    }, stateStore)
   }
 
   return advanceState(state, outcome === 'approve' ? 'updating_issue' : 'revision', {

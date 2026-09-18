@@ -374,6 +374,55 @@ describe('executeCommitteePrReview', () => {
     }
   })
 
+  test('a blocker that stood through a revision stops the loop for a person', async () => {
+    // mtrl #92: Codex wrote the same blocker before and after the revision.
+    const before = 'Preserve the existing 0.9.x contract or move the behavior change to the next major release.'
+    const after = 'Preserve the existing 0.9.x behavior; move the proposed default behavior change to the next major release.'
+    const agents = [makeVoter('claude'), makeVoter('codex')]
+    const deps = makeDeps(agents, { claude: 'Fine now. VOTE: APPROVE', codex: `**BLOCKER: ${after}**\nVOTE: REJECT` })
+    const labels: string[] = []
+    deps.task.setLabel = async (_id, label) => { labels.push(label) }
+    const state = makeState({
+      commitSha: 'after-revision', reviewCycle: 1,
+      reviews: [{
+        cycle: 1, at: '2026-09-18T20:40:00Z', commitSha: 'first-pass', durationMs: 1, outcome: 'request_changes',
+        votes: [{ agentId: 'codex', agentName: 'Codex', vote: 'reject', blockers: [before] }],
+      }],
+    })
+
+    const next = await executeCommitteePrReview(makeIssue(), state, deps)
+
+    expect(next.step).toBe('failed')
+    expect(next.error).toContain('stood through a revision')
+    expect(next.error).toContain('Codex')
+    expect(next.reviewCycle).toBe(2)
+    expect(labels).toEqual(['needs-human'])
+    expect(next.reviews?.at(-1)?.standing).toEqual([`Codex: ${after}`])
+    const summary = deps.git.prComments.at(-1)!
+    expect(summary).toContain('### Stood through a revision')
+    expect(summary).toContain(before)
+    expect(summary).toContain('floor-agents review --issue')
+    // The issue gets the same words: that is where a person settles the point.
+    expect(deps.task.comments.get('issue-1')?.at(-1)).toContain('### Stood through a revision')
+  })
+
+  test('new blockers after a revision go to another revision, as before', async () => {
+    const agents = [makeVoter('claude'), makeVoter('codex')]
+    const deps = makeDeps(agents, { claude: 'VOTE: APPROVE', codex: '**BLOCKER: The CHANGELOG must record the type-level breaks.**\nVOTE: REJECT' })
+    const state = makeState({
+      commitSha: 'after-revision', reviewCycle: 1,
+      reviews: [{
+        cycle: 1, at: '2026-09-18T20:40:00Z', commitSha: 'first-pass', durationMs: 1, outcome: 'request_changes',
+        votes: [{ agentId: 'codex', agentName: 'Codex', vote: 'reject', blockers: ['Validate the groups callback against the inferred item type at `createVListFromConfig`.'] }],
+      }],
+    })
+    const next = await executeCommitteePrReview(makeIssue(), state, deps)
+    expect(next.step).toBe('revision')
+    expect(next.reviews?.at(-1)?.standing).toBeUndefined()
+    // Each member's blockers are on the record for the cycle after this one.
+    expect(next.reviews?.at(-1)?.votes.find(v => v.agentId === 'codex')?.blockers).toEqual(['The CHANGELOG must record the type-level breaks.'])
+  })
+
   test('a comments outage does not cost the review', async () => {
     const seen: string[] = []
     const agents = four()

@@ -97,6 +97,7 @@ not approved.
    fix ([run path](../run-path.md), idea 3).
 3. **A loop that cannot converge should stop early.** A blocker repeated unchanged across two
    cycles is not the implementer's to fix. It should end the loop as "needs a person" (idea 2).
+   Done the same evening (#84), tested against the blockers quoted above.
 4. **Two seats are too few.** One missing reviewer means no decision; one disagreement means a
    rejection, whichever way round. Three seats, with a spare, is the working minimum.
 5. **Independent reviewers earn their place.** Codex rejected changes Claude approved and was right

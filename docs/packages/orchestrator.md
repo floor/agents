@@ -288,3 +288,11 @@ Recovered tasks are flagged in metrics (`wasRecovered: true`) so crash recovery 
 The helpers in `attempts.ts` are pure (state in, state out). `--retry` archives the failed state
 file and starts from `freshState(issueId, agentId, historyOf(previous))`, so a retried issue keeps
 one history. `floor-agents status --issue <id>` prints it (`historyText`).
+
+### Operations on an attempt
+
+`verifyPreservedAttempt` (`floor-agents verify --issue <id>`) reopens the last unpublished attempt,
+runs guardrails and the gate on its preserved tree and publishes it through `publishTree` — the
+same function a finished turn ends with, so the two paths cannot drift. The gate run joins the
+attempt's earlier ones; `executeTask` then continues from `creating_pr`. `verifyRefusal` says why
+an attempt cannot be taken up (not failed, no tree, tree gone, already published).

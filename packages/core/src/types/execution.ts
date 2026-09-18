@@ -118,6 +118,8 @@ export type Attempt = {
   /** The CLI turn alone, without setup and gate. */
   readonly turnMs?: number
   readonly baseSha: string
+  /** The branch tip the worktree was created at — the parent of the commit this attempt publishes. */
+  readonly initialSha?: string
   /** The worktree, for as long as it is preserved; cleared once the attempt is published. */
   readonly worktreePath?: string
   readonly exitCode?: number

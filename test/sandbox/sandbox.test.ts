@@ -90,6 +90,14 @@ describe('sandboxProfile', () => {
     expect(profile).not.toContain('.cursor')
   })
 
+  test('agy may write its CLI state and login files, not the rest of home', () => {
+    const profile = sandboxProfile(reviewerSandbox('antigravity', {}, HOME))
+    expect(profile).toContain('(allow file-write* (subpath "/Users/someone/.gemini/antigravity-cli"))')
+    expect(profile).toContain('(allow file-write* (regex #"^/Users/someone/\\\\.gemini/oauth_creds\\\\.json"))')
+    expect(profile).not.toContain('.cursor')
+    expect(profile).not.toContain('Application Support/Antigravity')
+  })
+
   test('a child sandbox receives the denials through FLOOR_AGENTS_DENY_READ, merged with any set', () => {
     expect(denyReadEnv(['/docs/a.html', '/docs/b.md'], {})).toBe('/docs/a.html,/docs/b.md')
     expect(denyReadEnv(['/docs/a.html'], { FLOOR_AGENTS_DENY_READ: '~/private' })).toBe('~/private,/docs/a.html')

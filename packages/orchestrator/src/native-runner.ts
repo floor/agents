@@ -15,11 +15,12 @@ import { verificationSummary } from './verification.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import { implementerSandbox, reviewerSandbox, sandboxed, withDenyRead, type SandboxTool } from '@floor-agents/sandbox'
 import { buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
+import { buildAgyArgs, parseAgyResult } from '@floor-agents/antigravity'
 import { costNote, metaLine } from './cost-note.ts'
 import { AgentStopped, writtenSummary } from './stop-report.ts'
 
 /** Providers whose CLI runs as a full agent on a worktree, rather than through tool calls. */
-export const NATIVE_PROVIDERS = new Set(['claude-code', 'cursor'])
+export const NATIVE_PROVIDERS = new Set(['claude-code', 'cursor', 'antigravity'])
 
 export type NativeRole = 'implement' | 'review'
 
@@ -31,6 +32,9 @@ export type NativeRole = 'implement' | 'review'
  * bounds a runaway turn, so the cap only needs to be larger than honest work.
  */
 export const DEFAULT_MAX_TURNS: Readonly<Record<NativeRole, number>> = { implement: 300, review: 60 }
+
+/** The default turn budget, when the manifest names none. */
+export const DEFAULT_TURN_TIMEOUT_MS = 600_000
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
@@ -70,6 +74,7 @@ export function nativeAgentArgv(opts: {
   readonly prompt: string
   readonly model?: string
   readonly maxTurns?: number
+  readonly timeoutMs?: number
 }): string[] {
   if (opts.provider === 'cursor') {
     return ['cursor-agent', ...buildCursorArgs({
@@ -77,6 +82,14 @@ export function nativeAgentArgv(opts: {
       ...(opts.model ? { model: opts.model } : {}),
       // An implementer runs the project's tests, which needs the shell.
       ...(opts.role === 'implement' ? { allowShell: true } : {}),
+    })]
+  }
+  if (opts.provider === 'antigravity') {
+    return ['agy', ...buildAgyArgs({
+      prompt: opts.prompt,
+      role: opts.role,
+      timeoutMs: opts.timeoutMs ?? DEFAULT_TURN_TIMEOUT_MS,
+      ...(opts.model ? { model: opts.model } : {}),
     })]
   }
   if (opts.provider === 'claude-code') {
@@ -100,12 +113,31 @@ export type NativeParsed = {
   readonly subtype?: string
 }
 
-/** Read a native turn's output. Cursor reports no price, so its cost is 0. */
+function agyTimeout(status: string, text: string): boolean {
+  return status === 'TIMEOUT' || /print[- ]?timeout|timed? out|deadline/i.test(`${status} ${text}`)
+}
+
+/** Read a native turn's output. Cursor and agy report no price, so their cost is 0. */
 export function parseNativeResult(provider: string, stdout: string, stderr: string): NativeParsed {
   if (provider === 'cursor') {
     try {
       const r = parseCursorResult(stdout)
       return { resultText: r.result ?? '', cost: 0, isError: r.is_error, ...(r.subtype ? { subtype: r.subtype } : {}) }
+    } catch {
+      return { resultText: stdout || stderr, cost: 0, isError: true }
+    }
+  }
+  if (provider === 'antigravity') {
+    try {
+      const r = parseAgyResult(stdout)
+      const resultText = r.response || r.error || ''
+      const timedOut = r.status !== 'SUCCESS' && agyTimeout(r.status, resultText)
+      return {
+        resultText,
+        cost: 0,
+        isError: r.status !== 'SUCCESS',
+        ...(timedOut ? { subtype: 'TIMEOUT' } : r.status ? { subtype: r.status } : {}),
+      }
     } catch {
       return { resultText: stdout || stderr, cost: 0, isError: true }
     }
@@ -123,7 +155,7 @@ export function parseNativeResult(provider: string, stdout: string, stderr: stri
 
 /** Why a turn failed, in the words a person can act on. */
 export function failureReason(exitCode: number, subtype: string | undefined, budget: { timeoutMs: number; maxTurns: number }): string {
-  if (exitCode === 143) {
+  if (exitCode === 143 || subtype === 'TIMEOUT') {
     return `did not finish within ${Math.round(budget.timeoutMs / 60_000)} minutes (raise the agent's timeoutMs in the manifest)`
   }
   if (subtype === 'error_max_turns') {
@@ -132,10 +164,11 @@ export function failureReason(exitCode: number, subtype: string | undefined, bud
   return `failed (exit ${exitCode}${subtype ? `, ${subtype}` : ''})`
 }
 
-const sandboxTool = (provider: string): SandboxTool => (provider === 'cursor' ? 'cursor' : 'claude')
-
-/** The default turn budget, when the manifest names none. */
-export const DEFAULT_TURN_TIMEOUT_MS = 600_000
+function sandboxTool(provider: string): SandboxTool {
+  if (provider === 'cursor') return 'cursor'
+  if (provider === 'antigravity') return 'antigravity'
+  return 'claude'
+}
 
 /**
  * How long one turn may run: the agent's own `timeoutMs`, else the default.
@@ -169,9 +202,9 @@ export async function spawnNativeAgent(opts: {
   /** For tests: the home directory the sandbox protects. */
   readonly home?: string
 }): Promise<NativeRunResult> {
-  // Both keys are stripped so each CLI authenticates through its logged-in
+  // API keys are stripped so each CLI authenticates through its logged-in
   // subscription session instead of metered per-token API billing.
-  const { ANTHROPIC_API_KEY, CURSOR_API_KEY, ...cleanEnv } = process.env
+  const { ANTHROPIC_API_KEY, CURSOR_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, ...cleanEnv } = process.env
   const tool = sandboxTool(opts.provider)
   const spec = withDenyRead(opts.role === 'implement'
     ? implementerSandbox(tool, opts.writable, process.env, opts.home)
@@ -187,7 +220,7 @@ export async function spawnNativeAgent(opts: {
     stderr: 'pipe',
     stdin: 'ignore',
     detached: process.platform !== 'win32',
-    env: { ...cleanEnv, CLAUDE_CODE_SKIP_HOOKS: '1', ...(opts.provider === 'cursor' ? { CI: 'true' } : {}) },
+    env: { ...cleanEnv, CLAUDE_CODE_SKIP_HOOKS: '1', ...(opts.provider === 'cursor' || opts.provider === 'antigravity' ? { CI: 'true' } : {}) },
   })
 
   let timedOut = false

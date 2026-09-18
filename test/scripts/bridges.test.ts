@@ -31,7 +31,7 @@ describe('bridgeFor — provider picks the bridge', () => {
   test('older manifests that named a vendor still resolve by agent id', () => {
     expect(bridgeFor(agent('codex', 'openai'), '/r').script).toBe('codex-agent.ts')
     expect(bridgeFor(agent('grok', 'openai'), '/r').script).toBe('grok-agent.ts')
-    expect(bridgeFor(agent('antigravity', 'gemini'), '/r').script).toBe('antigravity-relay.ts')
+    expect(bridgeFor(agent('antigravity', 'gemini', 'gemini-3.1-pro-high'), '/r').script).toBe('agy-agent-bridge.ts')
   })
 
   test('an unknown transport fails before anything starts', () => {
@@ -41,14 +41,25 @@ describe('bridgeFor — provider picks the bridge', () => {
   test('cursor without a model is refused rather than using some default', () => {
     expect(() => bridgeFor(agent('grok', 'cursor'), '/r')).toThrow(/names no model/)
   })
+
+  test('antigravity runs the agy bridge with the manifest model and agent id', () => {
+    const plan = bridgeFor(agent('gemini', 'antigravity', 'gemini-3.1-pro-high'), '/code/vlist')
+    expect(plan.script).toBe('agy-agent-bridge.ts')
+    expect(plan.env).toMatchObject({ AGENT_ID: 'gemini', AGY_MODEL: 'gemini-3.1-pro-high', REVIEW_CWD: '/code/vlist' })
+  })
+
+  test('antigravity without a model is refused rather than using some default', () => {
+    expect(() => bridgeFor(agent('gemini', 'antigravity'), '/r')).toThrow(/names no model/)
+  })
 })
 
 describe('bridgeFor — private sources', () => {
   const denied = ['/docs/findings.html', '/docs/vlist.md']
 
-  test('the Cursor and Codex bridges carry the denials into their sandbox', () => {
+  test('the Cursor, Codex and Antigravity bridges carry the denials into their sandbox', () => {
     expect(bridgeFor(agent('grok', 'cursor', 'cursor-grok-4.6-high'), '/r', denied, {}).env.FLOOR_AGENTS_DENY_READ).toBe('/docs/findings.html,/docs/vlist.md')
     expect(bridgeFor(agent('codex', 'codex-cli'), '/r', denied, {}).env.FLOOR_AGENTS_DENY_READ).toBe('/docs/findings.html,/docs/vlist.md')
+    expect(bridgeFor(agent('gemini', 'antigravity', 'gemini-3.1-pro-high'), '/r', denied, {}).env.FLOOR_AGENTS_DENY_READ).toBe('/docs/findings.html,/docs/vlist.md')
   })
 
   test('denials already set for the run are kept', () => {
@@ -62,8 +73,8 @@ describe('bridgeFor — private sources', () => {
 
   test('a bridge that cannot be sandboxed is refused for an untrusted provider', () => {
     expect(() => bridgeFor(agent('grok', 'grok-cli'), '/r', denied, {})).toThrow(/cannot be sandboxed/)
-    expect(() => bridgeFor(agent('antigravity', 'antigravity'), '/r', denied, {})).toThrow(/cannot be sandboxed/)
-    expect(bridgeFor(agent('antigravity', 'antigravity'), '/r', [], {}).script).toBe('antigravity-relay.ts')
+    expect(bridgeFor(agent('antigravity', 'antigravity', 'gemini-3.1-pro-high'), '/r', denied, {}).script).toBe('agy-agent-bridge.ts')
+    expect(bridgeFor(agent('antigravity', 'antigravity', 'gemini-3.1-pro-high'), '/r', [], {}).script).toBe('agy-agent-bridge.ts')
   })
 })
 

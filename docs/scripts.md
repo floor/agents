@@ -6,13 +6,14 @@ Runnable helpers in `scripts/`. They are not part of any package — run them di
 |--------|------|------|
 | [`committee-run.ts`](#committee-runts) | Review an RFC file with the committee | by you (per round) |
 | [`cursor-agent-bridge.ts`](#cursor-agent-bridgets) | Cursor gateway bridge → sandboxed `cursor-agent -p` (any Cursor model) | by the committee scripts |
+| [`agy-agent-bridge.ts`](#agy-agent-bridgets) | Antigravity gateway bridge → sandboxed `agy -p --mode plan` (Gemini on the Google subscription) | by the committee scripts |
 | [`codex-agent.ts`](#codex-agentts) | Codex gateway bridge → `codex exec` | by `committee-run` / pm2 |
 | [`grok-agent.ts`](#grok-agentts) | Grok gateway bridge → xAI's `grok --prompt-file` | by `committee-run` / pm2 |
 | [`committee-smoke.ts`](#committee-smokets) | 2-way smoke test | by you (manual) |
 | [`gateway-listen.ts`](#gateway-listents) | Bare gateway diagnostic | by you (manual) |
-| `antigravity-relay.ts` / `antigravity-notify.ts` / `antigravity-mcp.ts` | **Parked** — Antigravity GUI bridge (no unattended wake) | — |
+| `antigravity-relay.ts` / `antigravity-notify.ts` / `antigravity-mcp.ts` | **Parked** — Antigravity GUI bridge (no unattended wake); not on the `provider: antigravity` path | — |
 
-> The three `antigravity-*` scripts are retained for reference but are **not part of the default committee** — Antigravity cannot vote unattended. See [Appendix: why Antigravity is parked](./guides/local-committee.md#appendix-why-antigravity-is-parked).
+> The three `antigravity-*` GUI scripts are retained for reference but are **not** what `provider: antigravity` runs. That provider seats the headless `agy` CLI via `agy-agent-bridge.ts`. See [Appendix: why the Antigravity GUI is parked](./guides/local-committee.md#appendix-why-antigravity-is-parked).
 
 **Which bridge runs** is decided by each external agent's `llm.provider` in the manifest (`scripts/lib/bridges.ts`), and every bridge registers under the manifest's agent id:
 
@@ -21,7 +22,7 @@ Runnable helpers in `scripts/`. They are not part of any package — run them di
 | `cursor` | `cursor-agent-bridge.ts` | required, e.g. `cursor-grok-4.6-high`, `gpt-5` |
 | `codex-cli` | `codex-agent.ts` | optional, as `CODEX_MODEL` |
 | `grok-cli` | `grok-agent.ts` (xAI's CLI) | optional, as `GROK_MODEL` |
-| `antigravity` | `antigravity-relay.ts` | — |
+| `antigravity` | `agy-agent-bridge.ts` | required, e.g. `gemini-3.1-pro-high` |
 
 Manifests that still name a vendor (`openai`, `gemini`) for `codex`, `grok` or `antigravity` resolve by agent id. Any other provider on an external agent stops the run before a process starts.
 
@@ -111,9 +112,31 @@ REVIEW_CWD=~/Code/floor/vlist bun scripts/cursor-agent-bridge.ts
 - **No verdict, one retry.** A reply without `VOTE:` or `RECOMMEND:` is retried once; a second empty reply is returned as-is, so the committee records an abstention rather than a vote nobody cast.
 - Prereq: `cursor-agent login`.
 
+## agy-agent-bridge.ts
+
+Gateway client for **Gemini through the Antigravity CLI**. Registers under the manifest's agent id and, on each assignment, runs one headless `agy -p --mode plan` turn with the manifest's model against the repository, on the Google AI Pro subscription.
+
+```bash
+GATEWAY_URL=ws://localhost:3199 AGENT_ID=gemini AGY_MODEL=gemini-3.1-pro-high \
+REVIEW_CWD=~/Code/floor/vlist bun scripts/agy-agent-bridge.ts
+```
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `AGENT_ID` | — (required) | gateway agent id, from the manifest |
+| `AGY_MODEL` | — (required) | model identifier, from the manifest (`agy models`) |
+| `REVIEW_CWD` | `process.cwd()` | repository the review reads |
+| `AGENT_NAME` | `<id> (Antigravity)` | display name |
+| `GATEWAY_URL` / `GATEWAY_TOKEN` | `ws://localhost:3100` / — | gateway |
+| `EXTERNAL_TIMEOUT_MS` | 600000 | per-turn timeout, also passed as `--print-timeout` |
+
+- **Sandboxed.** Every turn runs in a [reviewer sandbox](./guides/sandbox.md): it reads the repository directly and cannot write anything outside agy's own state (`~/.gemini/antigravity-cli` and login files), nor read credential stores or `.env` files.
+- **No verdict, one retry.** Same as the Cursor bridge: a reply without `VOTE:` or `RECOMMEND:` is retried once.
+- Prereq: `agy` on `PATH` and a Google login under `~/.gemini`.
+
 ## Parked: antigravity-relay.ts / antigravity-notify.ts / antigravity-mcp.ts
 
-The three-part file-backed bridge that let the **Antigravity GUI IDE** participate. Retained for reference but **not in the default committee**: Antigravity's agent (Cascade) has no external push and does not wake on background-task stdout, so it cannot vote unattended. The full mechanism and the supporting evidence are in [Appendix: why Antigravity is parked](./guides/local-committee.md#appendix-why-antigravity-is-parked). Grok (a headless CLI) took the seat.
+The three-part file-backed bridge that let the **Antigravity GUI IDE** participate. Retained for reference; `provider: antigravity` now seats the headless `agy` CLI via `agy-agent-bridge.ts` instead. The GUI agent (Cascade) has no external push and does not wake on background-task stdout, so it cannot vote unattended. The full mechanism and the supporting evidence are in [Appendix: why Antigravity is parked](./guides/local-committee.md#appendix-why-antigravity-is-parked).
 
 ## antigravity-relay.ts
 

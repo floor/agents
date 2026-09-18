@@ -44,6 +44,7 @@ These stay writable so the CLI can authenticate and keep its session:
 | `cursor-agent` | `.cursor`, `.local/share/cursor-agent`, `Library/Application Support/Cursor`, `Library/Caches` |
 | `claude` | `.claude`, `.claude.json` (and its lock and backup files), `Library/Caches` |
 | `codex` | `.codex`, `Library/Caches` |
+| `agy` | `.gemini/antigravity-cli`, login files under `.gemini` (`oauth_creds.json` and neighbours), `Library/Caches` |
 | project commands | `.bun`, `.npm`, `.cache`, `Library/Caches`, `.cargo/registry`, `.cargo/git`, `go/pkg/mod` |
 
 ### Unreadable by default
@@ -64,9 +65,9 @@ guardrails:
   privateSourceProviders: [claude-code, cursor]
 ```
 
-Whatever an agent reads becomes part of a prompt sent to its provider, so the list names companies trusted with the material, not tools. Every agent whose `llm.provider` is **not** listed runs with each private source added to its read denials — the native implementer and reviewer, the in-process Claude and Cursor adapters, and the Cursor and Codex committee bridges, which receive the paths through `FLOOR_AGENTS_DENY_READ`. Without `privateSourceProviders`, no provider is trusted.
+Whatever an agent reads becomes part of a prompt sent to its provider, so the list names companies trusted with the material, not tools. Every agent whose `llm.provider` is **not** listed runs with each private source added to its read denials — the native implementer and reviewer, the in-process Claude, Cursor and Antigravity adapters, and the Cursor, Codex and Antigravity committee bridges, which receive the paths through `FLOOR_AGENTS_DENY_READ`. Without `privateSourceProviders`, no provider is trusted.
 
-Two bridges cannot be sandboxed: the xAI `grok` CLI and Antigravity. An external agent on either, when its provider is not trusted, stops the committee run before any process starts.
+One bridge cannot be sandboxed: the xAI `grok` CLI. An external agent on it, when its provider is not trusted, stops the committee run before any process starts. The Antigravity **GUI** relay (`antigravity-relay.ts`) is parked and is no longer this path; `provider: antigravity` now seats the headless `agy` CLI inside a reviewer sandbox.
 
 `floor-agents doctor` checks each private path exists — a denial on a mistyped path protects nothing while the real file stays readable — and fails when an untrusted agent is seated while `FLOOR_AGENTS_SANDBOX=off`.
 
@@ -96,14 +97,17 @@ Only the declared paths are denied. A private repository's other files stay read
 | path | sandboxed |
 |---|---|
 | Cursor committee bridge (`scripts/cursor-agent-bridge.ts`) | ✓ reviewer |
+| Antigravity committee bridge (`scripts/agy-agent-bridge.ts`) | ✓ reviewer |
 | Claude in-process committee reviewer (`committee-run`, `discussion-committee`, `decision-committee`, `committee-smoke`) | ✓ reviewer |
 | `@floor-agents/cursor` adapter | ✓ always — the sandbox is a required option |
+| `@floor-agents/antigravity` adapter | ✓ always — the sandbox is a required option |
 | `@floor-agents/claude-code` adapter | when a `sandbox` is passed |
-| Native implementer in `run` / `watch` — `claude-code` or `cursor` | ✓ implementer |
+| Native implementer in `run` / `watch` — `claude-code`, `cursor` or `antigravity` | ✓ implementer |
 | Native PR reviewer | ✓ reviewer |
 | Project setup and verification commands | ✓ project command |
 | Codex bridge (`scripts/codex-agent.ts`) | ✓ reviewer — Codex's own sandbox turned off, see below |
-| xAI Grok bridge, Antigravity relay | ✗ — refused when a private source must be denied to them |
+| xAI Grok bridge | ✗ — refused when a private source must be denied to it |
+| Antigravity GUI relay (`antigravity-relay.ts`) | ✗ parked — not on the `provider: antigravity` path |
 
 Codex applies its own sandbox with `sandbox-exec` around each shell command, and a sandboxed process may not apply another: inside ours, `codex exec --sandbox read-only` fails every command with `sandbox_apply: Operation not permitted`. So the bridge runs `--sandbox danger-full-access` inside our reviewer sandbox, which does the containing. Measured live: Codex read the repository, and both a write under home and a read of a denied file failed with `Operation not permitted`. With `FLOOR_AGENTS_SANDBOX=off` the bridge keeps `--sandbox read-only`.
 
@@ -114,6 +118,6 @@ Measured live with the native runner and `cursor-grok-4.6-high` in a worktree: i
 Two enforcement tests run where `sandbox-exec` can actually apply a profile, and are skipped where it cannot (other platforms, or nested inside the engine's own verification — macOS refuses to nest `sandbox-exec`):
 
 - `test/sandbox` — a profile's effect: a write outside the allowed folder fails, a write inside it succeeds, a denied file cannot be read, and a denied private source cannot be read while the repository beside it can.
-- `test/orchestrator/native-runner.test.ts` — the native launch path: fake `cursor-agent` and `claude` scripts first on `PATH` try to write inside and outside their folder; the implementer writes only its worktree, the reviewer writes nothing, and a private source passed as a denial cannot be read.
+- `test/orchestrator/native-runner.test.ts` — the native launch path: fake `cursor-agent`, `claude` and `agy` scripts first on `PATH` try to write inside and outside their folder; the implementer writes only its worktree, the reviewer writes nothing, and a private source passed as a denial cannot be read.
 
 The skip uses `sandboxAvailable()` in `test/helpers/sandbox.ts`, which probes `sandbox-exec` once rather than trusting `Bun.which`. `test/orchestrator/verified-project.test.ts` runs the whole verified-execution suite with project commands sandboxed where that works, and sets `FLOOR_AGENTS_SANDBOX=off` where it cannot, so the pipeline still exercises verification logic uncontained.

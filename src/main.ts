@@ -5,6 +5,7 @@ import { createOpenAIAdapter } from '@floor-agents/openai'
 import { createLMStudioAdapter } from '@floor-agents/lmstudio'
 import { createClaudeCodeAdapter } from '@floor-agents/claude-code'
 import { createCursorAdapter } from '@floor-agents/cursor'
+import { createAntigravityAdapter } from '@floor-agents/antigravity'
 import { reviewerSandbox, withDenyRead } from '@floor-agents/sandbox'
 import { createGeminiAdapter } from '@floor-agents/gemini'
 import { createGitHubAdapter } from '@floor-agents/github'
@@ -138,6 +139,13 @@ if (requiredProviders.has('cursor')) {
   llmAdapters.set('cursor', createCursorAdapter({
     cwd: company.project.root ?? process.cwd(),
     sandbox: withDenyRead(reviewerSandbox('cursor'), privateSourceDenials(company, 'cursor')),
+  }))
+}
+
+if (requiredProviders.has('antigravity')) {
+  llmAdapters.set('antigravity', createAntigravityAdapter({
+    cwd: company.project.root ?? process.cwd(),
+    sandbox: withDenyRead(reviewerSandbox('antigravity'), privateSourceDenials(company, 'antigravity')),
   }))
 }
 

@@ -10,6 +10,7 @@ describe('agentLabel', () => {
     expect(agentLabel(agent('Grok', 'cursor-grok-4.6-xhigh-fast', 'cursor'))).toBe('Grok 4.6 xhigh fast')
     expect(agentLabel(agent('Claude', 'opus', 'claude-code'))).toBe('Claude Opus')
     expect(agentLabel(agent('Codex', 'gpt-5-codex', 'codex-cli'))).toBe('Codex GPT 5')
+    expect(agentLabel(agent('Gemini', 'gemini-3.1-pro-high', 'antigravity'))).toBe('Gemini 3.1 pro high')
   })
 
   test('a pinned model keeps its version and drops its release date', () => {

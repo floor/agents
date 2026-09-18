@@ -39,7 +39,7 @@ const real = (p: string): string => {
  * they execute code the agent may have written — its tests, a postinstall
  * script — so they are contained like the agent.
  */
-export type SandboxTool = 'cursor' | 'claude' | 'codex' | 'project'
+export type SandboxTool = 'cursor' | 'claude' | 'codex' | 'antigravity' | 'project'
 
 export type SandboxSpec = {
   /** The home directory whose writes are denied by default. */
@@ -69,6 +69,21 @@ export const toolState: Record<SandboxTool, { readonly dirs: readonly string[]; 
   codex: {
     dirs: ['.codex', 'Library/Caches'],
     filePrefixes: [],
+  },
+  // agy writes logs, conversations and crashes under ~/.gemini/antigravity-cli
+  // (measured: a deny-home-writes profile blocked those three). Login tokens
+  // live as files beside it under ~/.gemini and must stay writable so a refresh
+  // does not fail closed. Library/Caches is the same allowance every other CLI
+  // gets. Application Support/Antigravity is the IDE, not this CLI — left out.
+  antigravity: {
+    dirs: ['.gemini/antigravity-cli', 'Library/Caches'],
+    filePrefixes: [
+      '.gemini/oauth_creds.json',
+      '.gemini/gemini-credentials.json',
+      '.gemini/jetski-standalone-oauth-token',
+      '.gemini/google_accounts.json',
+      '.gemini/state.json',
+    ],
   },
   // Package-manager and build caches that install and test commands write.
   project: {

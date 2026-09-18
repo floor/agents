@@ -166,6 +166,10 @@ export async function doctorProject(company: CompanyConfig, taskAdapter: string,
       if (!Bun.which('cursor-agent')) throw new Error('cursor-agent executable not found; install it and run cursor-agent login')
       return 'CLI available; existing login is used during execution'
     }
+    if (provider === 'antigravity') {
+      if (!Bun.which('agy')) throw new Error('agy executable not found; install the Antigravity CLI and log in')
+      return 'CLI available (agy); existing login is used during execution'
+    }
     const keys: Record<string, string> = { anthropic: 'ANTHROPIC_API_KEY', gemini: 'GEMINI_API_KEY', openai: 'OPENAI_API_KEY' }
     const key = keys[provider]
     if (key && !env[key]) throw new Error(`${key} is required`)

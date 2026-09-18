@@ -64,6 +64,17 @@ test('doctor knows the cursor provider', async () => {
   expect(cursor!.ok).toBe(Boolean(Bun.which('cursor-agent')))
 })
 
+test('doctor knows the antigravity provider', async () => {
+  const config = await loadCompanyConfig('config/templates/default.yaml')
+  const agents = config.agents.map(a => (a.capabilities.includes('write_code') ? { ...a, llm: { ...a.llm, provider: 'antigravity', model: 'gemini-3.1-pro-high' } } : a))
+  const diagnostics = await doctorProject({ ...config, agents, project: { ...config.project, root: undefined } }, 'linear', {})
+  const agy = diagnostics.find(d => d.name === 'Provider: antigravity')
+  expect(agy).toBeDefined()
+  expect(agy!.detail).not.toContain('Unsupported provider')
+  expect(agy!.ok).toBe(Boolean(Bun.which('agy')))
+  if (agy!.ok) expect(agy!.detail).toContain('CLI available (agy)')
+})
+
 test('doctor reports whether agent runs can be sandboxed', async () => {
   const config = await loadCompanyConfig('config/templates/default.yaml')
   const project = { ...config.project, root: undefined }

@@ -34,10 +34,10 @@ const spec = implementerSandbox('claude', [worktreePath, worktreeGitDir])
 | `withDenyRead(spec, paths)` | the same spec with more unreadable paths — private sources an untrusted provider may not read |
 | `denyReadEnv(paths, env?)` | `FLOOR_AGENTS_DENY_READ` for a child process that builds its own sandbox, merged with the value already set; refuses a path containing a comma |
 | `sandboxProfile(spec)` | the SBPL profile text |
-| `toolState` | writable state directories per CLI (`cursor`, `claude`, `codex`) |
+| `toolState` | writable state directories per CLI (`cursor`, `claude`, `codex`, `antigravity`) |
 | `DEFAULT_DENY_READ`, `DENY_READ_PATTERNS` | credential stores and `.env` files denied to every run |
 
-`tool` is `'cursor'`, `'claude'`, `'codex'` or `'project'` and decides which state directories stay writable. Specs resolve every path with `realpath`, because the sandbox matches resolved paths and macOS symlinks `/tmp` and `/var`.
+`tool` is `'cursor'`, `'claude'`, `'codex'`, `'antigravity'` or `'project'` and decides which state directories stay writable. Specs resolve every path with `realpath`, because the sandbox matches resolved paths and macOS symlinks `/tmp` and `/var`.
 
 ## Environment
 

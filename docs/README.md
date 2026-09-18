@@ -28,6 +28,7 @@ Each package has its own documentation:
 | `@floor-agents/lmstudio` | LM Studio adapter for local models | [lmstudio](./packages/lmstudio.md) |
 | `@floor-agents/claude-code` | Claude Code adapter (CTO agent) | [claude-code](./packages/claude-code.md) |
 | `@floor-agents/cursor` | Cursor CLI adapter — any Cursor-hosted model | [cursor](./packages/cursor.md) |
+| `@floor-agents/antigravity` | Antigravity CLI adapter (`agy`) — Gemini on the Google subscription | [antigravity](./packages/antigravity.md) |
 | `@floor-agents/sandbox` | `sandbox-exec` containment for agent CLIs | [sandbox](./packages/sandbox.md) |
 | `@floor-agents/gemini` | Google Gemini adapter | [gemini](./packages/gemini.md) |
 | `@floor-agents/openai` | OpenAI-compatible adapter | [openai](./packages/openai.md) |

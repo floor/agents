@@ -106,9 +106,9 @@ agents:
 
 **Available capabilities:** `read_code`, `write_code`, `create_pr`, `review_pr`, `write_tests`, `decompose_task`, `manage_issues`, `approve`, `reject`, `vote`, `review_rfc`
 
-**Available providers:** `anthropic`, `claude-code`, `cursor`, `gemini`, `lmstudio`, `openai`, `ollama`, `local`
+**Available providers:** `anthropic`, `claude-code`, `cursor`, `antigravity`, `gemini`, `lmstudio`, `openai`, `ollama`, `local`
 
-**`timeoutMs`** bounds one turn of a native agent (`claude-code`, `cursor`): a single call that
+**`timeoutMs`** bounds one turn of a native agent (`claude-code`, `cursor`, `antigravity`): a single call that
 reads, edits and runs the project's tests until it is done. The budget is the size of the tasks
 that agent is given, not a property of the engine — a small fix finishes in minutes, a change
 across several plugins with tests does not. A turn that reaches the limit is killed and the task
@@ -119,6 +119,14 @@ without editing the manifest.
 Read, Edit or Bash call is a turn). The defaults fit the role — 300 implementing, 60 reviewing —
 and a turn that reaches the cap ends with no result, reported as such. The time budget already
 bounds a runaway turn, so the cap only needs to be larger than honest work.
+
+**`antigravity`** seats Gemini through the Antigravity CLI (`agy`) on the Google AI Pro
+subscription — no API key, no metering. `provider: gemini` remains the Gemini API adapter.
+The native runner treats `antigravity` like `cursor`: an implementer gets
+`--dangerously-skip-permissions` inside an implementer sandbox; a reviewer gets `--mode plan`
+inside a reviewer sandbox. `--print-timeout` is set from `timeoutMs` so the CLI does not give
+up before the engine does. List models with `agy models`. An external committee member with
+`provider: antigravity` runs `scripts/agy-agent-bridge.ts`.
 
 ### `guardrails`
 

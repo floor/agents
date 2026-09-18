@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from 'bun:test'
-import { createWorktree, commitAndPushWorktree, removeWorktree } from '@floor-agents/orchestrator'
+import { createWorktree, commitAndPushWorktree, removeWorktree, reopenWorktree } from '@floor-agents/orchestrator'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -71,4 +71,28 @@ test('handles double remove gracefully', async () => {
   const worktree = await createWorktree('agent/test-branch')
   await removeWorktree(worktree)
   await removeWorktree(worktree) // should not throw
+})
+
+test('reopenWorktree keeps the original checkout SHA after HEAD moves', async () => {
+  const worktree = await createWorktree('agent/test-branch')
+  const original = worktree.initialSha
+  await writeFile(join(worktree.path, 'agent.ts'), 'export const x = 1')
+  await Bun.$`git -C ${worktree.path} add agent.ts`.quiet()
+  await Bun.$`git -C ${worktree.path} commit -m "agent commit"`.quiet()
+  const head = (await Bun.$`git -C ${worktree.path} rev-parse HEAD`.text()).trim()
+  expect(head).not.toBe(original)
+
+  const reopened = await reopenWorktree(worktree.path, worktree.branch, original)
+  expect(reopened).not.toBeNull()
+  expect(reopened!.initialSha).toBe(original)
+
+  await writeFile(join(worktree.path, 'new-file.ts'), 'export const y = 2')
+  const sha = await commitAndPushWorktree(reopened!, 'publish validated tree')
+  expect(sha).not.toBeNull()
+  const parent = (await Bun.$`git -C ${worktree.path} rev-parse ${sha}~1`.text()).trim()
+  expect(parent).toBe(original)
+  expect(parent).not.toBe(head)
+
+  expect(await reopenWorktree('/tmp/floor-missing-worktree', worktree.branch, original)).toBeNull()
+  await removeWorktree(worktree)
 })

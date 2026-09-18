@@ -61,6 +61,12 @@ async function advanceState(state: ExecutionState, step: ExecutionStep, updates:
   return next
 }
 
+/** Review comments still pending on a revision; kept on state so a crash mid-agent can resume them. */
+function pendingReviewFeedback(state: ExecutionState): string | undefined {
+  if (state.reviewVerdict?.decision !== 'request_changes') return undefined
+  return state.reviewVerdict.comments.trim() || 'Changes requested.'
+}
+
 /** Comments the implementer should read this turn; a fetch failure is no comments. */
 async function loadDiscussion(adapter: TaskAdapter, issueId: string): Promise<string> {
   if (!adapter.getComments) return ''
@@ -275,9 +281,11 @@ export async function executeTask(
       ].filter(Boolean).join('\n'))
     }
 
-    // Step: dev writes code (two paths)
+    // Step: dev writes code (two paths). A revision that crashed mid-agent
+    // resumes here (`calling_llm`) and must still see the review comments.
     if (state.step === 'building_context' || state.step === 'calling_llm' || state.step === 'parsing_output') {
       const discussion = await loadDiscussion(unsigned, issue.id)
+      const feedback = pendingReviewFeedback(state)
       if (devIsNative) {
         state = await runNativeDevAgent(issue, devAgent, state, {
           contextBuilder: deps.contextBuilder,
@@ -289,9 +297,9 @@ export async function executeTask(
           denyRead: privateSourceDenials(company, devAgent.llm.provider),
           ...(deps.runAgent ? { runAgent: deps.runAgent } : {}),
           ...(discussion ? { discussion } : {}),
-        })
+        }, feedback)
       } else {
-        state = await runApiDevAgent(issue, devAgent, state, deps, undefined, discussion)
+        state = await runApiDevAgent(issue, devAgent, state, deps, feedback, discussion)
       }
     }
 
@@ -359,9 +367,16 @@ export async function executeTask(
         state = await advanceState(state, 'failed', { error: 'Max review cycles reached; needs human review' }, stateStore)
         return
       } else {
-        const feedback = state.reviewVerdict?.comments ?? 'Changes requested.'
+        const feedback = pendingReviewFeedback(state) ?? 'Changes requested.'
         console.log(`[orchestrator] revision ${state.reviewCycle}: ${devAgent.name} addressing feedback...`)
-        state = await advanceState(state, 'building_context', { parsedOutput: null, reviewVerdict: null, verification: undefined, fixTurnsUsed: 0 }, stateStore)
+        state = await advanceState(state, 'building_context', {
+          parsedOutput: null,
+          verification: undefined,
+          fixTurnsUsed: 0,
+          llmResponse: null,
+          workspacePath: undefined,
+          initialSha: undefined,
+        }, stateStore)
         const discussion = await loadDiscussion(unsigned, issue.id)
 
         if (devIsNative) {

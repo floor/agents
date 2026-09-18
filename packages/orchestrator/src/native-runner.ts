@@ -295,8 +295,8 @@ export async function runNativeDevAgent(
   const incoming = state
   state = await advanceState(state, 'calling_llm', {}, stateStore)
 
-  const existing = incoming.step === 'calling_llm' && incoming.workspacePath
-    ? await reopenWorktree(incoming.workspacePath, incoming.branchName!)
+  const existing = incoming.step === 'calling_llm' && incoming.workspacePath && incoming.initialSha
+    ? await reopenWorktree(incoming.workspacePath, incoming.branchName!, incoming.initialSha)
     : null
   const resumed = Boolean(existing)
   const worktree = existing ?? await createWorktree(state.branchName!, deps.project.root)
@@ -304,10 +304,14 @@ export async function runNativeDevAgent(
   state = await advanceState(state, 'calling_llm', {
     workspacePath: worktree.path,
     baseSha: await resolveBaseSha(worktree, deps.project, state),
+    initialSha: worktree.initialSha,
     ...(resumed ? {} : { verification: undefined }),
   }, stateStore)
   const isRevision = !!reviewComments
-  const skipInitial = resumed && (isRepairableVerification(state.verification) || Boolean(state.llmResponse))
+  // Only a persisted repairable gate failure skips the implementer. A leftover
+  // llmResponse from a previous turn (or a revision that crashed mid-agent)
+  // must not count as "the agent already ran".
+  const skipInitial = resumed && isRepairableVerification(state.verification)
 
   console.log(`[${agent.id}] native agent on worktree: ${worktree.path}${resumed ? ' (resumed)' : ''}`)
 

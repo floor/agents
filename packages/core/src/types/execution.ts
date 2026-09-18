@@ -33,6 +33,11 @@ export type ReviewVerdict = {
 export type ExecutionState = {
   readonly workspacePath?: string
   readonly baseSha?: string
+  /**
+   * SHA the implementer worktree was checked out at — parent of a published
+   * commit. Persisted so resume does not read `HEAD`, which the agent can move.
+   */
+  readonly initialSha?: string
   readonly verification?: VerificationResult
   /** Every gate invocation this run, failed and flaky attempts included. */
   readonly gateRuns?: readonly GateRun[]

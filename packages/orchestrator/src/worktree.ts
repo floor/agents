@@ -32,11 +32,17 @@ export async function createWorktree(branch: string, repoPath = process.cwd()): 
   return { path, branch, initialSha }
 }
 
-/** Reopen a worktree left on disk after a crash so uncommitted repair work is not discarded. */
-export async function reopenWorktree(path: string, branch: string): Promise<Worktree | null> {
+/**
+ * Reopen a worktree left on disk after a crash so uncommitted repair work is
+ * not discarded. `initialSha` is the checkout the engine recorded — never
+ * `HEAD`, which the agent can move with a commit or checkout.
+ */
+export async function reopenWorktree(path: string, branch: string, initialSha: string): Promise<Worktree | null> {
+  if (!path || !branch || !initialSha) return null
   try {
-    const initialSha = await gitText(path, ['rev-parse', 'HEAD'])
-    if (!initialSha) return null
+    const inside = await gitText(path, ['rev-parse', '--is-inside-work-tree'])
+    if (inside !== 'true') return null
+    await gitText(path, ['cat-file', '-e', `${initialSha}^{commit}`])
     return { path, branch, initialSha }
   } catch {
     return null

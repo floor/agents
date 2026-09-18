@@ -580,8 +580,16 @@ test('a recovered repair resumes the persisted worktree instead of restarting im
   }, { ...project, fixTurns: 0 }))).rejects.toBeInstanceOf(VerificationFailed)
   const saved = await store.get(issue.id)
   expect(saved?.workspacePath).toBeTruthy()
+  expect(saved?.initialSha).toBeTruthy()
   expect(await Bun.file(join(saved!.workspacePath!, 'note.txt')).text()).toBe('kept')
   expect(saved?.verification?.passed).toBe(false)
+
+  await gitText(saved!.workspacePath!, ['config', 'user.email', 'agent@example.test'])
+  await gitText(saved!.workspacePath!, ['config', 'user.name', 'Agent'])
+  await gitText(saved!.workspacePath!, ['add', 'note.txt'])
+  await gitText(saved!.workspacePath!, ['commit', '-m', 'agent moved HEAD'])
+  const movedHead = await gitText(saved!.workspacePath!, ['rev-parse', 'HEAD'])
+  expect(movedHead).not.toBe(saved!.initialSha!)
 
   let calls = 0
   const next = await runNativeDevAgent(issue, agent, saved!, nativeDeps(store, async (prompt, cwd) => {
@@ -595,6 +603,87 @@ test('a recovered repair resumes the persisted worktree instead of restarting im
   expect(calls).toBe(1)
   expect(next.verification?.passed).toBe(true)
   expect(await remoteHead()).toBe(next.commitSha!)
+  expect(await gitText(root, ['rev-parse', `${next.commitSha}~1`])).toBe(saved!.initialSha!)
+  expect(await gitText(root, ['rev-parse', `${next.commitSha}~1`])).not.toBe(movedHead)
+})
+
+test('executeTask resumes a persisted repair through the pipeline', async () => {
+  const nativeAgent: AgentDefinition = { ...agent, llm: { ...agent.llm, provider: 'cursor' } }
+  const store = createStateStore(join(dir, 'state'))
+  await expect(runNativeDevAgent(issue, agent, state(), nativeDeps(store, async (_p, cwd) => {
+    await Bun.write(join(cwd, 'answer.txt'), 'almost')
+    await Bun.write(join(cwd, 'note.txt'), 'kept')
+    return { resultText: 'first', cost: 0, durationMs: 1, exitCode: 0 }
+  }, { ...project, fixTurns: 0 }))).rejects.toBeInstanceOf(VerificationFailed)
+  const saved = await store.get(issue.id)
+  expect(saved?.step).toBe('calling_llm')
+  expect(saved?.verification?.passed).toBe(false)
+
+  let calls = 0
+  const { task, git } = adapters('42')
+  await executeTask(issue, nativeAgent, {
+    company: { ...company, project: { ...project, fixTurns: 1 }, agents: [nativeAgent] },
+    taskAdapter: task, gitAdapter: git, stateStore: store, costTracker: createCostTracker(),
+    contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+    getAdapter: () => { throw new Error('unused') }, findReviewer: () => undefined,
+    runAgent: async (prompt, cwd) => {
+      calls++
+      expect(cwd).toBe(saved!.workspacePath!)
+      expect(prompt).toContain('## Gate failure')
+      expect(await Bun.file(join(cwd, 'note.txt')).text()).toBe('kept')
+      await Bun.write(join(cwd, 'answer.txt'), '42')
+      return { resultText: 'fixed', cost: 0, durationMs: 1, exitCode: 0 }
+    },
+  }, saved!)
+  const next = await store.get(issue.id)
+  expect(calls).toBe(1)
+  expect(next?.step).toBe('done')
+  expect(next?.verification?.passed).toBe(true)
+  expect(await remoteHead()).toBe(next!.commitSha!)
+})
+
+test('a revision that crashes mid-agent is resumed with review feedback, not skipped', async () => {
+  const nativeAgent: AgentDefinition = { ...agent, llm: { ...agent.llm, provider: 'cursor' } }
+  const worktree = await createWorktree(branch, root)
+  await Bun.write(join(worktree.path, 'answer.txt'), 'almost')
+  const store = createStateStore(join(dir, 'state'))
+  const existing = {
+    ...state(),
+    step: 'calling_llm' as const,
+    workspacePath: worktree.path,
+    initialSha: worktree.initialSha,
+    baseSha: worktree.initialSha,
+    llmResponse: 'previous implementation summary',
+    reviewCycle: 1,
+    reviewVerdict: { decision: 'request_changes' as const, comments: 'please fix tests' },
+    prId: '1',
+    prUrl: 'https://example.test/pr/1',
+    commitSha: worktree.initialSha,
+  }
+  await store.save(existing)
+  let calls = 0
+  const prompts: string[] = []
+  const { task, git } = adapters('42')
+  await executeTask(issue, nativeAgent, {
+    company: { ...company, project: { ...project, fixTurns: 0 }, agents: [nativeAgent] },
+    taskAdapter: task, gitAdapter: git, stateStore: store, costTracker: createCostTracker(),
+    contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+    getAdapter: () => { throw new Error('unused') }, findReviewer: () => undefined,
+    runAgent: async (prompt, cwd) => {
+      calls++
+      prompts.push(prompt)
+      expect(cwd).toBe(worktree.path)
+      await Bun.write(join(cwd, 'answer.txt'), '42')
+      return { resultText: 'fixed on resume', cost: 0, durationMs: 1, exitCode: 0 }
+    },
+  }, existing)
+  expect(calls).toBe(1)
+  expect(prompts[0]!).toContain('## Review Feedback')
+  expect(prompts[0]!).toContain('please fix tests')
+  expect(prompts[0]!).not.toContain('## Gate failure')
+  const next = await store.get(issue.id)
+  expect(next?.verification?.passed).toBe(true)
+  expect(await remoteHead()).toBe(next!.commitSha!)
 })
 
 test('a flaky gate pass on retry consumes no fix turn and both attempts stay in state', async () => {

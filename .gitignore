@@ -38,8 +38,10 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Runtime state
 data/executions/
 
-# Agent worktrees
+# Agent worktrees, run state and the project .env — the manifest is versioned
 .worktrees/
+.agents/*
+!.agents/agents.yaml
 logs/
 
 # Local Claude Code settings

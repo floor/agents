@@ -1,0 +1,162 @@
+# floor/agents — agent manifest
+#
+# The engine, run on itself. Same shape as vlist's and mtrl's: it declares WHERE
+# things are and WHO may do what, and is not a TODO — the work lives in Linear.
+#
+# Until 2026-09-18 the engine had no manifest, so its coordinator was also its
+# implementer by default. Dr Jones: "the orchestrator should not implement the
+# fixes, but ask the implementer to redo with hints." This file seats the
+# implementer.
+
+name: "floor agents"
+
+project:
+  name: "agents"
+  root: ".."                  # relative to this file, so the repository root
+  repo: "agents"
+  baseBranch: "staging"       # integration branch; main is what is published
+  language: "typescript"
+  runtime: "bun"
+
+  setup:
+    - name: Install dependencies
+      command: [bun, install, --frozen-lockfile]
+
+  # The gate: ci.yml's three steps, on a clean export of the exact commit.
+  verification:
+    - name: Typecheck
+      command: [bun, run, typecheck]
+    - name: Tests
+      command: [bun, test]
+    - name: Build
+      command: [bun, run, build]
+
+  conventions:
+    semicolons: false
+    quotes: "single"
+    indent: 2
+    modules: "esm"
+
+  structure:
+    backend: "packages/"
+    tests: "test/"
+
+# ── Tasks ──────────────────────────────────────────────────────────
+#
+# Linear, team FLO, project agents. `run --issue FLO-nn` reads the issue by key;
+# `watch` takes an issue as soon as it carries the label below. A PR references
+# a task as `Refs FLO-nn` and never repeats its text — the tracker is private,
+# the repository is not. The API key comes from the repository's own .env.
+
+tasks:
+  source: linear
+  labels: [agent]
+  linear:
+    team: FLO
+    project: agents
+
+# ── Sources ────────────────────────────────────────────────────────
+#
+# The engine's design notes are in the repository itself and public. What is
+# private about this project lives in the floor docs, which no run needs.
+
+sources:
+  design:
+    path: "../CLAUDE.md"
+    format: "markdown"
+    visibility: "public"
+
+agents:
+  - id: cto
+    name: "Claude"
+    promptTemplate: "../agents/cto.md"
+    llm:
+      provider: claude-code
+      model: opus
+    capabilities: [read_code, create_pr, review_rfc]
+    autonomy: T1
+    # Coordinates, reviews, merges into staging after a clean-export gate. Does
+    # not implement (2026-09-18). Never publishes to npm or merges into main
+    # without Dr Jones.
+
+  # ── Implementer ─────────────────────────────────────────────────
+  #
+  # One implementer, on a worktree inside an implementer sandbox: it may write
+  # that worktree and nothing else, and the engine verifies and publishes the
+  # tree. Completion is decided by `verification` against the diff, never by
+  # what the agent says it did.
+
+  - id: grok-dev
+    name: "Grok"
+    promptTemplate: "../agents/backend-dev.md"
+    llm:
+      provider: cursor        # the transport; the model string carries the vendor
+      model: cursor-grok-4.6-high
+    capabilities: [read_code, write_code, write_tests, create_pr]
+    autonomy: T1
+    # Ten minutes, the default, is what a plugin-wide change on vlist spent
+    # reading. The engine is smaller, but a pipeline change touches several
+    # packages and their tests.
+    timeoutMs: 2400000
+
+  # ── Committee ───────────────────────────────────────────────────
+  #
+  # Every member reviews inside a reviewer sandbox: it reads the repository and
+  # cannot write to it. Grok votes here as `grok` and implements above as
+  # `grok-dev` — ids are unique.
+
+  - id: claude
+    name: "Claude"
+    promptTemplate: "../agents/claude-reviewer.md"
+    llm:
+      provider: claude-code
+      model: opus
+      temperature: 0.3
+      maxTokens: 32000
+    capabilities: [read_code, review_rfc, vote]
+    autonomy: T1
+
+  - id: codex                 # GPT, through the Codex CLI
+    name: "Codex"
+    external: true
+    promptTemplate: "../agents/codex-reviewer.md"
+    llm:
+      provider: codex-cli     # picks the bridge: codex-agent.ts
+      model: local            # the Codex CLI's own default
+    capabilities: [review_rfc, vote]
+    autonomy: T1
+
+  - id: grok
+    name: "Grok"
+    external: true
+    promptTemplate: "../agents/grok-reviewer.md"
+    llm:
+      provider: cursor        # picks the bridge: cursor-agent-bridge.ts
+      model: cursor-grok-4.6-high
+    capabilities: [review_rfc, vote]
+    autonomy: T1
+
+# ── Guardrails ─────────────────────────────────────────────────────
+#
+# No private source is declared, so privateSourceProviders gates nothing here;
+# it is kept in step with vlist and mtrl so a source added later is covered.
+
+guardrails:
+  maxFilesPerTask: 20
+  maxFileSizeBytes: 102400
+  blockedPaths:
+    - ".env*"
+    - "*.pem"
+    - "*.key"
+    - ".github/workflows/*"
+    - "package.json"
+    - "bun.lock"
+    - ".gitignore"
+  privateSourceProviders: [claude-code, lmstudio, cursor]
+
+# ── Record ─────────────────────────────────────────────────────────
+
+record:
+  format: "jsonl"
+  path: "../../docs/activity/2026/agents-events.jsonl"
+  events: [claimed, promoted, pr_opened, review_passed, review_rejected, status_changed]

@@ -133,7 +133,7 @@ Validates agent output before committing. Returns `GuardrailViolation[]`:
 | Check | Config Field |
 |-------|-------------|
 | File count | `maxFilesPerTask` |
-| Bytes written to one file — the patch on the native path, the file on the API path | `maxFileSizeBytes` |
+| Bytes written to one file — the lines added on the native path, the file on the API path | `maxFileSizeBytes` |
 | Bytes written in total, measured the same way | `maxTotalOutputBytes` |
 | Blocked paths (glob) | `blockedPaths` |
 | Allowed paths (glob) | `allowedPaths` |

@@ -16,6 +16,7 @@ import {
   getIssueLabels,
   type LinearAdapterConfig,
   type LinearIssue,
+  resolveProjectId,
 } from './graphql.ts'
 
 const POLL_INTERVAL_MS = 5_000
@@ -174,11 +175,14 @@ export function createLinearAdapter(adapterConfig: LinearAdapterConfig): TaskAda
         }
       }
 
+      // Into the project the manifest names, so a created issue is this project's.
+      const projectId = await resolveProjectId(config)
       const li = await createLinearIssue(config, {
         title: data.title,
         description: data.body,
         labelIds: labelIds.length > 0 ? labelIds : undefined,
         parentId,
+        ...(projectId ? { projectId } : {}),
       })
 
       return linearToIssue(li)

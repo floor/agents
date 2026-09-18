@@ -143,6 +143,12 @@ export function validateCompanyConfig(config: CompanyConfig): readonly string[] 
       errors.push(`sources.${key}.visibility must be public or private`)
     }
   }
+  if (config.tasks !== undefined) {
+    const t = config.tasks
+    if (!['linear', 'github-issues', 'things'].includes(t.source)) errors.push(`tasks.source must be linear, github-issues or things`)
+    if (t.source === 'linear' && !t.linear?.team?.trim()) errors.push('tasks.linear.team is required when tasks.source is linear')
+    if (t.labels !== undefined && (!Array.isArray(t.labels) || t.labels.some(l => typeof l !== 'string' || !l.trim()))) errors.push('tasks.labels must be a list of label names')
+  }
   const trusted = config.guardrails.privateSourceProviders
   if (trusted !== undefined && (!Array.isArray(trusted) || trusted.some(p => typeof p !== 'string' || !p.trim()))) {
     errors.push('guardrails.privateSourceProviders must be a list of provider names')

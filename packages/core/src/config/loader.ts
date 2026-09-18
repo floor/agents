@@ -7,6 +7,7 @@ import type { AutonomyConfig } from '../types/autonomy.ts'
 import type { GuardrailsConfig } from '../types/guardrails.ts'
 import type { CostConfig } from '../types/costs.ts'
 import type { SourceDefinition } from '../types/sources.ts'
+import type { TasksConfig } from '../types/tasks.ts'
 import { dirname, resolve } from 'node:path'
 
 const DEFAULT_TEMPLATE_PATH = 'config/templates/default.yaml'
@@ -123,6 +124,16 @@ function parseSources(raw: any): Record<string, SourceDefinition> {
   return sources
 }
 
+function parseTasks(raw: any): TasksConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  return {
+    source: raw.source,
+    ...(raw.labels !== undefined ? { labels: raw.labels } : {}),
+    ...(raw.linear ? { linear: { team: raw.linear.team, ...(raw.linear.project !== undefined ? { project: raw.linear.project } : {}) } } : {}),
+    ...(raw.github ? { github: { ...(raw.github.repo !== undefined ? { repo: raw.github.repo } : {}) } } : {}),
+  }
+}
+
 function parseCosts(raw: any): CostConfig {
   return {
     maxCostPerTask: raw?.maxCostPerTask ?? 5.0,
@@ -181,6 +192,7 @@ function parseConfig(text: string): CompanyConfig {
     autonomy: parseAutonomy(raw.autonomy),
     guardrails: parseGuardrails(raw.guardrails),
     sources: parseSources(raw.sources),
+    ...(raw.tasks !== undefined ? { tasks: parseTasks(raw.tasks) } : {}),
     costs: parseCosts(raw.costs),
     statusMapping: raw.statusMapping ?? {},
     createdAt: now,

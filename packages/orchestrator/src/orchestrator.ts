@@ -19,6 +19,8 @@ export type OrchestratorConfig = {
   readonly contextBuilder: ContextBuilder
   readonly stateStore: StateStore
   readonly costTracker: CostTracker
+  /** Labels that hand an issue to the implementer. The manifest's `tasks.labels`; default `agent`. */
+  readonly labels?: readonly string[]
 }
 
 export type Orchestrator = {
@@ -91,7 +93,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       })
 
       const watchLoop = async () => {
-        for await (const event of taskAdapter.watchIssues({ labels: ['agent'] })) {
+        for await (const event of taskAdapter.watchIssues({ labels: [...(config.labels ?? ['agent'])] })) {
           if (!running) break
 
           if (event.type === 'created' && event.issue.status !== 'done') {

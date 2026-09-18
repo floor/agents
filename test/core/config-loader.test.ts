@@ -11,6 +11,7 @@ test('loads default template', async () => {
   expect(config.chain.nodes.length).toBe(5)
   expect(config.guardrails.maxFilesPerTask).toBe(20)
   expect(config.costs.maxCostPerTask).toBe(5.0)
+  expect(config.project.fixTurns).toBe(1)
 })
 
 test('throws on missing config file', async () => {
@@ -106,5 +107,28 @@ agents:
 `)
   const config = await loadCompanyConfig(path)
   expect(config.agents[0]?.voteByComment).toBe(true)
+  await (await import('node:fs/promises')).rm(dir, { recursive: true, force: true })
+})
+
+test('parses project.fixTurns and verification flaky flags', async () => {
+  const dir = await (await import('node:fs/promises')).mkdtemp((await import('node:path')).join((await import('node:os')).tmpdir(), 'floor-fix-turns-'))
+  const { join } = await import('node:path')
+  const path = join(dir, 'agents.yaml')
+  await Bun.write(path, `
+name: t
+project:
+  name: t
+  repo: t
+  fixTurns: 0
+  verification:
+    - { name: Tests, command: [bun, test], flaky: true }
+agents:
+  - { id: dev, name: Dev, promptTemplate: dev.md, llm: { provider: cursor, model: m }, capabilities: [write_code] }
+`)
+  const config = await loadCompanyConfig(path)
+  expect(config.project.fixTurns).toBe(0)
+  expect(config.project.verification).toEqual([{ name: 'Tests', command: ['bun', 'test'], flaky: true }])
+  const { validateCompanyConfig } = await import('@floor-agents/core')
+  expect(validateCompanyConfig(config)).toEqual([])
   await (await import('node:fs/promises')).rm(dir, { recursive: true, force: true })
 })

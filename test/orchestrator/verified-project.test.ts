@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { AgentDefinition, CompanyConfig, ExecutionState, GitAdapter, Issue, LLMAdapter, ProjectConfig, TaskAdapter } from '@floor-agents/core'
 import { loadCompanyConfig } from '@floor-agents/core'
-import { createStateStore, createCostTracker, executeTask, runNativeDevAgent } from '@floor-agents/orchestrator'
+import { createStateStore, createCostTracker, executeTask, runNativeDevAgent, VerificationFailed, GateExhausted } from '@floor-agents/orchestrator'
 import { createContextBuilder } from '@floor-agents/context-builder'
 import { commitWorktree, createWorktree, gitText } from '../../packages/orchestrator/src/worktree.ts'
 import { validateWorktree, verifyWorktree, runProjectCommand } from '../../packages/orchestrator/src/verification.ts'
@@ -78,9 +78,18 @@ test('failed engine checks preserve logs and never push', async () => {
   const worktree = await createWorktree(branch, root)
   await Bun.write(join(worktree.path, 'answer.txt'), 'still wrong')
   const store = createStateStore(join(dir, 'state'))
-  await expect(verifyAndCommit(worktree, project, company.guardrails, state(), store, 'bad answer')).rejects.toThrow('Verification failed')
+  let err: unknown
+  try {
+    await verifyAndCommit(worktree, project, company.guardrails, state(), store, 'bad answer')
+  } catch (e) { err = e }
+  expect(err).toBeInstanceOf(VerificationFailed)
+  expect((err as Error).message).toContain('Verification failed')
   expect(await remoteHead()).toBe(before)
-  expect((await store.get(issue.id))?.verification?.checks[0]?.exitCode).toBe(1)
+  const saved = await store.get(issue.id)
+  expect(saved?.verification?.checks[0]?.exitCode).toBe(1)
+  expect(saved?.gateRuns).toHaveLength(1)
+  expect(saved?.gateRuns?.[0]?.passed).toBe(false)
+  expect(typeof saved?.gateRuns?.[0]?.durationMs).toBe('number')
   expect(await Bun.file(join(worktree.path, 'answer.txt')).exists()).toBe(true)
 })
 
@@ -135,7 +144,7 @@ test('native executor runs independent checks even if its agent claims success',
   const store = createStateStore(join(dir, 'state'))
   const before = await remoteHead()
   await expect(runNativeDevAgent(issue, agent, state(), {
-    project, guardrails: company.guardrails, stateStore: store, costTracker: createCostTracker(),
+    project: { ...project, fixTurns: 0 }, guardrails: company.guardrails, stateStore: store, costTracker: createCostTracker(),
     addComment: async () => {}, setLabel: async () => {},
     contextBuilder: { build: async () => ({ systemPrompt: '', userMessage: '', tools: [], estimatedTokens: 0 }) },
     runAgent: async (_prompt, cwd) => {
@@ -374,6 +383,9 @@ test('the native implementer prompt never names API-path tools, on a first pass 
     expect(prompt).toContain('Do not commit, push, or open a PR')
     expect(prompt).toContain('own editing tools')
     expect(prompt).toContain('The engine reads the working tree, not your message')
+    expect(prompt).toContain('run the type check and the tests of the files you touched')
+    expect(prompt).not.toContain('iterate until the code is correct')
+    expect(prompt).not.toContain('Project checks:')
   }
   expect(first).not.toContain('## Review Feedback')
   expect(revision).toContain('## Review Feedback')
@@ -400,4 +412,304 @@ test('discussion sits after the issue body and before review feedback', async ()
   expect(prompt.indexOf('## Discussion')).toBeLessThan(prompt.indexOf('## Review Feedback'))
   expect(prompt).toContain('start here')
   expect(prompt).toContain('please add tests')
+})
+
+function nativeDeps(store: ReturnType<typeof createStateStore>, runAgent: (prompt: string, cwd: string) => Promise<{ resultText: string; cost: number; durationMs: number; exitCode: number }>, proj = project) {
+  return {
+    project: proj, guardrails: company.guardrails, stateStore: store, costTracker: createCostTracker(),
+    addComment: async () => {}, setLabel: async () => {},
+    contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+    runAgent: async (prompt: string, cwd: string) => runAgent(prompt, cwd),
+  }
+}
+
+test('a flaky step that passes on retry is kept twice and does not consume a fix turn', async () => {
+  const worktree = await createWorktree(branch, root)
+  await Bun.write(join(worktree.path, 'answer.txt'), '42')
+  await mkdir(join(worktree.path, '.agents'), { recursive: true })
+  const marker = join(worktree.path, '.agents', 'flaky-once')
+  const result = await verifyWorktree(worktree, [{
+    name: 'Flaky check',
+    command: [process.execPath, '-e', `import { existsSync, writeFileSync } from 'node:fs'; const p = ${JSON.stringify(marker)}; if (!existsSync(p)) { writeFileSync(p, '1'); process.exit(1) }`],
+    flaky: true,
+  }])
+  expect(result.passed).toBe(true)
+  expect(result.checks).toHaveLength(2)
+  expect(result.checks[0]).toMatchObject({ exitCode: 1, accepted: false, flaky: true })
+  expect(result.checks[1]).toMatchObject({ exitCode: 0, accepted: true, flaky: true })
+})
+
+test('a mutating flaky step is not retried', async () => {
+  const worktree = await createWorktree(branch, root)
+  const result = await verifyWorktree(worktree, [{
+    name: 'mutating flaky',
+    command: [process.execPath, '-e', 'await Bun.write("answer.txt", "mutated"); process.exit(1)'],
+    flaky: true,
+  }])
+  expect(result.passed).toBe(false)
+  expect(result.error).toContain('modified')
+  expect(result.checks).toHaveLength(1)
+  expect(result.checks[0]?.accepted).toBe(true)
+})
+
+test('a break fixed on the fix turn reuses the worktree, re-runs the full gate, and publishes the verified tree', async () => {
+  const store = createStateStore(join(dir, 'state'))
+  const paths: string[] = []
+  const prompts: string[] = []
+  const next = await runNativeDevAgent(issue, agent, state(), nativeDeps(store, async (prompt, cwd) => {
+    paths.push(cwd)
+    prompts.push(prompt)
+    if (paths.length === 1) {
+      await Bun.write(join(cwd, 'answer.txt'), 'almost')
+      await Bun.write(join(cwd, 'note.txt'), 'kept')
+      return { resultText: 'first', cost: 0.05, durationMs: 2, exitCode: 0 }
+    }
+    expect(cwd).toBe(paths[0]!)
+    expect(await Bun.file(join(cwd, 'note.txt')).text()).toBe('kept')
+    expect(await Bun.file(join(cwd, 'answer.txt')).text()).toBe('almost')
+    await Bun.write(join(cwd, 'answer.txt'), '42')
+    return { resultText: 'fixed', cost: 0.07, durationMs: 3, exitCode: 0 }
+  }))
+  expect(paths).toHaveLength(2)
+  expect(paths[0]).toBe(paths[1])
+  expect(prompts[0]!).not.toContain('## Gate failure')
+  expect(prompts[1]!).toContain('## Gate failure')
+  expect(prompts[1]!).toContain('Step: Answer check')
+  expect(prompts[1]!).toContain('Exit code: 1')
+  expect(prompts[1]!).toContain('## Task')
+  expect(next.verification?.passed).toBe(true)
+  expect(next.gateRuns).toHaveLength(2)
+  expect(next.gateRuns?.[0]?.passed).toBe(false)
+  expect(next.gateRuns?.[1]?.passed).toBe(true)
+  expect(next.gateRuns?.every(g => typeof g.durationMs === 'number' && g.durationMs >= 0)).toBe(true)
+  expect(next.fixTurnsUsed).toBe(1)
+  expect(next.costUsd).toBeCloseTo(0.12)
+  expect(await remoteHead()).toBe(next.commitSha!)
+  expect(await gitText(remote, ['rev-parse', `${next.commitSha}^{tree}`])).toBe(next.verification!.treeSha)
+})
+
+test('fixTurns 0, 1 and 2 bound how many repair turns run', async () => {
+  const alwaysWrong = async (_prompt: string, cwd: string) => {
+    await Bun.write(join(cwd, 'answer.txt'), 'nope')
+    return { resultText: 'wrong', cost: 0, durationMs: 1, exitCode: 0 }
+  }
+  const before = await remoteHead()
+
+  let calls = 0
+  await mkdir(join(dir, 'state-0'))
+  const zeroStore = createStateStore(join(dir, 'state-0'))
+  let zeroErr: unknown
+  try {
+    await runNativeDevAgent(issue, agent, state(), nativeDeps(zeroStore, async (p, cwd) => { calls++; return alwaysWrong(p, cwd) }, { ...project, fixTurns: 0 }))
+  } catch (e) { zeroErr = e }
+  expect(zeroErr).toBeInstanceOf(VerificationFailed)
+  expect(zeroErr).not.toBeInstanceOf(GateExhausted)
+  expect(calls).toBe(1)
+  expect(await remoteHead()).toBe(before)
+
+  calls = 0
+  await mkdir(join(dir, 'state-1'))
+  const oneStore = createStateStore(join(dir, 'state-1'))
+  let oneErr: unknown
+  try {
+    await runNativeDevAgent(issue, agent, { ...state(), issueId: 'one' }, nativeDeps(oneStore, async (p, cwd) => { calls++; return alwaysWrong(p, cwd) }, { ...project, fixTurns: 1 }))
+  } catch (e) { oneErr = e }
+  expect(oneErr).toBeInstanceOf(GateExhausted)
+  expect(calls).toBe(2)
+  expect((oneErr as GateExhausted).attempts).toBe(2)
+  expect((await oneStore.get('one'))?.fixTurnsUsed).toBe(1)
+  expect((await oneStore.get('one'))?.gateRuns).toHaveLength(2)
+  expect(await remoteHead()).toBe(before)
+
+  calls = 0
+  await mkdir(join(dir, 'state-2'))
+  const twoStore = createStateStore(join(dir, 'state-2'))
+  let twoErr: unknown
+  try {
+    await runNativeDevAgent(issue, agent, { ...state(), issueId: 'two' }, nativeDeps(twoStore, async (p, cwd) => { calls++; return alwaysWrong(p, cwd) }, { ...project, fixTurns: 2 }))
+  } catch (e) { twoErr = e }
+  expect(twoErr).toBeInstanceOf(GateExhausted)
+  expect(calls).toBe(3)
+  expect((twoErr as GateExhausted).attempts).toBe(3)
+  expect((await twoStore.get('two'))?.fixTurnsUsed).toBe(2)
+  expect(await remoteHead()).toBe(before)
+})
+
+test('a recovered run keeps fixTurnsUsed and does not start the allowance over', async () => {
+  const store = createStateStore(join(dir, 'state'))
+  let calls = 0
+  const before = await remoteHead()
+  await expect(runNativeDevAgent(issue, agent, { ...state(), fixTurnsUsed: 1 }, nativeDeps(store, async (_p, cwd) => {
+    calls++
+    await Bun.write(join(cwd, 'answer.txt'), 'nope')
+    return { resultText: 'wrong', cost: 0, durationMs: 1, exitCode: 0 }
+  }, { ...project, fixTurns: 1 }))).rejects.toBeInstanceOf(GateExhausted)
+  expect(calls).toBe(1)
+  expect(await remoteHead()).toBe(before)
+})
+
+test('a flaky gate pass on retry consumes no fix turn and both attempts stay in state', async () => {
+  const store = createStateStore(join(dir, 'state'))
+  let calls = 0
+  const next = await runNativeDevAgent(issue, agent, state(), nativeDeps(store, async (_p, cwd) => {
+    calls++
+    await Bun.write(join(cwd, 'answer.txt'), '42')
+    return { resultText: 'ok', cost: 0, durationMs: 1, exitCode: 0 }
+  }, {
+    ...project,
+    verification: [
+      {
+        name: 'Flaky check',
+        command: [process.execPath, '-e', "import { existsSync, writeFileSync, mkdirSync } from 'node:fs'; mkdirSync('.agents', { recursive: true }); const p = '.agents/flaky-once'; if (!existsSync(p)) { writeFileSync(p, '1'); process.exit(1) }"],
+        flaky: true,
+      },
+      ...project.verification!,
+    ],
+  }))
+  expect(calls).toBe(1)
+  expect(next.fixTurnsUsed ?? 0).toBe(0)
+  expect(next.verification?.passed).toBe(true)
+  const flaky = next.verification!.checks.filter(c => c.name === 'Flaky check')
+  expect(flaky).toHaveLength(2)
+  expect(flaky[0]?.accepted).toBe(false)
+  expect(flaky[1]?.accepted).toBe(true)
+  expect(next.gateRuns).toHaveLength(1)
+  expect(next.gateRuns?.[0]?.checks).toHaveLength(3)
+})
+
+test('more than 32 KiB of output still shows the failing tail in the fix-turn prompt', async () => {
+  await Bun.write(join(root, 'check.mjs'), `import { readFileSync } from "node:fs"
+const ok = readFileSync("answer.txt", "utf8") === "42"
+if (!ok) {
+  console.log("x".repeat(40000))
+  console.log("FAIL_TOKEN_TAIL")
+  process.stderr.write("y".repeat(40000) + "\\nSTDERR_TAIL\\n")
+}
+process.exit(ok ? 0 : 1)
+`)
+  await gitText(root, ['add', 'check.mjs'])
+  await gitText(root, ['commit', '-m', 'loud check'])
+  await gitText(root, ['push', 'origin', 'HEAD:refs/heads/main'])
+  await gitText(root, ['push', 'origin', `HEAD:refs/heads/${branch}`])
+  const store = createStateStore(join(dir, 'state'))
+  const prompts: string[] = []
+  await runNativeDevAgent(issue, agent, state(), nativeDeps(store, async (prompt, cwd) => {
+    prompts.push(prompt)
+    await Bun.write(join(cwd, 'answer.txt'), prompts.length === 1 ? 'wrong' : '42')
+    return { resultText: 'ok', cost: 0, durationMs: 1, exitCode: 0 }
+  }))
+  expect(prompts).toHaveLength(2)
+  expect(prompts[1]!).toContain('FAIL_TOKEN_TAIL')
+  expect(prompts[1]!).toContain('STDERR_TAIL')
+  expect(prompts[1]!).toContain('Output was truncated')
+  const failed = (await store.get(issue.id))?.gateRuns?.[0]?.checks[0]
+  expect(failed?.truncated).toBe(true)
+  expect(failed?.stdoutTail).toContain('FAIL_TOKEN_TAIL')
+  expect(failed?.stderrTail).toContain('STDERR_TAIL')
+})
+
+test('guardrail rejection, push failure and workspace-mutating checks dispatch no fix turn', async () => {
+  const before = await remoteHead()
+
+  let guardCalls = 0
+  await mkdir(join(dir, 'state-guard'))
+  const guardStore = createStateStore(join(dir, 'state-guard'))
+  await expect(runNativeDevAgent(issue, agent, state(), nativeDeps(guardStore, async (_p, cwd) => {
+    guardCalls++
+    await rm(join(cwd, '.env.secret'))
+    return { resultText: 'deleted secret', cost: 0, durationMs: 1, exitCode: 0 }
+  }))).rejects.toThrow('blocked pattern')
+  expect(guardCalls).toBe(1)
+  expect(await remoteHead()).toBe(before)
+  expect((await guardStore.get(issue.id))?.gateRuns ?? []).toHaveLength(0)
+
+  let mutateCalls = 0
+  await mkdir(join(dir, 'state-mutate'))
+  const mutateStore = createStateStore(join(dir, 'state-mutate'))
+  let mutateErr: unknown
+  try {
+    await runNativeDevAgent(issue, agent, { ...state(), issueId: 'mutate' }, nativeDeps(mutateStore, async (_p, cwd) => {
+      mutateCalls++
+      await Bun.write(join(cwd, 'answer.txt'), '42')
+      return { resultText: 'ok', cost: 0, durationMs: 1, exitCode: 0 }
+    }, { ...project, verification: [{ name: 'mutating check', command: [process.execPath, '-e', 'await Bun.write("answer.txt", "mutated")'] }], fixTurns: 1 }))
+  } catch (e) { mutateErr = e }
+  expect(mutateErr).toBeInstanceOf(VerificationFailed)
+  expect(mutateErr).not.toBeInstanceOf(GateExhausted)
+  expect(mutateCalls).toBe(1)
+  expect(await remoteHead()).toBe(before)
+
+  const blocker = await createWorktree(branch, root)
+  await Bun.write(join(blocker.path, 'answer.txt'), '42')
+  await Bun.write(join(blocker.path, 'other.txt'), 'blocker')
+  await mkdir(join(dir, 'blocker-state'))
+  let pushCalls = 0
+  await mkdir(join(dir, 'state-push'))
+  const pushStore = createStateStore(join(dir, 'state-push'))
+  await expect(runNativeDevAgent(issue, agent, { ...state(), issueId: 'push' }, nativeDeps(pushStore, async (_p, cwd) => {
+    pushCalls++
+    await Bun.write(join(cwd, 'answer.txt'), '42')
+    await verifyAndCommit(blocker, project, company.guardrails, { ...state(), issueId: 'blocker' }, createStateStore(join(dir, 'blocker-state')), 'blocker')
+    return { resultText: 'ok', cost: 0, durationMs: 1, exitCode: 0 }
+  }))).rejects.toThrow('git push failed')
+  expect(pushCalls).toBe(1)
+})
+
+test('a review revision gets its own fixTurns allowance', async () => {
+  const nativeAgent: AgentDefinition = { ...agent, llm: { ...agent.llm, provider: 'cursor' } }
+  const store = createStateStore(join(dir, 'state'))
+  const existing = {
+    ...state(),
+    step: 'revision' as const,
+    reviewCycle: 1,
+    reviewVerdict: { decision: 'request_changes' as const, comments: 'please fix tests' },
+    prId: '1',
+    prUrl: 'https://example.test/pr/1',
+    fixTurnsUsed: 1,
+  }
+  await store.save(existing)
+  let calls = 0
+  const prompts: string[] = []
+  const { task, git } = adapters('42')
+  await executeTask(issue, nativeAgent, {
+    company: { ...company, project: { ...project, fixTurns: 1 }, agents: [nativeAgent] },
+    taskAdapter: task, gitAdapter: git, stateStore: store, costTracker: createCostTracker(),
+    contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+    getAdapter: () => { throw new Error('unused') }, findReviewer: () => undefined,
+    runAgent: async (prompt, cwd) => {
+      calls++
+      prompts.push(prompt)
+      await Bun.write(join(cwd, 'answer.txt'), calls === 1 ? 'wrong' : '42')
+      return { resultText: 'ok', cost: 0, durationMs: 1, exitCode: 0 }
+    },
+  }, existing)
+  expect(calls).toBe(2)
+  expect(prompts[1]!).toContain('## Gate failure')
+  expect(prompts[1]!).toContain('## Review Feedback')
+  expect((await store.get(issue.id))?.verification?.passed).toBe(true)
+  expect((await store.get(issue.id))?.fixTurnsUsed).toBe(1)
+})
+
+test('exhausted repair posts a stop report and never publishes the failed tree', async () => {
+  const nativeAgent: AgentDefinition = { ...agent, llm: { ...agent.llm, provider: 'cursor' } }
+  const { task, git, comments } = adapters('wrong')
+  const store = createStateStore(join(dir, 'state'))
+  const before = await remoteHead()
+  await executeTask(issue, nativeAgent, {
+    company: { ...company, project: { ...project, fixTurns: 1 }, agents: [nativeAgent] },
+    taskAdapter: task, gitAdapter: git, stateStore: store, costTracker: createCostTracker(),
+    contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+    getAdapter: () => { throw new Error('unused') }, findReviewer: () => undefined,
+    runAgent: async (_prompt, cwd) => {
+      await Bun.write(join(cwd, 'answer.txt'), 'still wrong')
+      return { resultText: 'done', cost: 0, durationMs: 1, exitCode: 0 }
+    },
+  })
+  expect(await remoteHead()).toBe(before)
+  expect((await store.get(issue.id))?.step).toBe('failed')
+  expect((await store.get(issue.id))?.verification?.passed).toBe(false)
+  const report = comments.join('\n')
+  expect(report).toContain('gate failed after 2 attempts')
+  expect(report).toContain('--retry')
+  expect(report).not.toContain('Run failed')
 })

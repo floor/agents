@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { AgentStopped, crashReport, stopReport, writtenSummary } from '../../packages/orchestrator/src/stop-report.ts'
+import { AgentStopped, GateExhausted, crashReport, gateExhaustedReport, stopReport, writtenSummary } from '../../packages/orchestrator/src/stop-report.ts'
 
 describe('writtenSummary', () => {
   test('joins the diff stat with the new files git diff does not see', () => {
@@ -37,5 +37,22 @@ describe('stopReport', () => {
     expect(err).toBeInstanceOf(Error)
     expect(err.name).toBe('AgentStopped')
     expect(err.written).toBe('x | 1 +')
+  })
+})
+
+describe('gateExhaustedReport', () => {
+  test('names the failing step, shows the tail, and says how to retry', () => {
+    const err = new GateExhausted(
+      'Verification failed: Tests (exit 1). Logs are in the execution state.',
+      { name: 'Tests', command: ['bun', 'test'], exitCode: 1, timedOut: false, durationMs: 10, stdout: 'ok\nFAIL_TOKEN_TAIL', stderr: '' },
+      2,
+      ' answer.txt | 1 +\n 1 file changed, 1 insertion(+)',
+    )
+    const text = gateExhaustedReport('Developer', err, 'FLO-191')
+    expect(text).toContain('⏱ **Developer** stopped: gate failed after 2 attempts: Tests (exit 1)')
+    expect(text).toContain('FAIL_TOKEN_TAIL')
+    expect(text).toContain('answer.txt | 1 +')
+    expect(text).toContain('floor-agents run --issue FLO-191 --retry')
+    expect(text).not.toContain('Run failed')
   })
 })

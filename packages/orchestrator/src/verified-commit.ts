@@ -1,6 +1,6 @@
-import type { ExecutionState, GuardrailsConfig, ProjectConfig, StateStore } from '@floor-agents/core'
+import type { ExecutionState, GateRun, GuardrailsConfig, ProjectConfig, StateStore } from '@floor-agents/core'
 import { commitWorktree, gitText, pushWorktree, type Worktree } from './worktree.ts'
-import { runProjectCommand, validateWorktree, verifyWorktree } from './verification.ts'
+import { runProjectCommand, validateWorktree, verifyWorktree, VerificationFailed } from './verification.ts'
 
 export function requireVerification(project: ProjectConfig): void {
   if (!project.root || !project.verification?.length) {
@@ -25,6 +25,17 @@ export async function resolveBaseSha(worktree: Worktree, project: ProjectConfig,
   return gitText(worktree.path, ['merge-base', worktree.initialSha, `refs/remotes/origin/${project.baseBranch}`])
 }
 
+function toGateRun(verification: Awaited<ReturnType<typeof verifyWorktree>>): GateRun {
+  return {
+    startedAt: verification.checkedAt,
+    durationMs: verification.durationMs ?? 0,
+    passed: verification.passed,
+    treeSha: verification.treeSha,
+    checks: verification.checks,
+    ...(verification.error ? { error: verification.error } : {}),
+  }
+}
+
 export async function verifyAndCommit(
   worktree: Worktree, project: ProjectConfig, guardrails: GuardrailsConfig,
   state: ExecutionState, store: StateStore, message: string,
@@ -32,12 +43,10 @@ export async function verifyAndCommit(
   requireVerification(project)
   await validateWorktree(worktree, state.baseSha ?? worktree.initialSha, guardrails)
   const verification = await verifyWorktree(worktree, project.verification!)
-  const checked = { ...state, verification, updatedAt: new Date().toISOString() }
+  const gateRuns = [...(state.gateRuns ?? []), toGateRun(verification)]
+  const checked = { ...state, verification, gateRuns, updatedAt: new Date().toISOString() }
   await store.save(checked)
-  if (!verification.passed) {
-    const failure = verification.checks.find(c => c.exitCode !== 0 || c.timedOut)
-    throw new Error(verification.error ?? `Verification failed: ${failure?.name} (exit ${failure?.exitCode}). Logs are in the execution state.`)
-  }
+  if (!verification.passed) throw new VerificationFailed(verification, checked)
   await validateWorktree(worktree, state.baseSha ?? worktree.initialSha, guardrails)
   const sha = await commitWorktree(worktree, message, verification.treeSha)
   if (!sha) throw new Error('Agent made no changes to the code')

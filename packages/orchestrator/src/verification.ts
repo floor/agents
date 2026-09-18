@@ -1,23 +1,119 @@
-import type { CommandResult, GuardrailsConfig, ProjectCommand, VerificationResult } from '@floor-agents/core'
+import type { CommandResult, ExecutionState, GuardrailsConfig, ProjectCommand, VerificationResult } from '@floor-agents/core'
 import { validateAgentOutput } from './guardrails.ts'
 import { gitText, snapshotWorktree, type Worktree } from './worktree.ts'
 import { projectCommandSandbox, sandboxed } from '@floor-agents/sandbox'
 
 const OUTPUT_LIMIT = 32_768
+const TAIL_LINES = 80
 
-async function readOutput(stream: ReadableStream<Uint8Array>): Promise<string> {
+export class VerificationFailed extends Error {
+  constructor(readonly verification: VerificationResult, readonly saved: ExecutionState) {
+    const failure = acceptedChecks(verification).find(failedCheck)
+    super(verification.error ?? `Verification failed: ${failure?.name} (exit ${failure?.exitCode}). Logs are in the execution state.`)
+    this.name = 'VerificationFailed'
+  }
+}
+
+type CapturedOutput = {
+  readonly text: string
+  readonly tail: string
+  readonly truncated: boolean
+}
+
+async function readOutput(stream: ReadableStream<Uint8Array>): Promise<CapturedOutput> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
-  let output = ''
+  let head = ''
+  let tail = ''
   let truncated = false
   while (true) {
     const { value, done } = await reader.read()
     if (done) break
-    const text = decoder.decode(value, { stream: true })
-    if (output.length + text.length > OUTPUT_LIMIT) truncated = true
-    output += text.slice(0, Math.max(0, OUTPUT_LIMIT - output.length))
+    const chunk = decoder.decode(value, { stream: true })
+    if (!truncated) {
+      if (head.length + chunk.length <= OUTPUT_LIMIT) {
+        head += chunk
+      } else {
+        const room = OUTPUT_LIMIT - head.length
+        head += chunk.slice(0, room)
+        truncated = true
+        tail = chunk.slice(room)
+      }
+    } else {
+      tail += chunk
+    }
+    if (tail.length > OUTPUT_LIMIT) tail = tail.slice(-OUTPUT_LIMIT)
   }
-  return output + (truncated ? '\n[output truncated]' : '')
+  const flushed = decoder.decode()
+  if (flushed) {
+    if (!truncated) {
+      if (head.length + flushed.length <= OUTPUT_LIMIT) head += flushed
+      else {
+        const room = OUTPUT_LIMIT - head.length
+        head += flushed.slice(0, room)
+        truncated = true
+        tail = flushed.slice(room)
+      }
+    } else {
+      tail += flushed
+    }
+    if (tail.length > OUTPUT_LIMIT) tail = tail.slice(-OUTPUT_LIMIT)
+  }
+  if (!truncated) tail = head
+  const text = truncated ? `${head}\n[output truncated]\n${tail}` : head
+  return { text, tail, truncated }
+}
+
+function failedCheck(result: CommandResult): boolean {
+  return result.exitCode !== 0 || result.timedOut
+}
+
+export function acceptedChecks(result: Pick<VerificationResult, 'checks'>): readonly CommandResult[] {
+  return result.checks.filter(c => c.accepted !== false)
+}
+
+export function latestFailingCheck(result: Pick<VerificationResult, 'checks'>): CommandResult | undefined {
+  const accepted = acceptedChecks(result)
+  return [...accepted].reverse().find(failedCheck) ?? [...result.checks].reverse().find(failedCheck)
+}
+
+/** A command exit or timeout, not a mutation, guardrail, or missing failing step. */
+export function isRepairableGateFailure(err: unknown): err is VerificationFailed {
+  if (!(err instanceof VerificationFailed) || err.verification.error) return false
+  return acceptedChecks(err.verification).some(failedCheck)
+}
+
+export function lastLines(text: string, n: number = TAIL_LINES): string {
+  if (!text) return ''
+  const lines = text.split('\n')
+  return lines.length <= n ? text : lines.slice(-n).join('\n')
+}
+
+export function gateFailureSection(check: CommandResult, diffStat: string): readonly string[] {
+  const truncated = Boolean(check.truncated) || check.stdout.includes('[output truncated]') || check.stderr.includes('[output truncated]')
+  const stdout = lastLines(check.stdoutTail ?? check.stdout)
+  const stderr = lastLines(check.stderrTail ?? check.stderr)
+  return [
+    '## Gate failure',
+    `Step: ${check.name}`,
+    `Exit code: ${check.exitCode}${check.timedOut ? ' (timed out)' : ''}`,
+    ...(truncated ? ['Output was truncated; the tail of each stream is below.'] : []),
+    '',
+    '### stdout (last 80 lines)',
+    '```',
+    stdout || '(empty)',
+    '```',
+    '',
+    '### stderr (last 80 lines)',
+    '```',
+    stderr || '(empty)',
+    '```',
+    '',
+    '### Diff since base',
+    '```',
+    diffStat.trimEnd() || '(no diff)',
+    '```',
+  ]
 }
 
 export async function runProjectCommand(cwd: string, check: ProjectCommand): Promise<CommandResult> {
@@ -39,12 +135,36 @@ export async function runProjectCommand(cwd: string, check: ProjectCommand): Pro
     }, check.timeoutMs ?? 300_000)
     try {
       const [stdout, stderr, exitCode] = await Promise.all([readOutput(proc.stdout), readOutput(proc.stderr), proc.exited])
-      return { ...check, stdout, stderr, exitCode, timedOut, durationMs: Math.round(performance.now() - start) }
+      return {
+        name: check.name,
+        command: check.command,
+        stdout: stdout.text,
+        stderr: stderr.text,
+        stdoutTail: stdout.tail,
+        stderrTail: stderr.tail,
+        truncated: stdout.truncated || stderr.truncated,
+        exitCode,
+        timedOut,
+        durationMs: Math.round(performance.now() - start),
+        ...(check.flaky ? { flaky: true } : {}),
+      }
     } finally {
       clearTimeout(timeout)
     }
   } catch (err) {
-    return { ...check, stdout: '', stderr: String(err), exitCode: -1, timedOut, durationMs: Math.round(performance.now() - start) }
+    return {
+      name: check.name,
+      command: check.command,
+      stdout: '',
+      stderr: String(err),
+      stdoutTail: '',
+      stderrTail: String(err),
+      truncated: false,
+      exitCode: -1,
+      timedOut,
+      durationMs: Math.round(performance.now() - start),
+      ...(check.flaky ? { flaky: true } : {}),
+    }
   }
 }
 
@@ -71,19 +191,35 @@ export async function validateWorktree(worktree: Worktree, baseSha: string, guar
 
 export async function verifyWorktree(worktree: Worktree, commands: readonly ProjectCommand[]): Promise<VerificationResult> {
   if (!commands.length) throw new Error('project.verification must define at least one check')
+  const start = performance.now()
   const treeSha = await snapshotWorktree(worktree)
   const checks: CommandResult[] = []
+
+  const mutated = async () => treeSha !== await snapshotWorktree(worktree)
+
   for (const command of commands) {
     console.log(`[verify] ${command.name}: ${command.command.join(' ')}`)
     const result = await runProjectCommand(worktree.path, command)
-    checks.push(result)
-    if (result.exitCode !== 0 || result.timedOut) break
+    const dirty = await mutated()
+    if (command.flaky && failedCheck(result) && !dirty) {
+      checks.push({ ...result, accepted: false })
+      console.log(`[verify] ${command.name}: flaky retry`)
+      const retry = await runProjectCommand(worktree.path, command)
+      checks.push({ ...retry, accepted: true })
+      if (failedCheck(retry) || await mutated()) break
+      continue
+    }
+    checks.push({ ...result, accepted: true })
+    if (failedCheck(result) || dirty) break
   }
-  const unchanged = treeSha === await snapshotWorktree(worktree)
+
+  const unchanged = !await mutated()
+  const accepted = acceptedChecks({ checks })
   return {
-    passed: unchanged && checks.length === commands.length && checks.every(c => c.exitCode === 0 && !c.timedOut),
+    passed: unchanged && accepted.length === commands.length && accepted.every(c => !failedCheck(c)),
     treeSha,
     checkedAt: new Date().toISOString(),
+    durationMs: Math.round(performance.now() - start),
     checks,
     ...(!unchanged ? { error: 'Checks modified the workspace; verification must run again on the final content' } : {}),
   }
@@ -93,7 +229,7 @@ export function verificationSummary(result: VerificationResult): string {
   return [
     `**Engine verification: ${result.passed ? 'PASSED' : 'FAILED'}**`,
     `Tree: \`${result.treeSha}\`${result.commitSha ? ` | Commit: \`${result.commitSha}\`` : ''}`,
-    ...result.checks.map(c => `- ${c.name}: exit ${c.exitCode}${c.timedOut ? ' (timed out)' : ''} (${c.durationMs}ms)`),
+    ...result.checks.map(c => `- ${c.name}: exit ${c.exitCode}${c.timedOut ? ' (timed out)' : ''}${c.accepted === false ? ' (flaky, discarded)' : ''} (${c.durationMs}ms)`),
     result.error ?? '',
   ].filter(Boolean).join('\n')
 }

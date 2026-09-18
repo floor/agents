@@ -8,16 +8,17 @@ import type {
   ProjectConfig,
   GuardrailsConfig,
 } from '@floor-agents/core'
+import { DEFAULT_FIX_TURNS } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
 import { createWorktree, gitText, snapshotWorktree, removeWorktree } from './worktree.ts'
 import { requireVerification, prepareWorkspace, verifyAndCommit, resolveBaseSha } from './verified-commit.ts'
-import { verificationSummary } from './verification.ts'
+import { verificationSummary, isRepairableGateFailure, latestFailingCheck, gateFailureSection, VerificationFailed } from './verification.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import { implementerSandbox, reviewerSandbox, sandboxed, withDenyRead, type SandboxTool } from '@floor-agents/sandbox'
 import { buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
 import { buildAgyArgs, parseAgyResult } from '@floor-agents/antigravity'
 import { costNote, metaLine } from './cost-note.ts'
-import { AgentStopped, writtenSummary } from './stop-report.ts'
+import { AgentStopped, GateExhausted, writtenSummary } from './stop-report.ts'
 
 /** Providers whose CLI runs as a full agent on a worktree, rather than through tool calls. */
 export const NATIVE_PROVIDERS = new Set(['claude-code', 'cursor', 'antigravity'])
@@ -43,11 +44,11 @@ export const DEFAULT_TURN_TIMEOUT_MS = 600_000
  * `write_file`, and Gemini treated a prohibition on that name as "print the
  * files, write nothing" (mtrl FLO-102).
  */
-export function nativeImplementerInstructions(verification: readonly { readonly command: readonly string[] }[]): readonly string[] {
+export function nativeImplementerInstructions(): readonly string[] {
   return [
     '## Instructions',
-    'You are working directly on a git branch. Edit files, run tests, iterate until the code is correct.',
-    `Project checks: ${verification.map(c => c.command.join(' ')).join('; ')}. The engine will run these independently.`,
+    'You are working directly on a git branch. Edit files; run the type check and the tests of the files you touched.',
+    'The engine runs the full gate and hands you any failure.',
     'Do not commit, push, or open a PR. The engine validates and publishes the final changes.',
     'Edit the files in this working directory with your own editing tools; do not print file contents in your reply — a reply is not a change. The engine reads the working tree, not your message.',
   ]
@@ -322,60 +323,75 @@ export async function runNativeDevAgent(
       native: true,
     })
 
-    const promptParts = [
+    const promptBase = [
       ctx.systemPrompt,
       '',
       '## Task',
       `**${issue.title}**`,
       issue.body || '',
     ]
+    if (deps.discussion) promptBase.push('', deps.discussion)
+    if (reviewComments) promptBase.push('', '## Review Feedback (address these)', reviewComments)
+    promptBase.push('', ...nativeImplementerInstructions())
 
-    if (deps.discussion) {
-      promptParts.push('', deps.discussion)
-    }
-
-    if (reviewComments) {
-      promptParts.push('', '## Review Feedback (address these)', reviewComments)
-    }
-
-    promptParts.push(
-      '',
-      ...nativeImplementerInstructions(deps.project.verification!),
-    )
-
-    // The implementer may write its worktree and that worktree's own git metadata
-    // (index, locks) — nothing else, including the main checkout it came from.
     const gitDir = await gitText(worktree.path, ['rev-parse', '--absolute-git-dir'])
     const budget = { timeoutMs: turnTimeoutMs(agent.timeoutMs), maxTurns: agent.maxTurns ?? DEFAULT_MAX_TURNS.implement }
     const runAgent = deps.runAgent ?? ((prompt: string, cwd: string, model?: string) => spawnNativeAgent({
       provider: agent.llm.provider, role: 'implement', prompt, cwd, writable: [cwd, gitDir], denyRead: deps.denyRead ?? [],
       timeoutMs: budget.timeoutMs, maxTurns: budget.maxTurns, ...(model ? { model } : {}),
     }))
-    const result = await runAgent(
-      promptParts.join('\n'),
-      worktree.path,
-      agent.llm.model,
-    )
 
-    costTracker.recordCost(issue.id, result.cost)
-    state = await advanceState(state, 'calling_llm', { costUsd: costTracker.getTaskCost(issue.id), llmResponse: result.resultText }, stateStore)
-    console.log(`[${agent.id}] native agent: ${formatDuration(result.durationMs)}, $${result.cost.toFixed(4)}, exit ${result.exitCode}`)
-
-    if (result.exitCode !== 0) {
-      // A killed or capped turn leaves no result, and "failed (exit 1)" reads
-      // like a crash: say which budget ran out and where to raise it, and
-      // carry what the worktree holds so the issue can show it.
-      const written = writtenSummary(
-        await gitText(worktree.path, ['diff', '--stat']),
-        await gitText(worktree.path, ['ls-files', '--others', '--exclude-standard']),
-      )
-      throw new AgentStopped(`${agent.llm.provider} agent ${failureReason(result.exitCode, result.subtype, budget)}: ${result.resultText.slice(0, 500)}`.trimEnd().replace(/:$/, ''), written)
+    const cumulativeDiff = async (): Promise<string> => {
+      const tree = await snapshotWorktree(worktree)
+      return gitText(worktree.path, ['diff', '--stat', state.baseSha ?? worktree.initialSha, tree])
     }
 
-    state = await verifyAndCommit(
-      worktree, deps.project, deps.guardrails, state, stateStore,
-      `${issue.title}\n\nAutomated by Floor Agents (${agent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`,
-    )
+    const runTurn = async (prompt: string): Promise<NativeRunResult> => {
+      const result = await runAgent(prompt, worktree.path, agent.llm.model)
+      costTracker.recordCost(issue.id, result.cost)
+      state = await advanceState(state, 'calling_llm', { costUsd: costTracker.getTaskCost(issue.id), llmResponse: result.resultText }, stateStore)
+      console.log(`[${agent.id}] native agent: ${formatDuration(result.durationMs)}, $${result.cost.toFixed(4)}, exit ${result.exitCode}`)
+      if (result.exitCode !== 0) {
+        throw new AgentStopped(
+          `${agent.llm.provider} agent ${failureReason(result.exitCode, result.subtype, budget)}: ${result.resultText.slice(0, 500)}`.trimEnd().replace(/:$/, ''),
+          writtenSummary(await cumulativeDiff(), await gitText(worktree.path, ['ls-files', '--others', '--exclude-standard'])),
+        )
+      }
+      return result
+    }
+
+    let result = await runTurn(promptBase.join('\n'))
+    let sessionDuration = result.durationMs
+    let sessionCost = result.cost
+    const allowance = deps.project.fixTurns ?? DEFAULT_FIX_TURNS
+    const commitMessage = `${issue.title}\n\nAutomated by Floor Agents (${agent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`
+
+    for (;;) {
+      try {
+        state = await verifyAndCommit(worktree, deps.project, deps.guardrails, state, stateStore, commitMessage)
+        break
+      } catch (err) {
+        if (err instanceof VerificationFailed) state = err.saved
+        if (!isRepairableGateFailure(err) || allowance <= 0) throw err
+        const used = state.fixTurnsUsed ?? 0
+        const failing = latestFailingCheck(err.verification)
+        const written = await cumulativeDiff()
+        if (!failing || used >= allowance) {
+          throw new GateExhausted(
+            err.message,
+            failing ?? { name: 'gate', command: [], exitCode: 1, timedOut: false, durationMs: 0, stdout: '', stderr: '' },
+            (state.gateRuns ?? []).length,
+            written,
+          )
+        }
+        state = await advanceState(state, 'calling_llm', { fixTurnsUsed: used + 1 }, stateStore)
+        console.log(`[${agent.id}] gate failure: ${failing.name} (exit ${failing.exitCode}) — fix turn ${used + 1}/${allowance}`)
+        await addComment(issue.id, `🔧 **${agent.name}** is fixing a gate failure (\`${failing.name}\`, exit ${failing.exitCode}) — fix turn ${used + 1} of ${allowance}`)
+        result = await runTurn([...promptBase, '', ...gateFailureSection(failing, written)].join('\n'))
+        sessionDuration += result.durationMs
+        sessionCost += result.cost
+      }
+    }
 
     const diffText = await gitText(worktree.path, ['diff', state.baseSha!, state.commitSha!, '--stat'])
 
@@ -384,7 +400,7 @@ export async function runNativeDevAgent(
       '```',
       diffText,
       '```',
-      `> ${metaLine([formatDuration(result.durationMs), costNote(result.cost)])}`,
+      `> ${metaLine([formatDuration(sessionDuration), costNote(sessionCost)])}`,
       verificationSummary(state.verification!),
     ].join('\n'))
 

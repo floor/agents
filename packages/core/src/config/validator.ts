@@ -32,7 +32,13 @@ export function validateCompanyConfig(config: CompanyConfig): readonly string[] 
       if (command?.timeoutMs !== undefined && (!Number.isFinite(command.timeoutMs) || command.timeoutMs <= 0)) {
         errors.push(`project.${key} timeoutMs must be positive`)
       }
+      if (command?.flaky !== undefined && typeof command.flaky !== 'boolean') {
+        errors.push(`project.${key} flaky must be a boolean`)
+      }
     }
+  }
+  if (config.project.fixTurns !== undefined && (!Number.isInteger(config.project.fixTurns) || config.project.fixTurns < 0)) {
+    errors.push('project.fixTurns must be an integer ≥ 0')
   }
 
   const agentIds = new Set(config.agents.map(a => a.id))

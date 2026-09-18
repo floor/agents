@@ -76,7 +76,16 @@ project:
   customInstructions: |              # Free-form instructions for all agents
     Use Bun.file over node:fs.
     No external dependencies for API calls.
+  fixTurns: 1                       # native implementer repair turns after a gate failure; 0 disables
+  verification:
+    - name: Tests
+      command: [bun, test]
+      flaky: false                  # if true, a failure is retried once before it counts
 ```
+
+**`fixTurns`** (integer ≥ 0, default `1`) is for native implementers only (`claude-code`, `cursor`, `antigravity`). When the engine gate fails because a verification command exited non-zero or timed out, the implementer is called again on the **same worktree** with the failing step's tail, up to this many times. `0` disables repair — the run stops as it does today. Each implementer turn (the first pass and each review revision) gets a fresh allowance. Guardrail rejection, a failed push, a launch failure, and a check that mutated the workspace are not repaired.
+
+**`flaky`** on a verification command re-runs that step once if it fails, before the failure counts. Both attempts are kept in the execution state; a retry does not skip the workspace-mutation check. Setup commands ignore it. The API commit path (`commitApiWorkspace`) does not dispatch fix turns.
 
 ### `agents`
 

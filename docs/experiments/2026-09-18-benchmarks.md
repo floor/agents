@@ -1,7 +1,7 @@
-# 2026-09-18 — Two benchmarks on real tasks
+# 2026-09-18 — Three benchmarks on real tasks
 
 After a day of polish (see [The Polish Sprint](../polish-sprint.md)), the engine was measured on
-two small real issues, twice. The morning's baseline for a task of this size was two to three
+two real issues, three times, with engine fixes between the rounds. The morning's baseline for a task of this size was two to three
 hours and several runs. The target is 25 minutes from label to approved pull request.
 
 ## Setup
@@ -88,6 +88,62 @@ not approved.
   and the diff, never the discussion. The implementer could not resolve it either. Fixed in #82.
   The policy question itself remains the owner's.
 
+## Benchmark 3 — after the loop fixes
+
+Engine: `staging` with #80 to #85 (free review port, `review --issue`, reviewers read the
+discussion, a standing blocker stops the loop, a revision continues its session). The same two
+issues again, from the base.
+
+### mtrl FLO-96, PR #93 — approved in one cycle
+
+| Attempt | Turn | Gate | Review | Votes |
+|---|---|---|---|---|
+| 1 implement | 3m42 | 1m50 | 1m34 | Claude approve, Codex **approve** |
+
+About 7 minutes from start to an approved pull request. Codex: "The diff correctly implements the
+recorded decision. No blockers found." It kept its point about consumers that set indeterminate
+before the value, under the heading "Concern for the owner", and wrote: "The release decision is
+settled and is not an implementer blocker." That is #82 working as designed. The change itself was
+also better: `toggle()` included, no `aria-checked`. One caveat: the summaries of the earlier
+rounds are comments on the issue, and the implementer reads the discussion, so this first pass had
+the earlier reviews in front of it. A fair share of the gain is the discussion doing its job.
+
+### vlist FLO-167, PR #261 — not approved; the loop named why
+
+| Attempt | Turn | Gate | | Review | Votes |
+|---|---|---|---|---|---|
+| 1 implement | 9m29 | 2m30 | cycle 1 | 3m16 | Claude reject, Codex approve |
+| 2 revision, continues 1 | 4m30 | 2m30 | cycle 2 | 3m32 | Claude reject, Codex reject |
+| 3 revision, continues 2 | 10m41 | 2m30 | cycle 3 | 3m13 | Claude approve, Codex reject |
+
+About 42 minutes. Cycle 3 ended with a standing blocker, detected live: Codex — "Preserve inference
+from `items` when the grouping callback accepts a broader item type" — had written the same point
+before the revision. The two seats swapped sides again. Continuing the session shows no clear
+gain yet: the first revision took 4m30 against 10m42 in round 2, the second 10m41 against 7m59.
+Two samples on a hard type-level task say nothing either way.
+
+This task is not small. Three rounds, nine review cycles, and each revision of a generic signature
+opened a new hole. It needs a design decision from a person — what `createVListFromConfig` should
+infer — more than another turn.
+
+## The three rounds side by side
+
+Minutes. "Morning" is the day record of 2026-09-18, before the polish.
+
+| Step | Morning | Round 1 | Round 2 | Round 3 |
+|---|---|---|---|---|
+| Implementer, first turn | 8–18, median 12 | 5.0 · 4.9 | 4.6 · 6.2 | 9.5 · 3.7 |
+| Implementer, revision turn | 8–14 | — | 10.7 · 8.0 · 1.5 · 5.7 | 4.5 · 10.7 (continued) |
+| Gate, vlist | about 8 at midday, then 2 | 2.5 | 2.5 | 2.5 |
+| Gate, mtrl | — | 1.8 | 2.1 · 1.8 | 1.8 |
+| Review cycle | 5–9 | 1.9 · 2.7 | 1.4–3.5 | 1.6–3.5 |
+| Label to verified PR | 120–180, several runs | about 10 | 8–9 | 7 · 14 |
+| Label to approved PR | about 180 for a 17-line fix | never | never | **7** (mtrl) · never (vlist) |
+| Stops caused by the engine | most runs | 0 of 2 | 1 of 2 | 0 of 2 |
+
+Six first passes, six verified pull requests, no restart. The sample is two issues run three
+times: enough to see orders of magnitude, not enough for percentages to the unit.
+
 ## What the two rounds show
 
 1. **The first pass is solved for small tasks.** Label to a gate-verified PR in eight to ten
@@ -108,7 +164,9 @@ not approved.
 
 ## State left behind
 
-- vlist PR #260 and mtrl PR #92 are open, at maximum cycles, not approved, not to be merged as they
-  stand. PRs #259 and #91 were closed by the rerun.
-- The first benchmark's state files were archived by hand as `<issue-id>.bench-1.json`.
+- After round 3: mtrl PR #93 is open and **approved by the committee**; merging it is the owner's
+  call, because N10 is a behaviour decision. vlist PR #261 is open, stopped on a standing blocker,
+  not to be merged as it stands. Each rerun closed the previous round's pull requests (#259, #91,
+  then #260, #92): `run` force-resets the branch (FLO-187).
+- Each round's state files were archived by hand as `<issue-id>.bench-<n>.json`.
 - No engine process, bridge or gateway is left running.

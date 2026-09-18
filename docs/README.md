@@ -60,4 +60,4 @@ Each package has its own documentation:
 - [2026-04-08: Third Sprint](./experiments/2026-04-08-third-sprint.md) — 5 complex issues, 2 timeouts, architectural lessons learned
 - [2026-04-08: Fourth Sprint](./experiments/2026-04-08-fourth-sprint.md) — native worktree execution, editing works, push pending
 - [2026-09-18: First Self-Hosted Day](./experiments/2026-09-18-first-self-hosted-day.md) — three projects on Linear, a four-seat committee, one product PR in four hours: what the engine cost and why
-- [2026-09-18: Two Benchmarks on Real Tasks](./experiments/2026-09-18-benchmarks.md) — label to verified PR in 8–10 minutes; never to an approved one: the revision loop is the cost now
+- [2026-09-18: Three Benchmarks on Real Tasks](./experiments/2026-09-18-benchmarks.md) — label to verified PR in 7–14 minutes; one task approved in 7, the other stopped on a standing blocker: the revision loop is the cost now

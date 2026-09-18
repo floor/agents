@@ -11,7 +11,7 @@ import { createGeminiAdapter } from '@floor-agents/gemini'
 import { createGitHubAdapter } from '@floor-agents/github'
 import { createTaskAdapter } from '@floor-agents/task'
 import { createContextBuilder } from '@floor-agents/context-builder'
-import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, freshState, historyOf, historyText, lastAttempt, verifyPreservedAttempt, verifyRefusal, reseatRefusal, stopChildren, liveChildren, verifyFailedReport, sign, ENGINE_SIGNATURE, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
+import { createOrchestrator, createCommitteeOrchestrator, createCostTracker, createStateStore, executeTask, freshState, historyOf, historyText, lastAttempt, verifyPreservedAttempt, verifyRefusal, reseatRefusal, stopChildren, liveChildren, withSlot, verifyFailedReport, sign, ENGINE_SIGNATURE, resolveAgent, createTelegramChannel, mirrorComments } from '@floor-agents/orchestrator'
 import { createDiscussionsAdapter } from '@floor-agents/github'
 import { createGateway } from '@floor-agents/gateway'
 import { mkdir, rename } from 'node:fs/promises'
@@ -315,14 +315,16 @@ if (args.command === 'verify') {
   if (!agent) { console.error(`Cannot verify ${key}: agent "${recorded!.agentId}" is no longer in the manifest`); process.exit(1) }
   try {
     await task.removeLabel(issue.id, 'needs-human')
-    const verified = await verifyPreservedAttempt(issue, agent, recorded!, {
-      contextBuilder, stateStore, costTracker, project: company.project, guardrails: company.guardrails,
-      // The engine took the tree forward, not the agent: its words carry the engine's signature.
-      addComment: (id, text) => task.addComment(id, sign(text, ENGINE_SIGNATURE)),
-      setLabel: (id, label) => task.setLabel(id, label),
+    await withSlot(key, async () => {
+      const verified = await verifyPreservedAttempt(issue, agent, recorded!, {
+        contextBuilder, stateStore, costTracker, project: company.project, guardrails: company.guardrails,
+        // The engine took the tree forward, not the agent: its words carry the engine's signature.
+        addComment: (id, text) => task.addComment(id, sign(text, ENGINE_SIGNATURE)),
+        setLabel: (id, label) => task.setLabel(id, label),
+      })
+      // Published: the rest is the ordinary path — pull request, review, done.
+      await executeTask(issue, agent, oneShotDeps(), verified)
     })
-    // Published: the rest is the ordinary path — pull request, review, done.
-    await executeTask(issue, agent, oneShotDeps(), verified)
     const state = await stateStore.get(issue.id)
     if (state?.step !== 'done') throw new Error(state?.error ?? `Task did not complete (${state?.step ?? 'no state'})`)
     console.log(`Ready for human review: ${state.prUrl}\nExecution state: ${STATE_DIR}`)
@@ -360,7 +362,7 @@ if (args.command === 'review') {
     await task.removeLabel(issue.id, 'needs-human')
     const reviewing = { ...recorded!, step: 'reviewing' as const, error: null, updatedAt: new Date().toISOString() }
     await stateStore.save(reviewing)
-    await executeTask(issue, agent, oneShotDeps(), reviewing)
+    await withSlot(key, () => executeTask(issue, agent, oneShotDeps(), reviewing))
     const state = await stateStore.get(issue.id)
     if (state?.step !== 'done') throw new Error(state?.error ?? `Task did not complete (${state?.step ?? 'no state'})`)
     const last = state.reviews?.at(-1)
@@ -401,7 +403,8 @@ if (args.command === 'run') {
     }
     const agent = resolveAgent(issue, company.agents)
     if (!agent) throw new Error('No internal agent with write_code capability is configured')
-    await executeTask(issue, agent, oneShotDeps(), freshState(issue.id, agent.id, args.retry ? historyOf(existing) : {}))
+    // Admission is done; the work waits for a machine slot, the refusals above do not.
+    await withSlot(issue.key ?? issue.id, () => executeTask(issue, agent, oneShotDeps(), freshState(issue.id, agent.id, args.retry ? historyOf(existing) : {})))
     const state = await stateStore.get(issue.id)
     if (state?.step !== 'done') throw new Error(state?.error ?? `Task did not complete (${state?.step ?? 'no state'})`)
     console.log(`Ready for human review: ${state.prUrl}\nExecution state: ${STATE_DIR}`)

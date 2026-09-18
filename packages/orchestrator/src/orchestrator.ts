@@ -11,6 +11,7 @@ import type { Gateway } from '@floor-agents/gateway'
 import { resolveAgent } from './dispatcher.ts'
 import { executeTask } from './pipeline.ts'
 import { closeInterrupted, processTable } from './lifecycle.ts'
+import { withSlot } from './slots.ts'
 import { sign, ENGINE_SIGNATURE } from './comment-signature.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import { committeePrReviewEnabled, committeeVoters } from './committee-pr-review.ts'
@@ -108,7 +109,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
               interrupted.worktreePath ? `> Its tree was kept: \`${interrupted.worktreePath}\`` : '',
             ].filter(Boolean).join('\n'), ENGINE_SIGNATURE)).catch(() => {})
           }
-          await executeTask(issue, agent, pipelineDeps, state)
+          await withSlot(issue.key ?? issue.id, () => executeTask(issue, agent, pipelineDeps, state))
         }
       }
 
@@ -144,7 +145,9 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
             knownIds.add(event.issue.id)
             console.log(`\n[orchestrator] processing: ${event.issue.title} → ${agent.name}`)
-            await executeTask(event.issue, agent, pipelineDeps)
+            // One task at a time in this process; the slot is the machine's limit,
+            // shared with the other projects' watchers and with runs started by hand.
+            await withSlot(event.issue.key ?? event.issue.id, () => executeTask(event.issue, agent, pipelineDeps))
           }
         }
       }

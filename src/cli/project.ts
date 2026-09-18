@@ -127,7 +127,8 @@ export async function doctorProject(company: CompanyConfig, taskAdapter: string,
   })
   await check('Task source', async () => {
     if (!['linear', 'things', 'github-issues'].includes(taskAdapter)) throw new Error(`Unknown task adapter: ${taskAdapter}`)
-    if (taskAdapter === 'linear' && (!env.LINEAR_API_KEY || !env.LINEAR_TEAM_ID)) throw new Error('LINEAR_API_KEY and LINEAR_TEAM_ID are required')
+    if (taskAdapter === 'linear' && !env.LINEAR_API_KEY) throw new Error('LINEAR_API_KEY is required (in the project\'s .agents/.env)')
+    if (taskAdapter === 'linear' && !company.tasks?.linear?.team && !env.LINEAR_TEAM_ID) throw new Error('Set tasks.linear.team in the manifest (or LINEAR_TEAM_ID)')
     if (taskAdapter === 'things' && process.platform !== 'darwin') throw new Error('Things requires macOS')
     return `${taskAdapter}: configuration present; issue access checked on run`
   })

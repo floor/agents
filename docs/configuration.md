@@ -144,6 +144,25 @@ guardrails:
     - cursor
 ```
 
+### `tasks`
+
+Where the project's tasks live. Absent means GitHub issues in the project's own repository,
+which needs no configuration. Secrets stay out of the manifest: the API key comes from the
+project's `.agents/.env`.
+
+```yaml
+tasks:
+  source: linear                     # linear | github-issues | things
+  labels: [agent]                    # `watch` hands an issue with one of these to the implementer
+  linear:
+    team: FLO                        # team key or id
+    project: vlist                   # project name or id; issues outside it are not this project's
+```
+
+`floor-agents run --issue FLO-31` then reads the Linear issue by its key. A PR for a task in a
+private tracker references it as `Refs FLO-31` and never repeats its text; `Closes #n` is
+written only for a public GitHub issue in the same repository.
+
 ### `sources`
 
 Named material agents consult beside the repository. Paths are relative to the manifest.

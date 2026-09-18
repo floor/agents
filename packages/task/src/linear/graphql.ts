@@ -2,6 +2,8 @@ export type LinearAdapterConfig = {
   readonly apiKey: string
   readonly teamId: string
   readonly projectId?: string
+  /** The project's name, resolved to its id on first use. */
+  readonly projectName?: string
   readonly baseUrl?: string
 }
 
@@ -59,13 +61,29 @@ const ISSUE_FIELDS = `
   updatedAt
 `
 
+const projectIds = new Map<string, string>()
+
+/** The project's id, from its id or its name; null when the config names none. */
+export async function resolveProjectId(config: LinearAdapterConfig): Promise<string | null> {
+  if (config.projectId) return config.projectId
+  if (!config.projectName) return null
+  const cached = projectIds.get(config.projectName)
+  if (cached) return cached
+  const data = await gql(config, `query($name: String!) { projects(filter: { name: { eq: $name } }) { nodes { id name } } }`, { name: config.projectName })
+  const id = data.projects.nodes[0]?.id as string | undefined
+  if (!id) throw new Error(`Linear: no project named "${config.projectName}"`)
+  projectIds.set(config.projectName, id)
+  return id
+}
+
 export async function getIssuesByLabel(config: LinearAdapterConfig, label: string): Promise<LinearIssue[]> {
   const variables: Record<string, unknown> = { teamId: config.teamId, label }
 
   let projectFilter = ''
-  if (config.projectId) {
+  const projectId = await resolveProjectId(config)
+  if (projectId) {
     projectFilter = 'project: { id: { eq: $projectId } }'
-    variables.projectId = config.projectId
+    variables.projectId = projectId
   }
 
   // Use key filter if teamId looks like a key (short string), id filter if UUID
@@ -75,7 +93,7 @@ export async function getIssuesByLabel(config: LinearAdapterConfig, label: strin
     : 'team: { key: { eq: $teamId } }'
 
   const data = await gql(config, `
-    query($teamId: ${isUuid ? 'ID' : 'String'}!, $label: String!${config.projectId ? ', $projectId: ID!' : ''}) {
+    query($teamId: ${isUuid ? 'ID' : 'String'}!, $label: String!${projectId ? ', $projectId: ID!' : ''}) {
       issues(
         filter: {
           ${teamFilter}
@@ -111,6 +129,7 @@ export async function createLinearIssue(config: LinearAdapterConfig, input: {
   description?: string
   labelIds?: string[]
   parentId?: string
+  projectId?: string
 }): Promise<LinearIssue> {
   const data = await gql(config, `
     mutation($input: IssueCreateInput!) {

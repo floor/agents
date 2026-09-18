@@ -70,8 +70,6 @@ const CONFIG_PATH = args.config ?? process.env.CONFIG_PATH
 }
 const STATE_DIR = process.env.STATE_DIR ?? join(dirname(resolve(CONFIG_PATH)), 'runs')
 
-// Environment, read after the project's .env so its values count.
-const TASK_ADAPTER = process.env.TASK_ADAPTER ?? (args.command === 'watch' ? 'linear' : 'github-issues')
 // Trigger tags the committee watches (comma-separated).
 const COMMITTEE_LABELS = (process.env.COMMITTEE_LABELS ?? 'committee,agents')
   .split(',').map(s => s.trim()).filter(Boolean)
@@ -88,6 +86,10 @@ if (errors.length > 0) {
   for (const err of errors) console.error(`  - ${err}`)
   process.exit(1)
 }
+
+// Where the tasks live: the manifest's `tasks.source`, else the environment, else
+// GitHub issues for a run and Linear for a watch, as before the manifest could say.
+const TASK_ADAPTER = company.tasks?.source ?? process.env.TASK_ADAPTER ?? (args.command === 'watch' ? 'linear' : 'github-issues')
 
 if (args.command === 'doctor' || args.command === 'run' || company.project.verification) {
   const diagnostics = await doctorProject(company, TASK_ADAPTER)
@@ -182,8 +184,9 @@ const createTask = () => {
         type: 'linear',
         linear: {
           apiKey: requireEnv('LINEAR_API_KEY'),
-          teamId: requireEnv('LINEAR_TEAM_ID'),
+          teamId: company.tasks?.linear?.team ?? requireEnv('LINEAR_TEAM_ID'),
           projectId: process.env.LINEAR_PROJECT_ID,
+          ...(company.tasks?.linear?.project ? { projectName: company.tasks.linear.project } : {}),
         },
       })
     case 'things':
@@ -194,7 +197,7 @@ const createTask = () => {
         githubIssues: {
           token: requireEnv('GITHUB_TOKEN'),
           owner: requireEnv('GITHUB_OWNER'),
-          repo: process.env.GITHUB_ISSUES_REPO ?? company.project.repo,
+          repo: company.tasks?.github?.repo ?? process.env.GITHUB_ISSUES_REPO ?? company.project.repo,
         },
       })
     default:
@@ -283,6 +286,7 @@ const orchestrators = [
   ...(pipelines.development
     ? [createOrchestrator({
         company,
+        ...(company.tasks?.labels ? { labels: company.tasks.labels } : {}),
         taskAdapter: task,
         gitAdapter: github,
         llmAdapters,

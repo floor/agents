@@ -35,3 +35,32 @@ test('config paths resolve against the manifest instead of launch directory', as
   expect(config.project.root).toBe(process.cwd())
   expect(config.agents[0]?.promptTemplate).toBe(`${process.cwd()}/agents/backend-dev.md`)
 })
+
+test('a project may declare where its tasks live', async () => {
+  const dir = await (await import('node:fs/promises')).mkdtemp((await import('node:path')).join((await import('node:os')).tmpdir(), 'floor-tasks-'))
+  const { join } = await import('node:path')
+  const path = join(dir, 'agents.yaml')
+  await Bun.write(path, `
+name: t
+project: { name: t, repo: t }
+agents:
+  - { id: dev, name: Dev, promptTemplate: dev.md, llm: { provider: cursor, model: m }, capabilities: [write_code] }
+tasks:
+  source: linear
+  labels: [agent, floor]
+  linear: { team: FLO, project: vlist }
+`)
+  const config = await loadCompanyConfig(path)
+  expect(config.tasks).toEqual({ source: 'linear', labels: ['agent', 'floor'], linear: { team: 'FLO', project: 'vlist' } })
+  const { validateCompanyConfig } = await import('@floor-agents/core')
+  expect(validateCompanyConfig(config)).toEqual([])
+  await Bun.write(path, `
+name: t
+project: { name: t, repo: t }
+agents:
+  - { id: dev, name: Dev, promptTemplate: dev.md, llm: { provider: cursor, model: m }, capabilities: [write_code] }
+tasks: { source: linear }
+`)
+  expect(validateCompanyConfig(await loadCompanyConfig(path))).toContain('tasks.linear.team is required when tasks.source is linear')
+  await (await import('node:fs/promises')).rm(dir, { recursive: true, force: true })
+})

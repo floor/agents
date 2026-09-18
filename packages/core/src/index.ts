@@ -32,6 +32,7 @@ export type {
 export type { ProjectConventions, ProjectStructure, ProjectConfig, ProjectCommand } from './types/project.ts'
 export type { CompanyConfig } from './types/company.ts'
 export type { SourceDefinition, SourceVisibility } from './types/sources.ts'
+export type { TasksConfig, TaskSource } from './types/tasks.ts'
 export type { GuardrailsConfig, GuardrailViolation } from './types/guardrails.ts'
 export type { CostConfig } from './types/costs.ts'
 export type { WorkflowDefinition, WorkflowStateDefinition, TransitionDefinition, TransitionTrigger } from './types/workflow.ts'

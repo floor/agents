@@ -41,6 +41,8 @@ Config discovery: `--config`, then `CONFIG_PATH`, then `.agents/agents.yaml`, th
 | `COMMITTEE_LABELS` | Comma-separated committee triggers; default `committee,agents` |
 | `GATEWAY_PORT` | External-agent gateway port; default `3100` |
 | `GATEWAY_TOKEN` | Optional gateway authentication token |
+| `FLOOR_AGENTS_MAX_RUNS` | How many tasks run at once on this machine, across all engine processes; default `2`, `0` for no limit. See [Machine slots](#machine-slots) |
+| `FLOOR_AGENTS_SLOT_PORT` | Base of the loopback ports used as slots; default `47600` |
 | `FLOOR_AGENTS_RESUME` | `off` makes a revision start a new agent session with the full brief instead of continuing the implementer's own; default is to continue |
 
 `run` supports development configs. It requires `project.root`, `project.baseBranch`,
@@ -51,6 +53,21 @@ setup, execution, checks, publication or completion fails. It never merges a PR.
 mode; otherwise it uses the developer/reviewer flow triggered by `agent`. PM and
 QA workflow integration is not active. A configured verification pipeline runs
 preflight at service startup, too.
+
+## Machine slots
+
+At most **two tasks run at once on a machine**, across every engine process on it: the watcher of
+each project and any `run`, `verify` or `review` started by hand. A third waits and says so
+(`[slots] FLO-123 waits for a machine slot (held by pid …)`), then starts when a slot is given
+back. Refusals — an issue that already has a state, a run that is not failed — still answer at
+once: only the work waits.
+
+A slot is a loopback TCP port (slot *n* listens on `FLOOR_AGENTS_SLOT_PORT + n`, default 47600).
+Binding a port is atomic, and the operating system gives it back when its owner ends however it
+ends, so a crash or a `kill -9` never leaves a slot taken. There is nothing to start and nothing
+to clean up. `FLOOR_AGENTS_MAX_RUNS` sets the limit (`0` removes it); every process on the machine
+must use the same values. Why two: a third run at once stretched implementer turns from 12 to 18
+minutes and tripped a browser check that passes alone.
 
 ## Stopping and restarting
 

@@ -58,8 +58,9 @@ durations, of gate runs. Every number in this page was read out of logs by hand.
 **Review is a loop around the wrong unit.** A revision re-enters at step 3 as if it were a new
 task. The reviewers' unit is the PR; the implementer's should be *its own previous turn*.
 
-**Process-level gaps.** Runs share a machine with no notion of slots (browser suites flaked
-under load — FLO-196); ~~a shutdown leaves the agent running and a restart starts a second one
+**Process-level gaps.** ~~Runs share a machine with no notion of slots (browser suites flaked
+under load — FLO-196)~~ (**fixed:** two tasks at once per machine, across processes; a slot is a
+loopback port, so a crash cannot leave one taken); ~~a shutdown leaves the agent running and a restart starts a second one
 (FLO-182)~~ (**fixed:** a stop ends every child's process group and records the turn as stopped by
 the engine; a start closes what a crash left open and ends a surviving agent before starting
 another); Linear is polled every five seconds with no backoff (FLO-174).
@@ -116,8 +117,9 @@ is solved for small tasks and the revision loop is now the cost:
 3. ~~**A gate and a review that tell the truth:** a clean export, outputs that keep their end, a
    failed seat named as one, a free port per review, `review --issue`, reviewers who read the
    discussion.~~ Done.
-4. **Service safety:** ~~a clean shutdown and restart (FLO-182)~~ (done), machine slots (FLO-196),
-   then the pm2 watcher on one project, triggered by label.
+4. **Service safety:** ~~a clean shutdown and restart (FLO-182)~~, ~~machine slots (FLO-196)~~
+   (both done); next the pm2 watcher on one project, triggered by label, with a watched
+   `pm2 reload` as the live proof of the stop.
 5. **Typed outcomes** (idea 2) — starting with `verifyAndCommit`; the fix turn falls out of it.
    (Ending a review loop early when a blocker repeats is done.) Grok's #73 has useful
    tests to keep.

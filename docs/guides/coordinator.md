@@ -38,8 +38,8 @@ depend on it: another coordinator, human or not, should be able to take the role
   on that issue. *Why:* it is the only place both the implementer and the reviewers read. On
   mtrl #92 a decision recorded elsewhere cost three review cycles.
 - **At most two runs at once on one machine.** *Why:* more stretched implementer turns from 12 to
-  18 minutes and tripped a flaky browser assertion. Machine slots in the engine will replace the
-  habit.
+  18 minutes and tripped a flaky browser assertion. The engine now enforces it (machine slots, see
+  the [CLI reference](../cli.md#machine-slots)): a third task waits instead of starting.
 - **Wiring is the coordinator's follow-up.** Anything added to `package.json` scripts, such as a
   new browser check in `test:browser`, is not part of an agent's brief.
 - **Small fixes take the fast lane.** Trial seats and lanes are routed by label.

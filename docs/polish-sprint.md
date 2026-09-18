@@ -92,6 +92,7 @@ All merged into `staging` on 2026-09-18, in order. "Found by" says what made the
 | #84 | **A blocker that stood through a revision stops the loop** for a person, named in both wordings; `review --issue` reopens it once the point is settled on the issue. `BLOCKER` headings and bullets are recognised; each member's blockers are kept on the review record | benchmark 2: mtrl #92 spent three cycles on one sentence; on vlist #260 Claude's `## BLOCKER 1:` headings were not read, and the implementer got the first 500 characters of the review instead |
 | #85 | **A revision continues the implementer's session**: the CLI resumes its own published turn and is told only the blockers, the discussion and where it stands. Falls back to the full brief within seconds if the session cannot be resumed; `FLOOR_AGENTS_RESUME=off` | benchmark 2: revision turns of 5 to 10 minutes, most of it reading the same 111 KB again. Proven first by experiment: a Cursor session resumed from another folder, inside the sandbox, kept its memory and wrote only in the new folder |
 | #86 | **Stopping and starting again** (FLO-182). Every child the engine starts is tracked (agent CLI, checks, bridges); `SIGINT`/`SIGTERM` end their whole process groups, for every command. A turn cut short by a stop is recorded as stopped by the engine: no failure, no report, no `needs-human`, and it resumes at the next start. A start closes a turn that a crash left open, ends its agent if it is still the same process, and tells the issue. pm2 `kill_timeout` raised to 10 s | the precondition for running as a service: pm2 restarts processes routinely |
+| #87 | **Machine slots** (FLO-196): two tasks at once per machine, across every engine process; a third waits and says who holds the slots. A slot is a loopback port, so binding is atomic and a crash gives it back. `FLOOR_AGENTS_MAX_RUNS`, `FLOOR_AGENTS_SLOT_PORT` | the limit was a habit of the coordinator. The first version, with lock files, let two real processes in at once in its own test; it was replaced before it was ever merged |
 
 Open: **#73** (Grok's "a gate failure becomes a fix turn"). It reached the maximum review cycles
 with Codex's recovery blockers outstanding. Its tests are worth keeping when typed outcomes are
@@ -152,8 +153,8 @@ Recorded on the evening of 2026-09-18.
 
 1. ~~Warm-ups~~ (#74, #76). ~~The attempt record, `status`, `verify`~~ (#75, #77). ~~A gate that
    verifies what is published~~ (#78). ~~Readable failures~~ (#79). ~~`review`~~ (#81).
-2. **Service safety:** ~~FLO-182 (shutdown and restart)~~ (#86), FLO-196 (machine slots), then the
-   pm2 watcher on one project with the label trigger.
+2. **Service safety:** ~~FLO-182 (shutdown and restart)~~ (#86), ~~FLO-196 (machine slots)~~ (#87),
+   then the pm2 watcher on one project with the label trigger.
 3. **The revision loop:** ~~a blocker repeated across two cycles ends the loop as "needs a
    person"~~ (#84); typed outcomes (FLO-198); a revision continues the previous session in the same
    worktree with a small prompt (FLO-192, 197, 199, and `--add-dir` for `agy`, FLO-203).

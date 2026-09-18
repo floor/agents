@@ -8,6 +8,7 @@ import type {
   ProjectConfig,
   GuardrailsConfig,
 } from '@floor-agents/core'
+import { excerpt } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
 import { createWorktree, gitText, snapshotWorktree, removeWorktree, type Worktree } from './worktree.ts'
 import { requireVerification, prepareWorkspace, verifyAndCommit, resolveBaseSha } from './verified-commit.ts'
@@ -456,7 +457,7 @@ export async function runNativeDevAgent(
         await gitText(worktree.path, ['diff', '--stat']),
         await gitText(worktree.path, ['ls-files', '--others', '--exclude-standard']),
       )
-      throw new AgentStopped(`${agent.llm.provider} agent ${failureReason(result.exitCode, result.subtype, budget)}: ${result.resultText.slice(0, 500)}`.trimEnd().replace(/:$/, ''), written)
+      throw new AgentStopped(`${agent.llm.provider} agent ${failureReason(result.exitCode, result.subtype, budget)}: ${excerpt(result.resultText, 1_000)}`.trimEnd().replace(/:$/, ''), written)
     }
 
     state = await publishTree(worktree, issue, agent, state, deps, {

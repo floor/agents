@@ -118,6 +118,7 @@ function handleMessage(s: GatewayState, ws: WS, raw: string | Buffer): void {
         taskId: msg.taskId,
         agentId,
         content: msg.content,
+        ...(msg.failed ? { failed: true } : {}),
         receivedAt: new Date(),
       })
       break

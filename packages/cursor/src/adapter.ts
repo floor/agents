@@ -1,4 +1,5 @@
 import type { LLMAdapter, LLMConfig, LLMResponse, ToolCall } from '@floor-agents/core'
+import { excerpt } from '@floor-agents/core'
 import { sandboxed, type SandboxSpec } from '@floor-agents/sandbox'
 
 /**
@@ -96,7 +97,7 @@ export function parseCursorResult(stdout: string): CursorResult {
       // Not the envelope; keep walking back.
     }
   }
-  throw new Error(`Cursor returned no JSON result: ${stdout.slice(0, 500)}`)
+  throw new Error(`Cursor returned no JSON result: ${excerpt(stdout)}`)
 }
 
 export function createCursorAdapter(config: CursorAdapterConfig): LLMAdapter {
@@ -138,7 +139,7 @@ export function createCursorAdapter(config: CursorAdapterConfig): LLMAdapter {
       ]).finally(() => clearTimeout(timeoutId))
 
       if (exitCode !== 0 && !stdout) {
-        throw new Error(`cursor-agent failed (exit ${exitCode}): ${stderr.trim().slice(0, 500)}`)
+        throw new Error(`cursor-agent failed (exit ${exitCode}): ${excerpt(stderr)}`)
       }
 
       const data = parseCursorResult(stdout)

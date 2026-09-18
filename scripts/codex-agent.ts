@@ -16,6 +16,7 @@
 
 import type { TaskAssignment } from '@floor-agents/gateway'
 import { createGatewayClient } from '@floor-agents/gateway'
+import { excerpt } from '@floor-agents/core'
 import { buildCodexPrompt, buildCodexArgs } from './lib/codex.ts'
 import { reviewerSandbox, sandboxed } from '@floor-agents/sandbox'
 import { tmpdir } from 'node:os'
@@ -45,11 +46,17 @@ async function reviewWithCodex(task: TaskAssignment): Promise<string> {
     cwd: CODEX_CWD,
   })
 
-  const exitCode = await proc.exited
+  // Both pipes are drained while the process runs: a full pipe would block it.
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
 
   if (exitCode !== 0) {
-    const stderr = await new Response(proc.stderr).text()
-    throw new Error(`codex exec failed (exit ${exitCode}): ${stderr.slice(0, 500)}`)
+    // Codex opens with a banner and the prompt, and says what went wrong last
+    // ("You've hit your usage limit…"): the end is the part to keep.
+    throw new Error(`codex exec failed (exit ${exitCode}): ${excerpt(stderr || stdout)}`)
   }
 
   const lastMessage = await Bun.file(outFile).text().catch(() => '')
@@ -58,7 +65,7 @@ async function reviewWithCodex(task: TaskAssignment): Promise<string> {
   if (lastMessage.trim()) return lastMessage.trim()
 
   // Fallback: full stdout if the last-message file was empty
-  return (await new Response(proc.stdout).text()).trim()
+  return stdout.trim()
 }
 
 const client = createGatewayClient({

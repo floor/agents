@@ -72,3 +72,24 @@ test('handles double remove gracefully', async () => {
   await removeWorktree(worktree)
   await removeWorktree(worktree) // should not throw
 })
+
+test('a worktree follows a remote branch that was moved back, even if the clone had fetched the old tip', async () => {
+  // A retry force-resets the agent branch to the base. A clone that had
+  // already fetched the old tip (someone reviewed the PR) used to refuse the
+  // update as a non-fast-forward, and the run died on `git fetch failed`.
+  const base = (await Bun.$`git -C ${TEST_REPO} rev-parse main`.text()).trim()
+  await Bun.$`git -C ${TEST_REPO} checkout agent/test-branch`.quiet()
+  await writeFile(join(TEST_REPO, 'attempt.txt'), 'first attempt')
+  await Bun.$`git -C ${TEST_REPO} add -A`.quiet()
+  await Bun.$`git -C ${TEST_REPO} commit -m "attempt"`.quiet()
+  await Bun.$`git -C ${TEST_REPO} push origin agent/test-branch`.quiet()
+  await Bun.$`git -C ${TEST_REPO} checkout main`.quiet()
+  // The remote moves the branch back to the base; the clone still tracks the old tip.
+  await Bun.$`git -C ${TEST_REMOTE} update-ref refs/heads/agent/test-branch ${base}`.quiet()
+
+  const worktree = await createWorktree('agent/test-branch')
+  expect(worktree.initialSha).toBe(base)
+  expect(await Bun.file(join(worktree.path, 'attempt.txt')).exists()).toBe(false)
+  await removeWorktree(worktree)
+})
+

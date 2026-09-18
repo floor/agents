@@ -22,7 +22,11 @@ export async function createWorktree(branch: string, repoPath = process.cwd()): 
   await gitText(root, ['check-ref-format', '--branch', branch])
   if (['main', 'master', 'develop', 'production'].includes(branch)) throw new Error(`Protected branch: ${branch}`)
   // Refresh branches first created through the API; never reuse a stale local branch.
-  await gitText(root, ['fetch', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`])
+  // Forced (+): a retry moves the remote branch back to the base, and a clone
+  // that had already fetched the old tip — someone reviewed the PR — refused
+  // the update as a non-fast-forward. The remote is the truth here; the
+  // tracking ref has nothing of its own to protect.
+  await gitText(root, ['fetch', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`])
   const initialSha = await gitText(root, ['rev-parse', `refs/remotes/origin/${branch}`])
   // Beside the manifest and the run state, so one ignore rule (.agents/*) covers all of it.
   const dir = join(root, '.agents', 'worktrees')

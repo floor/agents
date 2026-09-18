@@ -21,7 +21,7 @@ export async function prepareWorkspace(worktree: Worktree, project: ProjectConfi
 export async function resolveBaseSha(worktree: Worktree, project: ProjectConfig, state: ExecutionState): Promise<string> {
   if (state.baseSha) return state.baseSha
   if (!project.baseBranch) return worktree.initialSha
-  await gitText(worktree.path, ['fetch', 'origin', `refs/heads/${project.baseBranch}:refs/remotes/origin/${project.baseBranch}`])
+  await gitText(worktree.path, ['fetch', 'origin', `+refs/heads/${project.baseBranch}:refs/remotes/origin/${project.baseBranch}`])
   return gitText(worktree.path, ['merge-base', worktree.initialSha, `refs/remotes/origin/${project.baseBranch}`])
 }
 

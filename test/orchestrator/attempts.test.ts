@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { ExecutionState, VerificationResult } from '@floor-agents/core'
 import {
-  closeAttempt, gateRunOf, historyOf, historyText, lastAttempt, openAttempt, outcomeOf, recordGate, recordReview, recordTurn,
+  closeAttempt, gateRunOf, historyOf, historyText, lastAttempt, openAttempt, outcomeOf, recordGate, recordReview, recordTurn, reseatRefusal,
 } from '../../packages/orchestrator/src/attempts.ts'
 import { freshState } from '../../packages/orchestrator/src/pipeline.ts'
 import { AgentStopped } from '../../packages/orchestrator/src/stop-report.ts'
@@ -90,5 +90,31 @@ describe('the attempt record', () => {
     expect(text).toContain('1. implement · grok-dev (cursor-grok-4.6-high) · turn 12m27s · gate-failed · gate failed at Bundle size · tree gone')
     expect(text).toContain('|   ✗ carousel: 15262 bytes gzipped (budget 15257)')
     expect(text).toContain('cycle 1 · 5m01s · request_changes · Codex reject, Gemini abstain (failed)')
+  })
+})
+
+describe('seating the committee again', () => {
+  const review = (outcome: string) => ({ cycle: 1, at: '2026-09-18T20:38:00Z', commitSha: 'abc', durationMs: 1, votes: [], outcome })
+  const done = (outcome: string): ExecutionState => ({
+    ...freshState('issue', 'dev', {}), step: 'done', prId: '92', prUrl: 'https://example.test/pull/92', reviews: [review(outcome)],
+  })
+
+  test('a pull request left undecided can be reviewed again', () => {
+    // mtrl #92: Codex lost its port, Claude answered alone — no decision, and nothing wrong with the change.
+    expect(reseatRefusal(done('no_decision'))).toBeNull()
+  })
+
+  test('a verdict is not reopened by asking again', () => {
+    expect(reseatRefusal(done('approve'))).toContain('approve')
+    expect(reseatRefusal(done('request_changes'))).toContain('request_changes')
+  })
+
+  test('only a finished run with a pull request and a recorded review qualifies', () => {
+    expect(reseatRefusal(null)).toContain('no run')
+    expect(reseatRefusal({ ...done('no_decision'), prId: null })).toContain('no pull request')
+    expect(reseatRefusal({ ...done('no_decision'), step: 'failed' })).toContain('failed')
+    expect(reseatRefusal({ ...done('no_decision'), reviews: [] })).toContain('no review')
+    // The last review counts, not an earlier one.
+    expect(reseatRefusal({ ...done('no_decision'), reviews: [review('no_decision'), review('approve')] })).toContain('approve')
   })
 })

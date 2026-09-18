@@ -336,6 +336,39 @@ test('a comments outage is logged and the native turn still runs', async () => {
   expect(prompts[0]!).not.toContain('## Discussion')
 })
 
+test('the native implementer prompt never names API-path tools, on a first pass or a revision', async () => {
+  const capture = async (reviewComments?: string): Promise<string> => {
+    let prompt = ''
+    try {
+      await runNativeDevAgent(issue, agent, state(), {
+        project, guardrails: company.guardrails, stateStore: createStateStore(join(dir, 'state')),
+        costTracker: createCostTracker(), addComment: async () => {}, setLabel: async () => {},
+        contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+        runAgent: async (text, cwd) => {
+          prompt = text
+          await Bun.write(join(cwd, 'answer.txt'), '42')
+          return { resultText: 'ok', cost: 0, durationMs: 1, exitCode: 0 }
+        },
+      }, reviewComments)
+    } catch (err) {
+      if (!prompt) throw err
+    }
+    return prompt
+  }
+
+  const first = await capture()
+  const revision = await capture('please add tests')
+  for (const prompt of [first, revision]) {
+    expect(prompt).not.toContain('write_file')
+    expect(prompt).not.toContain('pr_description')
+    expect(prompt).toContain('Do not commit, push, or open a PR')
+    expect(prompt).toContain('own editing tools')
+    expect(prompt).toContain('The engine reads the working tree, not your message')
+  }
+  expect(first).not.toContain('## Review Feedback')
+  expect(revision).toContain('## Review Feedback')
+})
+
 test('discussion sits after the issue body and before review feedback', async () => {
   let prompt = ''
   try {

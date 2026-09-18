@@ -36,6 +36,23 @@ export const DEFAULT_MAX_TURNS: Readonly<Record<NativeRole, number>> = { impleme
 /** The default turn budget, when the manifest names none. */
 export const DEFAULT_TURN_TIMEOUT_MS = 600_000
 
+/**
+ * What a native implementer is told — first pass and revision share this.
+ *
+ * Never name the API-path tools: Antigravity's file tool is itself called
+ * `write_file`, and Gemini treated a prohibition on that name as "print the
+ * files, write nothing" (mtrl FLO-102).
+ */
+export function nativeImplementerInstructions(verification: readonly { readonly command: readonly string[] }[]): readonly string[] {
+  return [
+    '## Instructions',
+    'You are working directly on a git branch. Edit files, run tests, iterate until the code is correct.',
+    `Project checks: ${verification.map(c => c.command.join(' ')).join('; ')}. The engine will run these independently.`,
+    'Do not commit, push, or open a PR. The engine validates and publishes the final changes.',
+    'Edit the files in this working directory with your own editing tools; do not print file contents in your reply — a reply is not a change. The engine reads the working tree, not your message.',
+  ]
+}
+
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
@@ -321,11 +338,7 @@ export async function runNativeDevAgent(
 
     promptParts.push(
       '',
-      '## Instructions',
-      'You are working directly on a git branch. Edit files, run tests, iterate until the code is correct.',
-      `Project checks: ${deps.project.verification!.map(c => c.command.join(' ')).join('; ')}. The engine will run these independently.`,
-      'Do not commit, push, or open a PR. The engine validates and publishes the final changes.',
-      'Do NOT use write_file or pr_description tools — edit files directly.',
+      ...nativeImplementerInstructions(deps.project.verification!),
     )
 
     // The implementer may write its worktree and that worktree's own git metadata

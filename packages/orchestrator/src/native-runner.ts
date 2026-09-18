@@ -16,6 +16,7 @@ import type { CostTracker } from './cost-tracker.ts'
 import { implementerSandbox, reviewerSandbox, sandboxed, withDenyRead, type SandboxTool } from '@floor-agents/sandbox'
 import { buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
 import { costNote, metaLine } from './cost-note.ts'
+import { AgentStopped, writtenSummary } from './stop-report.ts'
 
 /** Providers whose CLI runs as a full agent on a worktree, rather than through tool calls. */
 export const NATIVE_PROVIDERS = new Set(['claude-code', 'cursor'])
@@ -308,8 +309,13 @@ export async function runNativeDevAgent(
 
     if (result.exitCode !== 0) {
       // A killed or capped turn leaves no result, and "failed (exit 1)" reads
-      // like a crash: say which budget ran out and where to raise it.
-      throw new Error(`${agent.llm.provider} agent ${failureReason(result.exitCode, result.subtype, budget)}: ${result.resultText.slice(0, 500)}`)
+      // like a crash: say which budget ran out and where to raise it, and
+      // carry what the worktree holds so the issue can show it.
+      const written = writtenSummary(
+        await gitText(worktree.path, ['diff', '--stat']),
+        await gitText(worktree.path, ['ls-files', '--others', '--exclude-standard']),
+      )
+      throw new AgentStopped(`${agent.llm.provider} agent ${failureReason(result.exitCode, result.subtype, budget)}: ${result.resultText.slice(0, 500)}`.trimEnd().replace(/:$/, ''), written)
     }
 
     state = await verifyAndCommit(

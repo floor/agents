@@ -14,6 +14,7 @@ floor-agents run --issue 123
 | `init` | Create `.agents/agents.yaml` and a developer prompt; infer origin, base branch and project commands; never overwrite existing files |
 | `doctor` | Check config, repository identity/access, command availability, prompts and credential presence without invoking an agent |
 | `run --issue <id>` | Implement one issue, run configured checks, create a PR, then exit; refuses an existing execution state |
+| `run --issue <id> --retry` | Archive a failed attempt under `STATE_DIR/archive/`, drop the `needs-human` label, and run the issue again; refuses an attempt that is not failed |
 | `watch` or no command | Start the existing developer or committee watch loop |
 | `--help`, `-h` | Show usage |
 | `--version`, `-v` | Show version |

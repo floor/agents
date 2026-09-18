@@ -226,6 +226,8 @@ export type NativeAgentDeps = {
   readonly guardrails: GuardrailsConfig
   /** Private sources this agent's provider is not trusted with. */
   readonly denyRead?: readonly string[]
+  /** Issue comments already rendered as a `## Discussion` block, or omitted. */
+  readonly discussion?: string
 }
 
 export async function runNativeDevAgent(
@@ -275,6 +277,10 @@ export async function runNativeDevAgent(
       `**${issue.title}**`,
       issue.body || '',
     ]
+
+    if (deps.discussion) {
+      promptParts.push('', deps.discussion)
+    }
 
     if (reviewComments) {
       promptParts.push('', '## Review Feedback (address these)', reviewComments)

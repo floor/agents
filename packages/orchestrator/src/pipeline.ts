@@ -14,7 +14,7 @@ import { runToolUseLoop, type LLMAdapterResolver } from './llm-runner.ts'
 import { parseToolCallOutput } from './output-parser.ts'
 import { validateAgentOutput } from './guardrails.ts'
 import { runReviewAgent, MAX_REVIEW_CYCLES, type ReviewDeps } from './review.ts'
-import { NATIVE_PROVIDERS, runNativeDevAgent, runNativeReviewAgent } from './native-runner.ts'
+import { NATIVE_PROVIDERS, runNativeDevAgent, runNativeReviewAgent, type NativeAgentDeps } from './native-runner.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import { commitApiWorkspace } from './api-workspace.ts'
 import { verificationSummary } from './verification.ts'
@@ -24,6 +24,7 @@ import { buildPrBody } from './pr-body.ts'
 import { costNote, metaLine } from './cost-note.ts'
 import { AgentStopped, stopReport, crashReport } from './stop-report.ts'
 import { signComments, agentSignature, sign, ENGINE_SIGNATURE } from './comment-signature.ts'
+import { discussionSection } from './discussion.ts'
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -57,6 +58,17 @@ async function advanceState(state: ExecutionState, step: ExecutionStep, updates:
   return next
 }
 
+/** Comments the implementer should read this turn; a fetch failure is no comments. */
+async function loadDiscussion(adapter: TaskAdapter, issueId: string): Promise<string> {
+  if (!adapter.getComments) return ''
+  try {
+    return discussionSection(await adapter.getComments(issueId))
+  } catch (err) {
+    console.error(`[orchestrator] could not read discussion: ${err instanceof Error ? err.message : String(err)}`)
+    return ''
+  }
+}
+
 // ── Dependencies ─────────────────────────────────────────────────
 
 export type PipelineDeps = {
@@ -68,12 +80,14 @@ export type PipelineDeps = {
   readonly costTracker: CostTracker
   readonly getAdapter: LLMAdapterResolver
   readonly findReviewer: () => AgentDefinition | undefined
+  /** For tests: the native implementer's CLI, instead of spawning one. */
+  readonly runAgent?: NativeAgentDeps['runAgent']
 }
 
 // ── API dev agent (tool use) ─────────────────────────────────────
 
 async function runApiDevAgent(
-  issue: Issue, agent: AgentDefinition, state: ExecutionState, deps: PipelineDeps, reviewComments?: string,
+  issue: Issue, agent: AgentDefinition, state: ExecutionState, deps: PipelineDeps, reviewComments?: string, discussion?: string,
 ): Promise<ExecutionState> {
   const { company, taskAdapter, contextBuilder, stateStore, costTracker, getAdapter } = deps
 
@@ -81,7 +95,7 @@ async function runApiDevAgent(
 
   if (!costTracker.canStartNewTask(company.costs)) throw new Error('Daily cost limit reached.')
 
-  const ctx = await contextBuilder.build({ agent, issue, project: company.project, reviewComments, ref: state.commitSha ?? state.branchName ?? undefined })
+  const ctx = await contextBuilder.build({ agent, issue, project: company.project, reviewComments, discussion, ref: state.commitSha ?? state.branchName ?? undefined })
   const isRevision = !!reviewComments
 
   console.log(`[${agent.id}] calling LLM (${agent.llm.model})...`)
@@ -227,6 +241,7 @@ export async function executeTask(
 
     // Step: dev writes code (two paths)
     if (state.step === 'building_context' || state.step === 'calling_llm' || state.step === 'parsing_output') {
+      const discussion = await loadDiscussion(unsigned, issue.id)
       if (devIsNative) {
         state = await runNativeDevAgent(issue, devAgent, state, {
           contextBuilder: deps.contextBuilder,
@@ -236,9 +251,11 @@ export async function executeTask(
           project: company.project,
           guardrails,
           denyRead: privateSourceDenials(company, devAgent.llm.provider),
+          ...(deps.runAgent ? { runAgent: deps.runAgent } : {}),
+          ...(discussion ? { discussion } : {}),
         })
       } else {
-        state = await runApiDevAgent(issue, devAgent, state, deps)
+        state = await runApiDevAgent(issue, devAgent, state, deps, undefined, discussion)
       }
     }
 
@@ -310,6 +327,7 @@ export async function executeTask(
         const feedback = state.reviewVerdict?.comments ?? 'Changes requested.'
         console.log(`[orchestrator] revision ${state.reviewCycle}: ${devAgent.name} addressing feedback...`)
         state = await advanceState(state, 'building_context', { parsedOutput: null, reviewVerdict: null, verification: undefined }, stateStore)
+        const discussion = await loadDiscussion(unsigned, issue.id)
 
         if (devIsNative) {
           state = await runNativeDevAgent(issue, devAgent, state, {
@@ -320,6 +338,8 @@ export async function executeTask(
             project: company.project,
             guardrails,
             denyRead: privateSourceDenials(company, devAgent.llm.provider),
+            ...(deps.runAgent ? { runAgent: deps.runAgent } : {}),
+            ...(discussion ? { discussion } : {}),
           }, feedback)
 
           // Native already committed — skip to review
@@ -327,7 +347,7 @@ export async function executeTask(
             state = await advanceState(state, 'reviewing', {}, stateStore)
           }
         } else {
-          state = await runApiDevAgent(issue, devAgent, state, deps, feedback)
+          state = await runApiDevAgent(issue, devAgent, state, deps, feedback, discussion)
 
           if (state.step === 'validating_output' && state.parsedOutput) {
             const violations = validateAgentOutput(state.parsedOutput, guardrails)

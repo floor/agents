@@ -9,6 +9,7 @@ import { createContextBuilder } from '@floor-agents/context-builder'
 import { commitWorktree, createWorktree, gitText } from '../../packages/orchestrator/src/worktree.ts'
 import { validateWorktree, verifyWorktree, runProjectCommand } from '../../packages/orchestrator/src/verification.ts'
 import { verifyAndCommit } from '../../packages/orchestrator/src/verified-commit.ts'
+import { agentSignature, sign } from '../../packages/orchestrator/src/comment-signature.ts'
 import { sandboxAvailable } from '../helpers/sandbox.ts'
 
 // Project commands run inside sandbox-exec. Where that cannot run — not macOS,
@@ -268,4 +269,92 @@ test('exhausted review cycles report failure instead of a successful one-shot ru
   expect((await store.get(issue.id))?.step).toBe('failed')
   expect((await store.get(issue.id))?.error).toContain('Max review cycles')
   expect(prs).toHaveLength(0)
+})
+
+test('the native implementer prompt includes the issue discussion, and nothing when there is none', async () => {
+  const nativeAgent: AgentDefinition = { ...agent, llm: { ...agent.llm, provider: 'cursor' } }
+  const grok = { name: 'Grok', llm: { model: 'cursor-grok-4.6-high', provider: 'cursor' } } as never
+  const prompts: string[] = []
+  const { task, git } = adapters('42')
+  task.getComments = async () => [
+    { id: '1', author: 'jvial', body: 'start from the tests this time', createdAt: new Date('2026-09-18T00:00:00Z') },
+    { id: '2', author: 'bot', body: sign('⏳ working on the code...', agentSignature(grok, 'implementer')), createdAt: new Date('2026-09-18T01:00:00Z') },
+  ]
+  await executeTask(issue, nativeAgent, {
+    company, taskAdapter: task, gitAdapter: git, stateStore: createStateStore(join(dir, 'state')),
+    costTracker: createCostTracker(),
+    contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+    getAdapter: () => { throw new Error('unused') }, findReviewer: () => undefined,
+    runAgent: async (prompt, cwd) => {
+      prompts.push(prompt)
+      await Bun.write(join(cwd, 'answer.txt'), '42')
+      return { resultText: 'done', cost: 0, durationMs: 1, exitCode: 0 }
+    },
+  })
+  expect(prompts).toHaveLength(1)
+  expect(prompts[0]!.indexOf('Correct answer.txt')).toBeLessThan(prompts[0]!.indexOf('## Discussion'))
+  expect(prompts[0]!).toContain('start from the tests this time')
+  expect(prompts[0]!).not.toContain('working on the code')
+  expect(prompts[0]!).not.toContain('## Review Feedback')
+
+  prompts.length = 0
+  const quiet = adapters('42')
+  await mkdir(join(dir, 'state-empty'), { recursive: true })
+  const quietIssue = { ...issue, id: '43' }
+  await executeTask(quietIssue, nativeAgent, {
+    company, taskAdapter: quiet.task, gitAdapter: quiet.git, stateStore: createStateStore(join(dir, 'state-empty')),
+    costTracker: createCostTracker(),
+    contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+    getAdapter: () => { throw new Error('unused') }, findReviewer: () => undefined,
+    runAgent: async (prompt, cwd) => {
+      prompts.push(prompt)
+      await Bun.write(join(cwd, 'answer.txt'), '42')
+      return { resultText: 'done', cost: 0, durationMs: 1, exitCode: 0 }
+    },
+  })
+  expect(prompts).toHaveLength(1)
+  expect(prompts[0]!).not.toContain('## Discussion')
+})
+
+test('a comments outage is logged and the native turn still runs', async () => {
+  const nativeAgent: AgentDefinition = { ...agent, llm: { ...agent.llm, provider: 'cursor' } }
+  const prompts: string[] = []
+  const { task, git } = adapters('42')
+  task.getComments = async () => { throw new Error('Linear unavailable') }
+  await executeTask(issue, nativeAgent, {
+    company, taskAdapter: task, gitAdapter: git, stateStore: createStateStore(join(dir, 'state')),
+    costTracker: createCostTracker(),
+    contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+    getAdapter: () => { throw new Error('unused') }, findReviewer: () => undefined,
+    runAgent: async (prompt, cwd) => {
+      prompts.push(prompt)
+      await Bun.write(join(cwd, 'answer.txt'), '42')
+      return { resultText: 'done', cost: 0, durationMs: 1, exitCode: 0 }
+    },
+  })
+  expect(prompts).toHaveLength(1)
+  expect(prompts[0]!).not.toContain('## Discussion')
+})
+
+test('discussion sits after the issue body and before review feedback', async () => {
+  let prompt = ''
+  try {
+    await runNativeDevAgent(issue, agent, state(), {
+      project, guardrails: company.guardrails, stateStore: createStateStore(join(dir, 'state')),
+      costTracker: createCostTracker(), addComment: async () => {}, setLabel: async () => {},
+      contextBuilder: { build: async () => ({ systemPrompt: 'sys', userMessage: '', tools: [], estimatedTokens: 0 }) },
+      discussion: '## Discussion\n\n**jvial** (2026-09-18):\nstart here',
+      runAgent: async (text, cwd) => {
+        prompt = text
+        await Bun.write(join(cwd, 'answer.txt'), '42')
+        return { resultText: 'ok', cost: 0, durationMs: 1, exitCode: 0 }
+      },
+    }, 'please add tests')
+  } catch (err) {
+    if (!prompt) throw err
+  }
+  expect(prompt.indexOf('Correct answer.txt')).toBeLessThan(prompt.indexOf('## Discussion'))
+  expect(prompt.indexOf('## Discussion')).toBeLessThan(prompt.indexOf('## Review Feedback'))
+  expect(prompt).toContain('start here')
+  expect(prompt).toContain('please add tests')
 })

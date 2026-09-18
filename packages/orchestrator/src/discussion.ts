@@ -31,7 +31,14 @@ function isProgressComment(body: string): boolean {
 function shorten(body: string): string {
   if (body.length <= MAX_COMMENT_CHARS) return body
   const omitted = body.length - COMMENT_HEAD - COMMENT_TAIL
-  return `${body.slice(0, COMMENT_HEAD)}\n\n… (${omitted} characters omitted — the full comment is on the issue) …\n\n${body.slice(-COMMENT_TAIL)}`
+  const head = body.slice(0, COMMENT_HEAD)
+  const tail = body.slice(-COMMENT_TAIL)
+  // A cut inside a fenced block would leave a fence open, and an open fence
+  // swallows everything after it in the prompt — the task's own instructions
+  // included. Each half is closed on its own terms.
+  const open = (text: string): boolean => (text.match(/^```/gm) ?? []).length % 2 === 1
+  const note = `… (${omitted} characters omitted — the full comment is on the issue) …`
+  return `${head}${open(head) ? '\n```' : ''}\n\n${note}\n\n${open(tail) ? '```\n' : ''}${tail}`
 }
 
 function formatComment(comment: IssueComment): string {

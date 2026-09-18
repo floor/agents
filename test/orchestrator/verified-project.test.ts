@@ -148,12 +148,33 @@ test('size guardrails measure the change, not the files it touches', async () =>
 
   // …and a new file over the cap is still refused, with the numbers in the message.
   await Bun.write(join(worktree.path, 'generated.txt'), 'x'.repeat(company.guardrails.maxFileSizeBytes + 1))
-  await expect(validateWorktree(worktree, worktree.initialSha, company.guardrails)).rejects.toThrow(/generated\.txt is \d+ bytes, over maxFileSizeBytes/)
+  await expect(validateWorktree(worktree, worktree.initialSha, company.guardrails)).rejects.toThrow(/adds \d+ bytes to generated\.txt, over maxFileSizeBytes/)
   await rm(join(worktree.path, 'generated.txt'))
 
   // The total is the sum of the changes.
-  const tight = { ...company.guardrails, maxTotalOutputBytes: 50 }
-  await expect(validateWorktree(worktree, worktree.initialSha, tight)).rejects.toThrow(/across 1 files, over maxTotalOutputBytes \(50\)/)
+  // The total is the sum of what was added: that entry is 14 bytes.
+  const tight = { ...company.guardrails, maxTotalOutputBytes: 10 }
+  await expect(validateWorktree(worktree, worktree.initialSha, tight)).rejects.toThrow(/adds 14 bytes across 1 files, over maxTotalOutputBytes \(10\)/)
+})
+
+test('only what a change adds is measured: a deletion writes nothing, a rewrite is not counted twice', async () => {
+  // Both failed the day the patch measure shipped: deleting a 300 KB file was
+  // refused, and rewriting 70 KB of a file measured 154 KB (removed + added + context).
+  await Bun.write(join(root, 'generated.txt'), `${'g'.repeat(300_000)}\n`)
+  await Bun.write(join(root, 'big.md'), `${Array.from({ length: 4000 }, (_, i) => `line ${i} ${'x'.repeat(40)}`).join('\n')}\n`)
+  await gitText(root, ['add', '-A'])
+  await gitText(root, ['commit', '-m', 'large files'])
+  await gitText(root, ['push', 'origin', `HEAD:refs/heads/${branch}`, '--force'])
+  const worktree = await createWorktree(branch, root)
+
+  await rm(join(worktree.path, 'generated.txt'))
+  await validateWorktree(worktree, worktree.initialSha, company.guardrails)
+
+  const big = join(worktree.path, 'big.md')
+  await Bun.write(big, (await Bun.file(big).text()).split('\n').map((l, i) => i < 1500 ? l.replace('line', 'LINE') : l).join('\n'))
+  await validateWorktree(worktree, worktree.initialSha, company.guardrails)
+  // …measured as the ~77 KB it added: under the 100 KB cap, over an 80 KB total.
+  await expect(validateWorktree(worktree, worktree.initialSha, { ...company.guardrails, maxTotalOutputBytes: 60_000 })).rejects.toThrow(/adds 7\d{4} bytes across 2 files/)
 })
 
 test('blocked deletions, binary size, and symlinks fail actual-diff guardrails', async () => {

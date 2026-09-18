@@ -49,19 +49,27 @@ export async function runProjectCommand(cwd: string, check: ProjectCommand): Pro
 }
 
 /**
- * How much of `path` the change wrote, in bytes.
+ * How much the change wrote into `path`, in bytes: the lines it added.
  *
  * The size caps came from the API path, where an agent *outputs* whole files. A
  * native agent edits in place: a one-line entry in a 104 KB changelog is not a
  * 104 KB output, and summing whole files stopped finished work (vlist FLO-163,
- * FLO-185). So the measure is the patch — for a new file that is its content, so
- * a generated blob is still refused; a binary has no textual patch and counts
- * as its blob.
+ * FLO-185). Only added lines count — a patch also carries what was removed and
+ * three lines of context around each hunk, so measuring the whole patch refused
+ * the deletion of a large file and counted a rewrite twice (both measured the
+ * day the patch measure shipped). A new file is all additions, so a generated
+ * blob is still refused; a binary has no textual patch and counts as its blob.
  */
 async function changedBytes(worktree: Worktree, baseSha: string, tree: string, path: string, blob: string | undefined): Promise<number> {
+  if (!blob) return 0 // deleted: nothing was written
   const numstat = await gitText(worktree.path, ['diff', '--numstat', '--no-renames', baseSha, tree, '--', path])
-  if (numstat.startsWith('-\t-\t')) return blob ? Number(await gitText(worktree.path, ['cat-file', '-s', blob])) : 0
-  return Buffer.byteLength(await gitText(worktree.path, ['diff', '--no-renames', '--no-color', baseSha, tree, '--', path]))
+  if (numstat.startsWith('-\t-\t')) return Number(await gitText(worktree.path, ['cat-file', '-s', blob]))
+  const patch = await gitText(worktree.path, ['diff', '--no-renames', '--no-color', '--unified=0', baseSha, tree, '--', path])
+  let bytes = 0
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('+') && !line.startsWith('+++ ')) bytes += Buffer.byteLength(line) // the '+' stands for the newline
+  }
+  return bytes
 }
 
 /** Validate cumulative changes, including deletions, modes and agent commits. */
@@ -77,13 +85,13 @@ export async function validateWorktree(worktree: Worktree, baseSha: string, guar
     const object = entry.match(/^\d+ blob ([a-f0-9]+)\t/)
     const size = await changedBytes(worktree, baseSha, tree, path, object?.[1])
     if (size > guardrails.maxFileSizeBytes) {
-      throw new Error(`Guardrail: the change to ${path} is ${size} bytes, over maxFileSizeBytes (${guardrails.maxFileSizeBytes})`)
+      throw new Error(`Guardrail: the change adds ${size} bytes to ${path}, over maxFileSizeBytes (${guardrails.maxFileSizeBytes})`)
     }
     total += size
     files.push({ path, content: '' })
   }
   if (total > guardrails.maxTotalOutputBytes) {
-    throw new Error(`Guardrail: the change is ${total} bytes across ${paths.length} files, over maxTotalOutputBytes (${guardrails.maxTotalOutputBytes})`)
+    throw new Error(`Guardrail: the change adds ${total} bytes across ${paths.length} files, over maxTotalOutputBytes (${guardrails.maxTotalOutputBytes})`)
   }
   const violations = validateAgentOutput({ files, rawResponse: '', prDescription: '', parseErrors: [] }, guardrails)
   if (violations.length) throw new Error(`Guardrails failed:\n${violations.map(v => v.detail).join('\n')}`)

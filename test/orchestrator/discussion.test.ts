@@ -93,6 +93,16 @@ describe('discussionSection', () => {
     expect(section.length).toBeLessThan(5_000)
   })
 
+  test('a comment cut inside a code fence leaves no fence open — an open fence swallows the rest of the prompt', () => {
+    const opensInHead = 'Apply this:\n```diff\n' + '+ line\n'.repeat(2_000) + '```\n' + 'Then run the gate. '.repeat(80)
+    const closesInTail = 'Context. '.repeat(500) + '\n```ts\n' + 'const x = 1\n'.repeat(60) + '```\nDone.'
+    for (const body of [opensInHead, closesInTail]) {
+      const section = discussionSection([comment({ author: 'coordinator', body, createdAt: new Date('2026-09-18T10:00:00Z') })])
+      expect((section.match(/^```/gm) ?? []).length % 2).toBe(0)
+      expect(section).toContain('characters omitted')
+    }
+  })
+
   test('an old oversized comment and a new short one: the short one is intact', () => {
     const section = discussionSection([
       comment({ author: 'earlier', body: 'o'.repeat(50_000), createdAt: new Date('2026-09-17T00:00:00Z') }),

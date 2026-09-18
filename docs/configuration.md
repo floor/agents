@@ -155,9 +155,9 @@ guardrails:
 ```
 
 **What the size caps measure.** On the native path (an agent CLI editing a worktree) the two
-size caps measure *the change*, not the files it touches: for each changed file, the byte size of
-its patch against the base — for a new file that is its content, so a generated blob is still
-refused, and a binary counts as its blob. A one-line entry in a 104 KB changelog is a few dozen
+size caps measure *what the change adds*, not the files it touches: for each changed file, the
+bytes of the lines it added against the base — a new file is all additions, so a generated blob is
+still refused; a deletion writes nothing; a binary counts as its blob. A one-line entry in a 104 KB changelog is a few dozen
 bytes. On the API path, where an agent outputs whole files, they measure those files. The error
 names the file and both numbers.
 

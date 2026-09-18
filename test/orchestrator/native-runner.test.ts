@@ -2,7 +2,7 @@ import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import { mkdtemp, mkdir, rm, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { NATIVE_PROVIDERS, DEFAULT_TURN_TIMEOUT_MS, DEFAULT_MAX_TURNS, turnTimeoutMs, failureReason, nativeAgentArgv, parseNativeResult, spawnNativeAgent } from '../../packages/orchestrator/src/native-runner.ts'
+import { NATIVE_PROVIDERS, DEFAULT_TURN_TIMEOUT_MS, DEFAULT_MAX_TURNS, turnTimeoutMs, failureReason, nativeAgentArgv, nativeImplementerInstructions, parseNativeResult, spawnNativeAgent } from '../../packages/orchestrator/src/native-runner.ts'
 import { sandboxAvailable } from '../helpers/sandbox.ts'
 
 describe('nativeAgentArgv', () => {
@@ -173,6 +173,17 @@ describe.skipIf(!sandboxAvailable())('spawnNativeAgent under sandbox-exec', () =
       delete process.env.FLOOR_TEST_PRIVATE
       delete process.env.FLOOR_TEST_LEAK
     }
+  })
+})
+
+describe('nativeImplementerInstructions', () => {
+  test('never names API-path tools, and tells the agent to edit the tree instead of printing it', () => {
+    const text = nativeImplementerInstructions([{ command: ['bun', 'test'] }]).join('\n')
+    expect(text).not.toContain('write_file')
+    expect(text).not.toContain('pr_description')
+    expect(text).toContain('Do not commit, push, or open a PR')
+    expect(text).toContain('own editing tools')
+    expect(text).toContain('The engine reads the working tree, not your message')
   })
 })
 

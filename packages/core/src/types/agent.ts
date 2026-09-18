@@ -44,4 +44,10 @@ export type AgentDefinition = {
    */
   readonly maxTurns?: number
   readonly external?: boolean
+  /**
+   * External only: vote by posting on the issue instead of a CLI bridge.
+   * Absent or false means the engine starts the agent's bridge (or abstains
+   * immediately if that fails). Comment polling is never the default.
+   */
+  readonly voteByComment?: boolean
 }

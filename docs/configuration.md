@@ -102,6 +102,7 @@ agents:
     maxTurns: 500                    # Tool calls one turn may make (claude-code; default 300 implementing, 60 reviewing)
     customInstructions: ""           # Per-agent instructions appended to prompt
     external: false                  # If true, agent connects via gateway WebSocket
+    voteByComment: false             # External only: vote by posting on the issue, not a CLI bridge
 ```
 
 **Available capabilities:** `read_code`, `write_code`, `create_pr`, `review_pr`, `write_tests`, `decompose_task`, `manage_issues`, `approve`, `reject`, `vote`, `review_rfc`
@@ -201,6 +202,8 @@ When committee PR review runs, each member with `vote` reads the PR diff (`getPR
 - **no decision** — fewer than two members returned a vote (timeouts and errors abstain). The issue is left `in_review` for a person; there is no verdict
 
 A member that times out or errors abstains and says so on the PR. Two answering votes are enough to decide, so one abstention in a four-member committee does not block a result.
+
+**`run --issue` and external voters.** Committee PR review seats external members the same way `scripts/committee-run.ts` seats them for an RFC: if no gateway is already running, one is started for the review; each external voter that is not `voteByComment: true` gets its CLI bridge (`scripts/lib/bridges.ts`) for the duration of the vote; the bridges (and a gateway this review started) are stopped afterwards. `watch` reuses its long-lived gateway and still spawns the bridges per review. A bridge that cannot start (CLI missing, login expired, unknown provider) abstains immediately with that reason on the PR — it never falls through to a five-minute comment poll. Comment polling remains only for members explicitly set `voteByComment: true`.
 
 ### `sources`
 

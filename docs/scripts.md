@@ -24,7 +24,7 @@ Runnable helpers in `scripts/`. They are not part of any package — run them di
 | `grok-cli` | `grok-agent.ts` (xAI's CLI) | optional, as `GROK_MODEL` |
 | `antigravity` | `agy-agent-bridge.ts` | required, e.g. `gemini-3.1-pro-high` |
 
-Manifests that still name a vendor (`openai`, `gemini`) for `codex`, `grok` or `antigravity` resolve by agent id. Any other provider on an external agent stops the run before a process starts.
+Manifests that still name a vendor (`openai`, `gemini`) for `codex`, `grok` or `antigravity` resolve by agent id. Any other provider on an external agent is a failed start for that member (the rest of the committee still runs).
 
 ---
 

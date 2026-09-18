@@ -12,6 +12,7 @@ import { resolveAgent } from './dispatcher.ts'
 import { executeTask } from './pipeline.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import { committeePrReviewEnabled, committeeVoters } from './committee-pr-review.ts'
+import type { ExternalVoterHost } from './committee-pipeline.ts'
 
 export type OrchestratorConfig = {
   readonly company: CompanyConfig
@@ -25,6 +26,8 @@ export type OrchestratorConfig = {
   readonly labels?: readonly string[]
   /** Shared with committee PR review so external voters can take part. */
   readonly gateway?: Gateway
+  /** Starts CLI bridges for external voters when a PR is reviewed. */
+  readonly externalVoters?: ExternalVoterHost
 }
 
 export type Orchestrator = {
@@ -61,6 +64,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     getAdapter: getLLMAdapter,
     findReviewer,
     ...(config.gateway ? { gateway: config.gateway } : {}),
+    ...(config.externalVoters ? { externalVoters: config.externalVoters } : {}),
   }
 
   return {

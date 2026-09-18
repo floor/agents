@@ -11,7 +11,7 @@ import type {
 } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
 import type { Gateway, TaskResult } from '@floor-agents/gateway'
-import { executeCommitteeReview, type CommitteePipelineDeps } from '@floor-agents/orchestrator'
+import { executeCommitteeReview, type CommitteePipelineDeps, type ExternalVoterHost } from '@floor-agents/orchestrator'
 import { createCostTracker } from '@floor-agents/orchestrator'
 
 // ── Mock helpers ────────────────────────────────────────────────────
@@ -29,7 +29,7 @@ function makeIssue(overrides?: Partial<Issue>): Issue {
   }
 }
 
-function makeAgent(id: string, provider: string = 'anthropic', external: boolean = false): AgentDefinition {
+function makeAgent(id: string, provider: string = 'anthropic', external: boolean = false, voteByComment = false): AgentDefinition {
   return {
     id,
     name: `Agent ${id}`,
@@ -39,6 +39,7 @@ function makeAgent(id: string, provider: string = 'anthropic', external: boolean
     autonomy: 'T1',
     customInstructions: '',
     external,
+    ...(voteByComment ? { voteByComment: true } : {}),
   }
 }
 
@@ -502,7 +503,7 @@ describe('external agents', () => {
       taskAdapter,
       externalAgents: { pollIntervalMs: 30, timeoutMs: 2000 },
     })
-    const agents = [makeAgent('claude'), makeAgent('codex', 'external', true)]
+    const agents = [makeAgent('claude'), makeAgent('codex', 'external', true, true)]
 
     const result = await executeCommitteeReview(makeIssue(), agents, deps)
 
@@ -512,16 +513,36 @@ describe('external agents', () => {
     expect(result.outcome).toBe('approved')
   })
 
-  test('external agent times out → abstain', async () => {
+  test('voteByComment agent times out → abstain', async () => {
     const deps = makeDeps('VOTE: APPROVE', {
       externalAgents: { pollIntervalMs: 30, timeoutMs: 100 },
     })
-    const agents = [makeAgent('claude'), makeAgent('codex', 'external', true)]
+    const agents = [makeAgent('claude'), makeAgent('codex', 'external', true, true)]
 
     const result = await executeCommitteeReview(makeIssue(), agents, deps)
 
     expect(result.votes.find(v => v.agentId === 'codex')!.vote).toBe('abstain')
     expect(result.votes.find(v => v.agentId === 'codex')!.summary).toContain('timed out')
+  })
+
+  test('without a bridge host, an external voter abstains immediately instead of polling', async () => {
+    const taskAdapter = mockTaskAdapter()
+    let polls = 0
+    taskAdapter.getComments = async () => {
+      polls++
+      return []
+    }
+    const deps = makeDeps('VOTE: APPROVE', {
+      taskAdapter,
+      externalAgents: { pollIntervalMs: 30, timeoutMs: 2000 },
+    })
+    const started = Date.now()
+    const result = await executeCommitteeReview(makeIssue(), [makeAgent('claude'), makeAgent('codex', 'external', true)], deps)
+
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(polls).toBe(0)
+    expect(result.votes.find(v => v.agentId === 'codex')!.vote).toBe('abstain')
+    expect(result.votes.find(v => v.agentId === 'codex')!.summary).toContain('No gateway')
   })
 
   test('mixed internal + external agents tally correctly', async () => {
@@ -548,7 +569,7 @@ describe('external agents', () => {
     const agents = [
       makeAgent('claude'),
       makeAgent('gemma', 'lmstudio'),
-      makeAgent('codex', 'external', true),
+      makeAgent('codex', 'external', true, true),
     ]
 
     const result = await executeCommitteeReview(makeIssue(), agents, deps)
@@ -624,5 +645,79 @@ describe('gateway dispatch', () => {
     expect(codexVote.vote).toBe('approve')
     expect(codexVote.summary).not.toContain('timed out')
     expect(result.outcome).toBe('approved')
+  })
+})
+
+describe('external voter bridges', () => {
+  test('a host that starts a bridge delivers the vote and is stopped after', async () => {
+    const trace = { started: 0, stopped: 0 }
+    let resolvePending: ((result: TaskResult) => void) | undefined
+    const gateway: Gateway = {
+      start() {},
+      stop() {},
+      assign(_agentId, task) {
+        resolvePending?.({
+          taskId: task.id,
+          agentId: _agentId,
+          content: 'Reviewed via bridge. VOTE: APPROVE',
+          receivedAt: new Date(),
+        })
+      },
+      waitForResult() {
+        return new Promise<TaskResult>(resolve => { resolvePending = resolve })
+      },
+      getConnectedAgents() { return [] },
+      isAgentConnected() { return true },
+      onAgentConnect() {},
+      onAgentDisconnect() {},
+    }
+    const host: ExternalVoterHost = {
+      async start(agents) {
+        trace.started++
+        return {
+          gateway,
+          started: new Map(agents.map(a => [a.id, { ok: true as const }])),
+          stop() { trace.stopped++ },
+        }
+      },
+    }
+
+    const deps = makeDeps('VOTE: APPROVE', { externalVoters: host, externalAgents: { timeoutMs: 1000 } })
+    const result = await executeCommitteeReview(makeIssue(), [makeAgent('claude'), makeAgent('codex', 'codex-cli', true)], deps)
+
+    expect(trace.started).toBe(1)
+    expect(trace.stopped).toBe(1)
+    expect(result.votes.find(v => v.agentId === 'codex')!.vote).toBe('approve')
+    expect(result.outcome).toBe('approved')
+  })
+
+  test('a bridge that fails to start abstains immediately and is still stopped', async () => {
+    const trace = { started: 0, stopped: 0 }
+    const taskAdapter = mockTaskAdapter()
+    let polls = 0
+    taskAdapter.getComments = async () => {
+      polls++
+      return []
+    }
+    const host: ExternalVoterHost = {
+      async start(agents) {
+        trace.started++
+        return {
+          started: new Map(agents.map(a => [a.id, { ok: false as const, reason: 'cursor-agent not found' }])),
+          stop() { trace.stopped++ },
+        }
+      },
+    }
+
+    const started = Date.now()
+    const deps = makeDeps('VOTE: APPROVE', { taskAdapter, externalVoters: host, externalAgents: { pollIntervalMs: 30, timeoutMs: 2000 } })
+    const result = await executeCommitteeReview(makeIssue(), [makeAgent('claude'), makeAgent('codex', 'codex-cli', true)], deps)
+
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(polls).toBe(0)
+    expect(trace.stopped).toBe(1)
+    const codex = result.votes.find(v => v.agentId === 'codex')!
+    expect(codex.vote).toBe('abstain')
+    expect(codex.summary).toContain('cursor-agent not found')
   })
 })

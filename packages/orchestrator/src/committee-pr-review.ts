@@ -43,6 +43,7 @@ export type CommitteePrReviewDeps = {
   readonly getAdapter: CommitteePipelineDeps['getAdapter']
   readonly gateway?: Gateway
   readonly externalAgents?: CommitteePipelineDeps['externalAgents']
+  readonly externalVoters?: CommitteePipelineDeps['externalVoters']
 }
 
 export function committeeVoters(agents: readonly AgentDefinition[]): AgentDefinition[] {
@@ -167,6 +168,7 @@ export async function executeCommitteePrReview(
     getAdapter: deps.getAdapter,
     ...(deps.gateway ? { gateway: deps.gateway } : {}),
     ...(deps.externalAgents ? { externalAgents: deps.externalAgents } : {}),
+    ...(deps.externalVoters ? { externalVoters: deps.externalVoters } : {}),
   }, { userMessage, assignmentBody: userMessage })
 
   const { outcome, reviewComments } = tallyCommitteePrReview(votes)

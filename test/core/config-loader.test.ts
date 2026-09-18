@@ -93,3 +93,18 @@ review:
   expect(validateCompanyConfig(await loadCompanyConfig(path))).toContain('review.committee is true but no agent has the vote capability')
   await (await import('node:fs/promises')).rm(dir, { recursive: true, force: true })
 })
+
+test('an external agent may opt into voting by comment', async () => {
+  const dir = await (await import('node:fs/promises')).mkdtemp((await import('node:path')).join((await import('node:os')).tmpdir(), 'floor-vote-comment-'))
+  const { join } = await import('node:path')
+  const path = join(dir, 'agents.yaml')
+  await Bun.write(path, `
+name: t
+project: { name: t, repo: t }
+agents:
+  - { id: codex, name: Codex, promptTemplate: c.md, llm: { provider: codex-cli, model: m }, capabilities: [vote], external: true, voteByComment: true }
+`)
+  const config = await loadCompanyConfig(path)
+  expect(config.agents[0]?.voteByComment).toBe(true)
+  await (await import('node:fs/promises')).rm(dir, { recursive: true, force: true })
+})

@@ -31,6 +31,7 @@ agents:
 | `capabilities` | what the agent does (below) |
 | `promptTemplate` | path to its prompt file (its persona) |
 | `external` | `true` = runs via the [gateway](./gateway.md); `false`/omitted = in-process LLM adapter |
+| `voteByComment` | external only: vote by posting on the issue instead of a CLI bridge |
 | `customInstructions` | extra instructions appended to the persona |
 
 ## Capabilities

@@ -37,6 +37,7 @@ function parseAgents(raw: unknown[]): AgentDefinition[] {
     ...(a.timeoutMs !== undefined ? { timeoutMs: a.timeoutMs } : {}),
     ...(a.maxTurns !== undefined ? { maxTurns: a.maxTurns } : {}),
     external: a.external ?? false,
+    ...(a.voteByComment ? { voteByComment: true as const } : {}),
   }))
 }
 

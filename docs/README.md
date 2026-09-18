@@ -14,6 +14,7 @@ orchestrates agents, or embed the engine in your own Bun app.
 - [CLI](./cli.md) — the `floor-agents` binary: flags, env vars, modes, trigger tags
 - [Scripts](./scripts.md) — committee runner + gateway bridges (`scripts/`) reference
 - [The Run Path](./run-path.md) — `run --issue` step by step: what each step writes, how it fails, what failing costs; the working map for polishing the engine
+- [The Polish Sprint](./polish-sprint.md) — the record since 2026-09-18: why product work stopped, every engine change and what found it, the measurements, the owner's direction (service, console, coordinator authority), the order of work, what is parked, and where knowledge lives
 - [Orchestrator Agent](./orchestrator-agent.md) — the LLM conductor: tool surface, the five guardrails, what is wired
 - [Known Issues](./known-issues.md) — tracked issues and their resolution status
 - [Next Steps](./next-steps.md) — prioritized roadmap after three sprints of dogfooding
@@ -45,6 +46,7 @@ Each package has its own documentation:
 - [Zero-Cost Committee](./guides/zero-cost-committee.md) — Claude Code + Gemma + Codex for $0/review
 - [Committee Mode](./guides/committee.md) — multi-agent proposal review with parallel voting
 - [Local Committee](./guides/local-committee.md) — Claude Code + Codex + Grok, event-driven, no cloud keys
+- [Coordinating a Team](./guides/coordinator.md) — the coordinator role's working rules, each with the mistake that taught it
 - [Agent Sandbox](./guides/sandbox.md) — why agent CLIs are contained by the OS, what is and is not covered
 - [Agent Gateway](./gateway.md) — WebSocket protocol, REST fallback, building custom agents
 - [Adding an LLM Provider](./guides/adding-llm-provider.md)
@@ -58,3 +60,4 @@ Each package has its own documentation:
 - [2026-04-08: Third Sprint](./experiments/2026-04-08-third-sprint.md) — 5 complex issues, 2 timeouts, architectural lessons learned
 - [2026-04-08: Fourth Sprint](./experiments/2026-04-08-fourth-sprint.md) — native worktree execution, editing works, push pending
 - [2026-09-18: First Self-Hosted Day](./experiments/2026-09-18-first-self-hosted-day.md) — three projects on Linear, a four-seat committee, one product PR in four hours: what the engine cost and why
+- [2026-09-18: Two Benchmarks on Real Tasks](./experiments/2026-09-18-benchmarks.md) — label to verified PR in 8–10 minutes; never to an approved one: the revision loop is the cost now

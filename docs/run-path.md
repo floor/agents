@@ -102,13 +102,25 @@ polling with backoff (FLO-174), agents posting under their own names (FLO-189).
 
 ## 4. An order of work
 
-1. ~~**Warm-ups, independent of the shape:** FLO-188 (forced fetch), FLO-201 (diff-based
-   guardrails), FLO-186 (last vote marker), FLO-184 (truncate, never erase).~~ Done, 2026-09-18.
-2. **The attempt record** (idea 1) — the state type, the store, `--retry` on top of it, and the
-   two commands it makes trivial: `verify` and `--continue`.
-3. **Typed outcomes** (idea 2) — starting with `verifyAndCommit`, because the gate is where the
-   day was lost; the fix turn falls out of it. Grok's #73 has useful tests to keep.
-4. **Continuing turns** (idea 3) — prompt, warm worktree, session resume, `--add-dir`.
-5. **Review** (idea 4).
-6. **Unattended:** slots, shutdown, polling, the record on Linear, then the pm2 watchers and the
-   exit test — ten small real issues, label to approved PR in 25 minutes, nine times out of ten.
+The full record — every change, what found it, the measurements and what is parked — is in
+[The Polish Sprint](./polish-sprint.md). The order, revised after
+[two benchmarks on real tasks](./experiments/2026-09-18-benchmarks.md) showed that the first pass
+is solved for small tasks and the revision loop is now the cost:
+
+1. ~~**Warm-ups:** FLO-188 (forced fetch), FLO-201 (diff-based guardrails), FLO-186 (last vote
+   marker), FLO-184 (truncate, never erase).~~ Done.
+2. ~~**The attempt record** (idea 1): the state type, `--retry` on top of it, `status`,
+   `verify`.~~ Done; `--continue` (FLO-187) and `clean` remain.
+3. ~~**A gate and a review that tell the truth:** a clean export, outputs that keep their end, a
+   failed seat named as one, a free port per review, `review --issue`, reviewers who read the
+   discussion.~~ Done.
+4. **Service safety:** a clean shutdown and restart (FLO-182), machine slots (FLO-196), then the
+   pm2 watcher on one project, triggered by label.
+5. **Typed outcomes** (idea 2) — starting with `verifyAndCommit`; the fix turn falls out of it,
+   and so does ending a review loop early when a blocker repeats unchanged. Grok's #73 has useful
+   tests to keep.
+6. **Continuing turns** (idea 3) — prompt, warm worktree, session resume, `--add-dir`.
+7. **Review** (idea 4), with a third seat.
+8. **Unattended:** polling, the record on Linear, identities; then the admin console, read-only
+   first; then the exit test — ten small real issues, label to approved PR in 25 minutes, nine
+   times out of ten.

@@ -1,6 +1,8 @@
 import type { CommandResult, GuardrailsConfig, ProjectCommand, VerificationResult } from '@floor-agents/core'
 import { validateAgentOutput } from './guardrails.ts'
 import { gitText, snapshotWorktree, type Worktree } from './worktree.ts'
+import { mkdtemp } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { projectCommandSandbox, sandboxed } from '@floor-agents/sandbox'
 
 const OUTPUT_LIMIT = 32_768
@@ -113,19 +115,74 @@ export async function validateWorktree(worktree: Worktree, baseSha: string, guar
   if (violations.length) throw new Error(`Guardrails failed:\n${violations.map(v => v.detail).join('\n')}`)
 }
 
-export async function verifyWorktree(worktree: Worktree, commands: readonly ProjectCommand[]): Promise<VerificationResult> {
+/**
+ * A clean checkout of exactly `treeSha`, beside the agent's worktree.
+ *
+ * The gate used to run in the agent's own worktree, where everything the turn
+ * left behind is still lying around — ignored files, caches, a generated
+ * artefact. Measured: a check that passed only because of an ignored
+ * `cache/answer.json` was reported green, and the commit it "verified" did not
+ * contain that file. What is published is a tree, so the tree is what is
+ * checked: nothing the commit will not carry can help it pass.
+ */
+async function exportTree(worktree: Worktree, treeSha: string): Promise<{ readonly path: string; remove(): Promise<void> }> {
+  const commit = await gitText(worktree.path, ['commit-tree', treeSha, '-p', worktree.initialSha, '-m', 'gate: the tree under verification'])
+  const path = await mkdtemp(join(dirname(worktree.path), 'gate-'))
+  await gitText(worktree.path, ['worktree', 'add', '--detach', path, commit])
+  return {
+    path,
+    async remove() {
+      try {
+        await gitText(worktree.path, ['worktree', 'remove', '--force', path])
+      } catch (err) {
+        console.error(`[verify] failed to remove the gate export ${path}:`, err)
+      }
+    },
+  }
+}
+
+/**
+ * Run the gate on a clean export of the worktree's current tree.
+ *
+ * `setup` runs in the export first — it has no `node_modules` of its own — and a
+ * setup that fails is a gate that fails, reported like any check. The export is
+ * removed whatever happens; what a failing check printed is in the result.
+ */
+export async function verifyWorktree(
+  worktree: Worktree, commands: readonly ProjectCommand[], setup: readonly ProjectCommand[] = [],
+): Promise<VerificationResult> {
   if (!commands.length) throw new Error('project.verification must define at least one check')
   const treeSha = await snapshotWorktree(worktree)
+  const gate = await exportTree(worktree, treeSha)
   const checks: CommandResult[] = []
-  for (const command of commands) {
-    console.log(`[verify] ${command.name}: ${command.command.join(' ')}`)
-    const result = await runProjectCommand(worktree.path, command)
-    checks.push(result)
-    if (result.exitCode !== 0 || result.timedOut) break
+  let setupFailed = false
+  let unchanged = true
+  try {
+    for (const command of setup) {
+      console.log(`[verify] setup — ${command.name}`)
+      const result = await runProjectCommand(gate.path, command)
+      if (result.exitCode !== 0 || result.timedOut) {
+        checks.push({ ...result, name: `Setup: ${command.name}` })
+        setupFailed = true
+        break
+      }
+    }
+    if (!setupFailed) {
+      for (const command of commands) {
+        console.log(`[verify] ${command.name}: ${command.command.join(' ')}`)
+        const result = await runProjectCommand(gate.path, command)
+        checks.push(result)
+        if (result.exitCode !== 0 || result.timedOut) break
+      }
+    }
+    // A check that rewrites tracked files verified something other than the tree it was given.
+    await gitText(gate.path, ['add', '-A'])
+    unchanged = treeSha === await gitText(gate.path, ['write-tree'])
+  } finally {
+    await gate.remove()
   }
-  const unchanged = treeSha === await snapshotWorktree(worktree)
   return {
-    passed: unchanged && checks.length === commands.length && checks.every(c => c.exitCode === 0 && !c.timedOut),
+    passed: unchanged && !setupFailed && checks.length === commands.length && checks.every(c => c.exitCode === 0 && !c.timedOut),
     treeSha,
     checkedAt: new Date().toISOString(),
     checks,

@@ -23,6 +23,8 @@ export type Issue = {
   readonly parentId?: string
   /** Where the task lives, when the task source has one (a GitHub issue URL). */
   readonly url?: string
+  /** The key a person uses for it, when it differs from the id (a Linear identifier such as FLO-25). */
+  readonly key?: string
   readonly createdAt: Date
   readonly updatedAt: Date
 }

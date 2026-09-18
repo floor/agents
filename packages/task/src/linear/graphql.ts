@@ -34,6 +34,9 @@ async function gql(config: LinearAdapterConfig, query: string, variables?: Recor
 
 export type LinearIssue = {
   readonly id: string
+  /** The human key, FLO-25. */
+  readonly identifier: string
+  readonly url: string
   readonly title: string
   readonly description: string | null
   readonly state: { readonly name: string; readonly type: string }
@@ -45,6 +48,8 @@ export type LinearIssue = {
 
 const ISSUE_FIELDS = `
   id
+  identifier
+  url
   title
   description
   state { name type }

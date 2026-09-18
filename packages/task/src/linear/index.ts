@@ -34,6 +34,10 @@ function stateTypeToStatus(type: string): IssueStatus {
 function linearToIssue(li: LinearIssue): Issue {
   return {
     id: li.id,
+    // The key a person uses (FLO-25) and the page it lives on. A PR references
+    // the key; the page stays private, so a public PR never carries the body.
+    key: li.identifier,
+    url: li.url,
     title: li.title,
     body: li.description ?? '',
     status: stateTypeToStatus(li.state.type),

@@ -190,11 +190,16 @@ export async function startExternalVoters(
 ): Promise<ExternalVoterSession> {
   const toStart = agents.filter(needsBridge)
   const ownedGateway = !opts.gateway
+  // A gateway this review starts is its own: any free port. Two `run`s at once
+  // both asked for the configured port, and the second review lost its external
+  // seats ("Is port 3100 in use?" — mtrl #92). The configured port is for the
+  // long-lived gateway of `watch`, which people and other tools connect to.
   const gateway = opts.gateway ?? (opts.createGateway ?? createGateway)({
-    port: opts.port,
+    port: 0,
     ...(process.env.GATEWAY_TOKEN ? { token: process.env.GATEWAY_TOKEN } : {}),
   })
   if (ownedGateway) gateway.start()
+  const port = gateway.getPort?.() ?? opts.port
 
   const started = new Map<string, ExternalVoterStart>()
   const live: SpawnedBridge[] = []
@@ -214,7 +219,7 @@ export async function startExternalVoters(
 
     let proc: SpawnedBridge
     try {
-      proc = spawn(plan.script, { ...process.env, GATEWAY_URL: `ws://localhost:${opts.port}`, ...plan.env })
+      proc = spawn(plan.script, { ...process.env, GATEWAY_URL: `ws://localhost:${port}`, ...plan.env })
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       opts.log(`${agent.id} via ${plan.script}: ${reason}`)

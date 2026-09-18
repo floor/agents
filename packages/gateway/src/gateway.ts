@@ -17,6 +17,8 @@ export type GatewayConfig = {
 export type Gateway = {
   start(): void
   stop(): void
+  /** The port actually bound — what a gateway started on port 0 was given. Undefined before `start()`. */
+  getPort?(): number | undefined
   assign(agentId: string, task: TaskAssignment): void
   waitForResult(taskId: string, timeoutMs?: number): Promise<TaskResult>
   getConnectedAgents(): readonly ConnectedAgent[]
@@ -176,7 +178,7 @@ export function createGateway(config: GatewayConfig): Gateway {
   }
 
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null
-  let server: { stop(): void } | null = null
+  let server: { stop(): void; readonly port?: number } | null = null
 
   return {
     start() {
@@ -269,8 +271,12 @@ export function createGateway(config: GatewayConfig): Gateway {
         }
       }, config.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_MS)
 
-      console.log(`[gateway] listening on ws://localhost:${config.port}/ws`)
-      console.log(`[gateway] REST fallback on http://localhost:${config.port}/api/`)
+      console.log(`[gateway] listening on ws://localhost:${server.port ?? config.port}/ws`)
+      console.log(`[gateway] REST fallback on http://localhost:${server.port ?? config.port}/api/`)
+    },
+
+    getPort() {
+      return server?.port
     },
 
     stop() {

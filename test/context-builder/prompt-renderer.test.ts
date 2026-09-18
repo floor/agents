@@ -35,7 +35,7 @@ const templates = {
 } as const
 
 describe('withoutApiToolInstructions', () => {
-  test('drops API-path tool lines and the full-file-contents rule, keeps the rest', () => {
+  test('drops API-path tool bullets and the full-file-contents rule, keeps the rest', () => {
     const cleaned = withoutApiToolInstructions([
       '## Rules',
       '',
@@ -49,6 +49,39 @@ describe('withoutApiToolInstructions', () => {
     expect(cleaned).not.toContain('FULL file contents')
     expect(cleaned).toContain('Do not modify files outside the scope of the task')
     expect(cleaned).toContain('## Rules')
+  })
+
+  test('drops the shipped QA and PM tool bullets without touching neighbouring rules', async () => {
+    const qa = withoutApiToolInstructions(await Bun.file(join(process.cwd(), 'agents/qa.md')).text())
+    expect(qa).not.toContain('write_file')
+    expect(qa).not.toContain('pr_description')
+    expect(qa).not.toContain('FULL file contents')
+    expect(qa).toContain('Do not modify source code')
+
+    const pm = withoutApiToolInstructions(await Bun.file(join(process.cwd(), 'agents/pm.md')).text())
+    expect(pm).not.toContain('write_file')
+    expect(pm).not.toContain('pr_description')
+    expect(pm).toContain('Do not write code')
+  })
+
+  test('preserves unrelated instructions that mention the same words', () => {
+    const cleaned = withoutApiToolInstructions([
+      '## Rules',
+      '- Use the `write_file` tool for each file you create or modify',
+      '- Use the `pr_description` tool once to describe your changes',
+      '- Provide FULL file contents for every file you modify, not diffs',
+      '- Document write_file in the adapter guide when adding a provider',
+      '- Mention pr_description in the architecture overview',
+      '- Never print FULL file contents in a status comment',
+      '- Do not modify files outside the scope of the task',
+    ].join('\n'))
+    expect(cleaned).not.toContain('Use the `write_file` tool')
+    expect(cleaned).not.toContain('Use the `pr_description` tool')
+    expect(cleaned).not.toContain('Provide FULL file contents')
+    expect(cleaned).toContain('Document write_file in the adapter guide when adding a provider')
+    expect(cleaned).toContain('Mention pr_description in the architecture overview')
+    expect(cleaned).toContain('Never print FULL file contents in a status comment')
+    expect(cleaned).toContain('Do not modify files outside the scope of the task')
   })
 })
 

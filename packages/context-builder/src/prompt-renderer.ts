@@ -11,16 +11,24 @@ const DEFAULT_MAX_CONTEXT_TOKENS = 100_000
 const RESERVED_OUTPUT_TOKENS = 4_000
 
 /**
- * Drop API-path tool instructions from a role template.
+ * Role-template bullets that tell an API-path agent how to emit files.
  *
  * Native CLIs edit the working tree with their own tools. Naming `write_file`
  * (agy's file tool) or asking for "FULL file contents" made Gemini print the
- * files and write nothing (mtrl FLO-102).
+ * files and write nothing (mtrl FLO-102). Only these instruction bullets are
+ * dropped — a line that mentions the same words in another instruction is kept.
+ */
+const API_TOOL_INSTRUCTION =
+  /^\s*[-*]\s+(?:Use the `(?:write_file|pr_description)` tool\b|Provide FULL file contents\b)/
+
+/**
+ * Drop the API-path tool bullets from a role template. Unrelated lines are
+ * preserved even when they happen to mention the same tool names.
  */
 export function withoutApiToolInstructions(text: string): string {
   return text
     .split('\n')
-    .filter(line => !/write_file|pr_description|FULL file contents?/i.test(line))
+    .filter(line => !API_TOOL_INSTRUCTION.test(line))
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
 }
@@ -32,8 +40,8 @@ export async function renderPrompt(params: {
   files: readonly SelectedFile[]
   maxContextTokens?: number
   /**
-   * Native implementer: omit the API Output section and those lines from the
-   * role template. API agents keep both.
+   * Native implementer: omit the API Output section and the matching
+   * role-template bullets. API agents keep both.
    */
   native?: boolean
 }): Promise<PromptParts> {

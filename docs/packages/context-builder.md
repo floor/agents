@@ -72,7 +72,7 @@ The system prompt is assembled in sections:
 3. **Directory tree** — repo structure overview
 4. **Relevant files** — source files selected by the file selector
 5. **Custom instructions** — from project config and agent config
-6. **Output instructions** — for API agents, tells them to use `write_file` and `pr_description`. Native implementers (`build({ native: true })`) omit this section and those lines from the role template: the CLI edits the working tree with its own tools, and naming `write_file` made Antigravity/Gemini print files and write nothing (mtrl FLO-102).
+6. **Output instructions** — for API agents, tells them to use `write_file` and `pr_description`. Native implementers (`build({ native: true })`) omit this section and the matching role-template bullets (`Use the \`write_file\`/\`pr_description\` tool`, `Provide FULL file contents`). Other role-template lines are kept even if they mention those words. The CLI edits the working tree with its own tools, and naming `write_file` as a tool to use (or not use) made Antigravity/Gemini print files and write nothing (mtrl FLO-102).
 
 ### Token Budget
 

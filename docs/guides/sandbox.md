@@ -111,9 +111,9 @@ Measured live with the native runner and `cursor-grok-4.6-high` in a worktree: i
 
 ## Verifying
 
-Two enforcement tests run on macOS and are skipped elsewhere, both around a temporary home directory so nothing real is written:
+Two enforcement tests run where `sandbox-exec` can actually apply a profile, and are skipped where it cannot (other platforms, or nested inside the engine's own verification — macOS refuses to nest `sandbox-exec`):
 
 - `test/sandbox` — a profile's effect: a write outside the allowed folder fails, a write inside it succeeds, a denied file cannot be read, and a denied private source cannot be read while the repository beside it can.
 - `test/orchestrator/native-runner.test.ts` — the native launch path: fake `cursor-agent` and `claude` scripts first on `PATH` try to write inside and outside their folder; the implementer writes only its worktree, the reviewer writes nothing, and a private source passed as a denial cannot be read.
 
-`test/orchestrator/verified-project.test.ts` runs the whole verified-execution suite with project commands sandboxed on macOS, and sets `FLOOR_AGENTS_SANDBOX=off` on CI's Linux runner.
+The skip uses `sandboxAvailable()` in `test/helpers/sandbox.ts`, which probes `sandbox-exec` once rather than trusting `Bun.which`. `test/orchestrator/verified-project.test.ts` runs the whole verified-execution suite with project commands sandboxed where that works, and sets `FLOOR_AGENTS_SANDBOX=off` where it cannot, so the pipeline still exercises verification logic uncontained.

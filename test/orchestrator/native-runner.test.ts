@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NATIVE_PROVIDERS, DEFAULT_TURN_TIMEOUT_MS, DEFAULT_MAX_TURNS, turnTimeoutMs, failureReason, nativeAgentArgv, parseNativeResult, spawnNativeAgent } from '../../packages/orchestrator/src/native-runner.ts'
+import { sandboxAvailable } from '../helpers/sandbox.ts'
 
 describe('nativeAgentArgv', () => {
   test('cursor is a native provider alongside claude-code', () => {
@@ -51,7 +52,7 @@ describe('parseNativeResult', () => {
 // The native launch path end to end, enforced by the operating system. Fake
 // `cursor-agent` and `claude` scripts go first on PATH and try to write inside
 // and outside their working directory; a temporary directory stands in for home.
-describe.skipIf(process.platform !== 'darwin' || !Bun.which('sandbox-exec'))('spawnNativeAgent under sandbox-exec', () => {
+describe.skipIf(!sandboxAvailable())('spawnNativeAgent under sandbox-exec', () => {
   let home = ''
   let work = ''
   let bin = ''

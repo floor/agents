@@ -42,12 +42,14 @@ function parseAgents(raw: unknown[]): AgentDefinition[] {
   }))
 }
 
-function parseCommand(raw: any): ProjectCommand {
+function parseCommand(raw: unknown): ProjectCommand {
+  // Malformed entries stay objects the validator can report; do not throw here.
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
   return {
-    name: raw.name,
-    command: raw.command,
-    ...(raw.timeoutMs !== undefined ? { timeoutMs: raw.timeoutMs } : {}),
-    ...(raw.flaky !== undefined ? { flaky: raw.flaky } : {}),
+    name: src.name as ProjectCommand['name'],
+    command: src.command as ProjectCommand['command'],
+    ...(src.timeoutMs !== undefined ? { timeoutMs: src.timeoutMs as number } : {}),
+    ...(src.flaky !== undefined ? { flaky: src.flaky as boolean } : {}),
   }
 }
 

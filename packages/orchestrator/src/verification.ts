@@ -20,45 +20,35 @@ type CapturedOutput = {
   readonly truncated: boolean
 }
 
+function rollTail(tail: string, chunk: string): string {
+  if (chunk.length >= OUTPUT_LIMIT) return chunk.slice(-OUTPUT_LIMIT)
+  const combined = tail + chunk
+  return combined.length > OUTPUT_LIMIT ? combined.slice(-OUTPUT_LIMIT) : combined
+}
+
 async function readOutput(stream: ReadableStream<Uint8Array>): Promise<CapturedOutput> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
   let head = ''
   let tail = ''
   let truncated = false
+  const consume = (chunk: string): void => {
+    if (!chunk) return
+    tail = rollTail(tail, chunk)
+    if (truncated) return
+    if (head.length + chunk.length <= OUTPUT_LIMIT) {
+      head += chunk
+      return
+    }
+    head += chunk.slice(0, OUTPUT_LIMIT - head.length)
+    truncated = true
+  }
   while (true) {
     const { value, done } = await reader.read()
     if (done) break
-    const chunk = decoder.decode(value, { stream: true })
-    if (!truncated) {
-      if (head.length + chunk.length <= OUTPUT_LIMIT) {
-        head += chunk
-      } else {
-        const room = OUTPUT_LIMIT - head.length
-        head += chunk.slice(0, room)
-        truncated = true
-        tail = chunk.slice(room)
-      }
-    } else {
-      tail += chunk
-    }
-    if (tail.length > OUTPUT_LIMIT) tail = tail.slice(-OUTPUT_LIMIT)
+    consume(decoder.decode(value, { stream: true }))
   }
-  const flushed = decoder.decode()
-  if (flushed) {
-    if (!truncated) {
-      if (head.length + flushed.length <= OUTPUT_LIMIT) head += flushed
-      else {
-        const room = OUTPUT_LIMIT - head.length
-        head += flushed.slice(0, room)
-        truncated = true
-        tail = flushed.slice(room)
-      }
-    } else {
-      tail += flushed
-    }
-    if (tail.length > OUTPUT_LIMIT) tail = tail.slice(-OUTPUT_LIMIT)
-  }
+  consume(decoder.decode())
   if (!truncated) tail = head
   const text = truncated ? `${head}\n[output truncated]\n${tail}` : head
   return { text, tail, truncated }
@@ -77,10 +67,16 @@ export function latestFailingCheck(result: Pick<VerificationResult, 'checks'>): 
   return [...accepted].reverse().find(failedCheck) ?? [...result.checks].reverse().find(failedCheck)
 }
 
-/** A command exit or timeout, not a mutation, guardrail, or missing failing step. */
+/** A command exit or timeout, not a mutation, spawn failure, guardrail, or missing failing step. */
+export function isRepairableVerification(verification: VerificationResult | undefined): boolean {
+  if (!verification || verification.passed || verification.error) return false
+  const accepted = acceptedChecks(verification)
+  if (accepted.some(c => c.failedToStart)) return false
+  return accepted.some(failedCheck)
+}
+
 export function isRepairableGateFailure(err: unknown): err is VerificationFailed {
-  if (!(err instanceof VerificationFailed) || err.verification.error) return false
-  return acceptedChecks(err.verification).some(failedCheck)
+  return err instanceof VerificationFailed && isRepairableVerification(err.verification)
 }
 
 export function lastLines(text: string, n: number = TAIL_LINES): string {
@@ -162,6 +158,7 @@ export async function runProjectCommand(cwd: string, check: ProjectCommand): Pro
       truncated: false,
       exitCode: -1,
       timedOut,
+      failedToStart: true,
       durationMs: Math.round(performance.now() - start),
       ...(check.flaky ? { flaky: true } : {}),
     }
@@ -200,11 +197,33 @@ export async function verifyWorktree(worktree: Worktree, commands: readonly Proj
   for (const command of commands) {
     console.log(`[verify] ${command.name}: ${command.command.join(' ')}`)
     const result = await runProjectCommand(worktree.path, command)
+    if (result.failedToStart) {
+      checks.push({ ...result, accepted: true })
+      return {
+        passed: false,
+        treeSha,
+        checkedAt: new Date().toISOString(),
+        durationMs: Math.round(performance.now() - start),
+        checks,
+        error: `Failed to start ${command.name}: ${result.stderr}`,
+      }
+    }
     const dirty = await mutated()
     if (command.flaky && failedCheck(result) && !dirty) {
       checks.push({ ...result, accepted: false })
       console.log(`[verify] ${command.name}: flaky retry`)
       const retry = await runProjectCommand(worktree.path, command)
+      if (retry.failedToStart) {
+        checks.push({ ...retry, accepted: true })
+        return {
+          passed: false,
+          treeSha,
+          checkedAt: new Date().toISOString(),
+          durationMs: Math.round(performance.now() - start),
+          checks,
+          error: `Failed to start ${command.name}: ${retry.stderr}`,
+        }
+      }
       checks.push({ ...retry, accepted: true })
       if (failedCheck(retry) || await mutated()) break
       continue

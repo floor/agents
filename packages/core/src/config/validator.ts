@@ -24,15 +24,17 @@ export function validateCompanyConfig(config: CompanyConfig): readonly string[] 
       continue
     }
     for (const command of commands) {
-      if (!command || typeof command.name !== 'string' || !command.name.trim() ||
+      const malformed = !command || typeof command !== 'object' ||
+          typeof command.name !== 'string' || !command.name.trim() ||
           !Array.isArray(command.command) || !command.command.length ||
-          command.command.some((arg: unknown) => typeof arg !== 'string') || !command.command[0]?.trim()) {
+          command.command.some((arg: unknown) => typeof arg !== 'string') || !command.command[0]?.trim()
+      if (malformed) {
         errors.push(`project.${key} entries need a name and a nonempty command argument array`)
       }
-      if (command?.timeoutMs !== undefined && (!Number.isFinite(command.timeoutMs) || command.timeoutMs <= 0)) {
+      if (command && typeof command === 'object' && command.timeoutMs !== undefined && (!Number.isFinite(command.timeoutMs) || command.timeoutMs <= 0)) {
         errors.push(`project.${key} timeoutMs must be positive`)
       }
-      if (command?.flaky !== undefined && typeof command.flaky !== 'boolean') {
+      if (command && typeof command === 'object' && command.flaky !== undefined && typeof command.flaky !== 'boolean') {
         errors.push(`project.${key} flaky must be a boolean`)
       }
     }

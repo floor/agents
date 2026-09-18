@@ -68,6 +68,8 @@ export type CommandResult = {
   /** Last 32,768 characters of stderr, even when the head was truncated. */
   readonly stderrTail?: string
   readonly truncated?: boolean
+  /** The process never started (sandbox refused, spawn threw) — not a command exit. */
+  readonly failedToStart?: boolean
   readonly flaky?: boolean
   /**
    * Whether this attempt counts toward the command's result. A discarded

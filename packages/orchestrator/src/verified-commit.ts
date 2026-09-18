@@ -26,9 +26,12 @@ export async function resolveBaseSha(worktree: Worktree, project: ProjectConfig,
 }
 
 function toGateRun(verification: Awaited<ReturnType<typeof verifyWorktree>>): GateRun {
+  const durationMs = verification.durationMs ?? 0
+  const endMs = Date.parse(verification.checkedAt)
+  const startedAt = Number.isFinite(endMs) ? new Date(endMs - durationMs).toISOString() : verification.checkedAt
   return {
-    startedAt: verification.checkedAt,
-    durationMs: verification.durationMs ?? 0,
+    startedAt,
+    durationMs,
     passed: verification.passed,
     treeSha: verification.treeSha,
     checks: verification.checks,

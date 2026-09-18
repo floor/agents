@@ -88,3 +88,15 @@ test('rejects a negative fixTurns and a non-boolean flaky flag', async () => {
     },
   })).toContain('project.verification flaky must be a boolean')
 })
+
+test('malformed command entries are reported by the validator', async () => {
+  const config = await loadCompanyConfig('config/templates/default.yaml')
+  expect(validateCompanyConfig({
+    ...config,
+    project: { ...config.project, verification: [{ name: 'Tests' }] as unknown as typeof config.project.verification },
+  }).some(e => e.includes('entries need a name and a nonempty command argument array'))).toBe(true)
+  expect(validateCompanyConfig({
+    ...config,
+    project: { ...config.project, verification: [null] as unknown as typeof config.project.verification },
+  }).some(e => e.includes('entries need a name and a nonempty command argument array'))).toBe(true)
+})

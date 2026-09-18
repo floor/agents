@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { AgentDefinition, CompanyConfig, ExecutionState, GitAdapter, Issue, LLMAdapter, ProjectConfig, TaskAdapter } from '@floor-agents/core'
 import { loadCompanyConfig } from '@floor-agents/core'
-import { createStateStore, createCostTracker, executeTask, runNativeDevAgent, VerificationFailed, GateExhausted } from '@floor-agents/orchestrator'
+import { createStateStore, createCostTracker, executeTask, runNativeDevAgent, VerificationFailed, GateExhausted, AgentStopped, isRepairableVerification, isRepairableGateFailure } from '@floor-agents/orchestrator'
 import { createContextBuilder } from '@floor-agents/context-builder'
 import { commitWorktree, createWorktree, gitText } from '../../packages/orchestrator/src/worktree.ts'
 import { validateWorktree, verifyWorktree, runProjectCommand } from '../../packages/orchestrator/src/verification.ts'
@@ -90,6 +90,10 @@ test('failed engine checks preserve logs and never push', async () => {
   expect(saved?.gateRuns).toHaveLength(1)
   expect(saved?.gateRuns?.[0]?.passed).toBe(false)
   expect(typeof saved?.gateRuns?.[0]?.durationMs).toBe('number')
+  expect(Date.parse(saved!.gateRuns![0]!.startedAt)).toBeLessThanOrEqual(Date.parse(saved!.verification!.checkedAt))
+  if (saved!.gateRuns![0]!.durationMs > 0) {
+    expect(saved!.gateRuns![0]!.startedAt).not.toBe(saved!.verification!.checkedAt)
+  }
   expect(await Bun.file(join(worktree.path, 'answer.txt')).exists()).toBe(true)
 })
 
@@ -170,6 +174,25 @@ test('a terminated native agent cannot publish partial work', async () => {
     },
   })).rejects.toThrow('did not finish within')
   expect(await remoteHead()).toBe(before)
+})
+
+test('the uncommitted stop summary is against HEAD, not the run base', async () => {
+  await Bun.write(join(root, 'extra.txt'), 'already on the branch')
+  await gitText(root, ['add', 'extra.txt'])
+  await gitText(root, ['commit', '-m', 'branch-only file'])
+  const sha = await gitText(root, ['rev-parse', 'HEAD'])
+  await gitText(root, ['push', 'origin', `${sha}:refs/heads/${branch}`])
+  await gitText(root, ['reset', '--hard', 'HEAD~1'])
+  let err: unknown
+  try {
+    await runNativeDevAgent(issue, agent, state(), nativeDeps(createStateStore(join(dir, 'state')), async (_p, cwd) => {
+      await Bun.write(join(cwd, 'note.txt'), 'uncommitted')
+      return { resultText: 'partial', cost: 0, durationMs: 1, exitCode: 143 }
+    }))
+  } catch (e) { err = e }
+  expect(err).toBeInstanceOf(AgentStopped)
+  expect((err as AgentStopped).written).toContain('note.txt')
+  expect((err as AgentStopped).written).not.toContain('extra.txt')
 })
 
 function adapters(answer: string) {
@@ -548,6 +571,32 @@ test('a recovered run keeps fixTurnsUsed and does not start the allowance over',
   expect(await remoteHead()).toBe(before)
 })
 
+test('a recovered repair resumes the persisted worktree instead of restarting implementation', async () => {
+  const store = createStateStore(join(dir, 'state'))
+  await expect(runNativeDevAgent(issue, agent, state(), nativeDeps(store, async (_p, cwd) => {
+    await Bun.write(join(cwd, 'answer.txt'), 'almost')
+    await Bun.write(join(cwd, 'note.txt'), 'kept')
+    return { resultText: 'first', cost: 0, durationMs: 1, exitCode: 0 }
+  }, { ...project, fixTurns: 0 }))).rejects.toBeInstanceOf(VerificationFailed)
+  const saved = await store.get(issue.id)
+  expect(saved?.workspacePath).toBeTruthy()
+  expect(await Bun.file(join(saved!.workspacePath!, 'note.txt')).text()).toBe('kept')
+  expect(saved?.verification?.passed).toBe(false)
+
+  let calls = 0
+  const next = await runNativeDevAgent(issue, agent, saved!, nativeDeps(store, async (prompt, cwd) => {
+    calls++
+    expect(cwd).toBe(saved!.workspacePath!)
+    expect(await Bun.file(join(cwd, 'note.txt')).text()).toBe('kept')
+    expect(prompt).toContain('## Gate failure')
+    await Bun.write(join(cwd, 'answer.txt'), '42')
+    return { resultText: 'fixed', cost: 0, durationMs: 1, exitCode: 0 }
+  }, { ...project, fixTurns: 1 }))
+  expect(calls).toBe(1)
+  expect(next.verification?.passed).toBe(true)
+  expect(await remoteHead()).toBe(next.commitSha!)
+})
+
 test('a flaky gate pass on retry consumes no fix turn and both attempts stay in state', async () => {
   const store = createStateStore(join(dir, 'state'))
   let calls = 0
@@ -608,6 +657,16 @@ process.exit(ok ? 0 : 1)
   expect(failed?.stderrTail).toContain('STDERR_TAIL')
 })
 
+test('stdout tail is the last 32 KiB of the whole stream, including overlap with the head', async () => {
+  const token = 'OVERLAP_TOKEN'
+  const result = await runProjectCommand(root, {
+    name: 'overlap',
+    command: [process.execPath, '-e', `process.stdout.write('x'.repeat(20000) + '${token}' + 'x'.repeat(15000)); process.exit(1)`],
+  })
+  expect(result.truncated).toBe(true)
+  expect(result.stdoutTail).toContain(token)
+})
+
 test('guardrail rejection, push failure and workspace-mutating checks dispatch no fix turn', async () => {
   const before = await remoteHead()
 
@@ -653,6 +712,28 @@ test('guardrail rejection, push failure and workspace-mutating checks dispatch n
     return { resultText: 'ok', cost: 0, durationMs: 1, exitCode: 0 }
   }))).rejects.toThrow('git push failed')
   expect(pushCalls).toBe(1)
+})
+
+test('a check that never started is not a repairable gate failure', () => {
+  const verification = {
+    passed: false,
+    treeSha: 'x',
+    checkedAt: new Date().toISOString(),
+    durationMs: 4,
+    checks: [{
+      name: 'Tests', command: ['bun', 'test'], exitCode: -1, timedOut: false, durationMs: 1,
+      stdout: '', stderr: 'Refusing to run bun without a sandbox', failedToStart: true, accepted: true as const,
+    }],
+    error: 'Failed to start Tests: Refusing to run bun without a sandbox',
+  }
+  expect(isRepairableVerification(verification)).toBe(false)
+  expect(isRepairableGateFailure(new VerificationFailed(verification, state()))).toBe(false)
+  expect(isRepairableVerification({
+    passed: false,
+    treeSha: 'x',
+    checkedAt: new Date().toISOString(),
+    checks: [{ name: 'Tests', command: ['bun', 'test'], exitCode: 1, timedOut: false, durationMs: 1, stdout: 'fail', stderr: '', accepted: true }],
+  })).toBe(true)
 })
 
 test('a review revision gets its own fixTurns allowance', async () => {

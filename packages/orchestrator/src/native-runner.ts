@@ -10,9 +10,9 @@ import type {
 } from '@floor-agents/core'
 import { DEFAULT_FIX_TURNS } from '@floor-agents/core'
 import type { ContextBuilder } from '@floor-agents/context-builder'
-import { createWorktree, gitText, snapshotWorktree, removeWorktree } from './worktree.ts'
+import { createWorktree, gitText, snapshotWorktree, removeWorktree, reopenWorktree } from './worktree.ts'
 import { requireVerification, prepareWorkspace, verifyAndCommit, resolveBaseSha } from './verified-commit.ts'
-import { verificationSummary, isRepairableGateFailure, latestFailingCheck, gateFailureSection, VerificationFailed } from './verification.ts'
+import { verificationSummary, isRepairableGateFailure, isRepairableVerification, latestFailingCheck, gateFailureSection, VerificationFailed } from './verification.ts'
 import type { CostTracker } from './cost-tracker.ts'
 import { implementerSandbox, reviewerSandbox, sandboxed, withDenyRead, type SandboxTool } from '@floor-agents/sandbox'
 import { buildCursorArgs, parseCursorResult } from '@floor-agents/cursor'
@@ -292,23 +292,34 @@ export async function runNativeDevAgent(
 
   requireVerification(deps.project)
 
+  const incoming = state
   state = await advanceState(state, 'calling_llm', {}, stateStore)
 
-  const worktree = await createWorktree(state.branchName!, deps.project.root)
+  const existing = incoming.step === 'calling_llm' && incoming.workspacePath
+    ? await reopenWorktree(incoming.workspacePath, incoming.branchName!)
+    : null
+  const resumed = Boolean(existing)
+  const worktree = existing ?? await createWorktree(state.branchName!, deps.project.root)
+
   state = await advanceState(state, 'calling_llm', {
-    workspacePath: worktree.path, baseSha: await resolveBaseSha(worktree, deps.project, state), verification: undefined,
+    workspacePath: worktree.path,
+    baseSha: await resolveBaseSha(worktree, deps.project, state),
+    ...(resumed ? {} : { verification: undefined }),
   }, stateStore)
   const isRevision = !!reviewComments
+  const skipInitial = resumed && (isRepairableVerification(state.verification) || Boolean(state.llmResponse))
 
-  console.log(`[${agent.id}] native agent on worktree: ${worktree.path}`)
+  console.log(`[${agent.id}] native agent on worktree: ${worktree.path}${resumed ? ' (resumed)' : ''}`)
 
-  await addComment(issue.id, [
-    isRevision
-      ? `⏳ **${agent.name}** is addressing review feedback...`
-      : `⏳ **${agent.name}** is working on the code...`,
-    `> Model: \`${agent.llm.model}\` via ${agent.llm.provider} (native mode)`,
-    `> Worktree: \`${state.branchName}\``,
-  ].join('\n'))
+  if (!skipInitial) {
+    await addComment(issue.id, [
+      isRevision
+        ? `⏳ **${agent.name}** is addressing review feedback...`
+        : `⏳ **${agent.name}** is working on the code...`,
+      `> Model: \`${agent.llm.model}\` via ${agent.llm.provider} (native mode)`,
+      `> Worktree: \`${state.branchName}\``,
+    ].join('\n'))
+  }
 
   try {
     await prepareWorkspace(worktree, deps.project)
@@ -341,6 +352,11 @@ export async function runNativeDevAgent(
       timeoutMs: budget.timeoutMs, maxTurns: budget.maxTurns, ...(model ? { model } : {}),
     }))
 
+    const uncommittedSummary = async (): Promise<string> => writtenSummary(
+      await gitText(worktree.path, ['diff', '--stat', 'HEAD']),
+      await gitText(worktree.path, ['ls-files', '--others', '--exclude-standard']),
+    )
+
     const cumulativeDiff = async (): Promise<string> => {
       const tree = await snapshotWorktree(worktree)
       return gitText(worktree.path, ['diff', '--stat', state.baseSha ?? worktree.initialSha, tree])
@@ -354,17 +370,23 @@ export async function runNativeDevAgent(
       if (result.exitCode !== 0) {
         throw new AgentStopped(
           `${agent.llm.provider} agent ${failureReason(result.exitCode, result.subtype, budget)}: ${result.resultText.slice(0, 500)}`.trimEnd().replace(/:$/, ''),
-          writtenSummary(await cumulativeDiff(), await gitText(worktree.path, ['ls-files', '--others', '--exclude-standard'])),
+          await uncommittedSummary(),
         )
       }
       return result
     }
 
-    let result = await runTurn(promptBase.join('\n'))
-    let sessionDuration = result.durationMs
-    let sessionCost = result.cost
+    let result: NativeRunResult = { resultText: state.llmResponse ?? '', cost: 0, durationMs: 0, exitCode: 0 }
+    let sessionDuration = 0
+    let sessionCost = 0
     const allowance = deps.project.fixTurns ?? DEFAULT_FIX_TURNS
     const commitMessage = `${issue.title}\n\nAutomated by Floor Agents (${agent.name})\nTask: ${issue.id}\nReview cycle: ${state.reviewCycle}`
+
+    if (!skipInitial) {
+      result = await runTurn(promptBase.join('\n'))
+      sessionDuration = result.durationMs
+      sessionCost = result.cost
+    }
 
     for (;;) {
       try {
@@ -375,32 +397,33 @@ export async function runNativeDevAgent(
         if (!isRepairableGateFailure(err) || allowance <= 0) throw err
         const used = state.fixTurnsUsed ?? 0
         const failing = latestFailingCheck(err.verification)
-        const written = await cumulativeDiff()
+        const written = await uncommittedSummary()
         if (!failing || used >= allowance) {
           throw new GateExhausted(
             err.message,
             failing ?? { name: 'gate', command: [], exitCode: 1, timedOut: false, durationMs: 0, stdout: '', stderr: '' },
-            (state.gateRuns ?? []).length,
+            used + 1,
             written,
           )
         }
         state = await advanceState(state, 'calling_llm', { fixTurnsUsed: used + 1 }, stateStore)
         console.log(`[${agent.id}] gate failure: ${failing.name} (exit ${failing.exitCode}) — fix turn ${used + 1}/${allowance}`)
         await addComment(issue.id, `🔧 **${agent.name}** is fixing a gate failure (\`${failing.name}\`, exit ${failing.exitCode}) — fix turn ${used + 1} of ${allowance}`)
-        result = await runTurn([...promptBase, '', ...gateFailureSection(failing, written)].join('\n'))
+        result = await runTurn([...promptBase, '', ...gateFailureSection(failing, await cumulativeDiff())].join('\n'))
         sessionDuration += result.durationMs
         sessionCost += result.cost
       }
     }
 
     const diffText = await gitText(worktree.path, ['diff', state.baseSha!, state.commitSha!, '--stat'])
+    const gateMs = (state.gateRuns ?? []).reduce((sum, g) => sum + g.durationMs, 0)
 
     await addComment(issue.id, [
       `✅ **${agent.name}** completed work (native mode):`,
       '```',
       diffText,
       '```',
-      `> ${metaLine([formatDuration(sessionDuration), costNote(sessionCost)])}`,
+      `> ${metaLine([formatDuration(sessionDuration + gateMs), costNote(sessionCost)])}`,
       verificationSummary(state.verification!),
     ].join('\n'))
 

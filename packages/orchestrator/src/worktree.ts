@@ -32,6 +32,17 @@ export async function createWorktree(branch: string, repoPath = process.cwd()): 
   return { path, branch, initialSha }
 }
 
+/** Reopen a worktree left on disk after a crash so uncommitted repair work is not discarded. */
+export async function reopenWorktree(path: string, branch: string): Promise<Worktree | null> {
+  try {
+    const initialSha = await gitText(path, ['rev-parse', 'HEAD'])
+    if (!initialSha) return null
+    return { path, branch, initialSha }
+  } catch {
+    return null
+  }
+}
+
 export async function snapshotWorktree(worktree: Worktree): Promise<string> {
   await gitText(worktree.path, ['add', '-A'])
   return gitText(worktree.path, ['write-tree'])

@@ -130,5 +130,19 @@ agents:
   expect(config.project.verification).toEqual([{ name: 'Tests', command: ['bun', 'test'], flaky: true }])
   const { validateCompanyConfig } = await import('@floor-agents/core')
   expect(validateCompanyConfig(config)).toEqual([])
+  await Bun.write(path, `
+name: t
+project:
+  name: t
+  repo: t
+  verification:
+    - null
+    - { name: Tests }
+agents:
+  - { id: dev, name: Dev, promptTemplate: dev.md, llm: { provider: cursor, model: m }, capabilities: [write_code] }
+`)
+  const malformed = await loadCompanyConfig(path)
+  const errors = validateCompanyConfig(malformed)
+  expect(errors.filter(e => e.includes('entries need a name and a nonempty command argument array')).length).toBeGreaterThanOrEqual(2)
   await (await import('node:fs/promises')).rm(dir, { recursive: true, force: true })
 })

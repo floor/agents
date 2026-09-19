@@ -1,5 +1,12 @@
 # The polish sprint
 
+> **Paused on 2026-09-19.** The owner decided that vlist and mtrl are, for now, worked on directly
+> — a team lead with its own sub-agents — and not through the Floor Agents service or other
+> vendors' agents: the release deadline is short and the direct path is faster today. The other
+> vendors (Codex, Gemini, Grok) review once the issues and findings are addressed. The engine is
+> not abandoned: [section 9](#9-paused-the-state-and-how-to-resume) says exactly where it stands
+> and how to take it up again.
+
 The record of the work that began on 2026-09-18: why product work stopped, what was decided, every
 change made to the engine and what it was for, what the measurements say, and what is still open.
 It is written to be sufficient on its own. A person or an agent who has read nothing else should be
@@ -114,17 +121,21 @@ built; the PR itself is not to be merged as it stands.
 
 Details in [The Benchmarks](./experiments/2026-09-18-benchmarks.md).
 
-| | Morning | Benchmark 1 | Benchmark 2 |
-|---|---|---|---|
-| Label to gate-verified PR, small task | 2–3 hours, several runs | about 10 min, one attempt | about 8–9 min, one attempt |
-| Stops caused by the harness | most of them | none | one (the port), since fixed |
-| Committee | — | no decision, Codex out of quota | a real verdict every cycle |
-| Label to **approved** PR | — | never | never: both reached the three-cycle maximum |
+| | Morning | Benchmark 1 | Benchmark 2 | Benchmark 3 |
+|---|---|---|---|---|
+| Label to gate-verified PR, small task | 2–3 hours, several runs | about 10 min, one attempt | about 8–9 min, one attempt | 7 and 14 min, one attempt |
+| Stops caused by the harness | most of them | none | one (the port), since fixed | none |
+| Committee | — | no decision, Codex out of quota | a real verdict every cycle | a real verdict every cycle |
+| Label to **approved** PR | about 3 hours for a 17-line fix | never | never: both reached the three-cycle maximum | **7 min** (mtrl, one cycle, merged as floor/mtrl#93); never for vlist, stopped on a standing blocker after 42 min |
 
-The first pass is solved for small tasks. The cost has moved to the revision loop: a revision turn
-takes five to ten minutes because it starts a fresh session with the full prompt, and each
-revision adds code that gives reviewers more to reject. Two seats that disagree can consume all
-three cycles without converging.
+The first pass is solved for small tasks: roughly −58% on the implementer's first turn, −69% on the
+vlist gate, −64% on a review cycle, and from hours to minutes for label to verified PR. The cost
+moved to the revision loop: a revision adds code that gives reviewers more to reject, and two seats
+that disagree can consume all three cycles without converging. What decides whether a task is
+approved is mostly *the task*: mtrl's checkbox fix, with the owner's decision in front of the
+reviewers, went through in one cycle; vlist's generic signature needed a design decision no agent
+could take. The sample is two issues run three times: orders of magnitude, not percentages to the
+unit.
 
 ## 5. Direction set by the owner
 
@@ -150,6 +161,28 @@ Recorded on the evening of 2026-09-18.
   failed seats, at least one member approved, no member rejected or raised a blocker, and CI is
   green. **Open: the owner's decision.**
 
+Added during the night of 2026-09-18:
+
+- **An approved pull request does not wait on a person.** On reading "approved by the committee and
+  ready for human review": agents should not be told a human review is pending, and for a small
+  change it must not block. The rule since: committee approved on the latest commit, every check
+  green, any behaviour decision already recorded on the issue — then it is merged, and a human look
+  is an optional flag after the fact. floor/mtrl#93 was merged that way. **To build:** the engine's
+  wording, and an engine-side merge per lane. One exception keeps going to the owner: a change to
+  a public contract with no recorded decision.
+- **One revision, not three.** Across the benchmarks the second and third revisions never produced
+  an approval. Agreed: the limit becomes a manifest setting, default one revision, then the pull
+  request is handed over with its blockers. **To build** (`MAX_REVIEW_CYCLES` is a constant).
+- **One worktree per issue, reset between turns**, instead of a new one per turn and another for
+  the gate (a three-cycle task runs the project's setup six times). A fixed folder per issue, reset
+  to the branch tip before each turn, dependencies left in place, so that setup is a no-op and a
+  continued session's paths stay valid. Safeguard agreed: before resetting a tree that was never
+  published, keep a git reference to it, so preserved work is never lost. **To build.**
+- **A control panel**, fed by an API from each project's engine, on Floor IO. **Built** (#89): see
+  [Project API](./api.md) and [Control Panel](./control-panel.md).
+- **"This must not happen again"**, about the morning's 2–3 hours. Closed causes and open ones are
+  listed in section 9.
+
 ## 6. Order of work
 
 1. ~~Warm-ups~~ (#74, #76). ~~The attempt record, `status`, `verify`~~ (#75, #77). ~~A gate that
@@ -172,14 +205,16 @@ Recorded on the evening of 2026-09-18.
 
 ## 7. What is parked
 
+As of 2026-09-19 this work leaves the engine: it is done directly (see the note at the top).
+
 - **vlist:** FLO-191 (a fold re-keys the mounted elements; its finished tree is preserved on disk)
   and FLO-163 (the carousel without the 101 cycles, blocked by it); FLO-166, 168, 91, 88; the phone
-  passes (FLO-87); the 3.0.0 release (FLO-89). PR #260 (FLO-167) is open, at maximum cycles, not to
-  be merged. PR #248 is an old carousel attempt, not to be merged.
-- **mtrl:** 0.9.7 is shippable from `main` on the owner's word; one 0.9.7 PR is open and rejected.
-  PR #92 (N10) is open, at maximum cycles. **Open decision:** N10 changes what `check()` does; the
-  owner said yes for 0.9.8, and Codex holds that the repository's `AGENTS.md` sends behaviour
-  changes to the next major. One of the two has to give.
+  passes (FLO-87); the 3.0.0 release (FLO-89). PR #261 (FLO-167) is open, stopped on a standing
+  blocker, not to be merged as it stands: it needs a decision on what `createVListFromConfig`
+  infers. PR #248 is an old carousel attempt, not to be merged.
+- **mtrl:** N10 is merged (floor/mtrl#93), the owner's decision for 0.9.8 standing; Codex's
+  objection was recorded as a concern, with the ordering consumers must use. 0.9.7 is shippable
+  from `main` on the owner's word; its N27 pull request (#90) is open and was rejected by Claude.
 - **Gemini as implementer:** blocked by FLO-203 (`agy` needs its workspace named). As reviewer it
   works and is off the default seats.
 - **Owner's side:** a Telegram group for mtrl; a Linear OAuth app so agents post under their own
@@ -204,3 +239,67 @@ The private memory is a convenience for one assistant, not a source of truth. It
 with other agents, not versioned with the code, and a note in it reflects what was true when it
 was written. Anything in it that another person or agent would need is written here or in
 [Coordinating a Team](./guides/coordinator.md); the memory then only needs to point at these pages.
+
+## 9. Paused: the state, and how to resume
+
+### The decision
+
+2026-09-19, the owner: vlist and mtrl are not worked on through the Floor Agents service, nor by
+other vendors' agents, for now. The work is done directly by a team lead (Claude) with its own
+sub-agents, pairing with the owner, because the release deadline is short and that path is faster
+today. When every issue and finding is addressed, Codex, Gemini and Grok review the result.
+
+What this says about the engine, plainly: in one day it went from hours to minutes for a verified
+pull request, but *label to approved pull request* worked for one task of two, and the three
+preconditions of an unattended service were only just met. It was not yet faster than a person
+directing agents by hand. The pause is the right call for a deadline; it is not a verdict on the
+design. What the day established is kept: the gate on a clean export, readable failures, the
+attempt record, machine slots, a clean stop and restart, and independent reviewers earning their
+place — Codex found real holes Claude had approved, and the reverse.
+
+### Where everything is
+
+| | |
+|---|---|
+| Code | `staging`, at the merge of #89. 157 commits ahead of `main`, which still holds the separate Review & Gate mode (`src/gate.ts`); the two lines diverged in April and reuniting them is the owner's call. Suite: 596 pass; typecheck clean |
+| Pull requests | #55 to #89 merged, except **#73** (an agent's "gate failure becomes a fix turn"): open, at maximum cycles, not to be merged as it stands; its tests are worth keeping |
+| Queue | Linear, project `agents`, FLO-170 to FLO-203. **22 of its 24 open issues carry the `agent` label**: a watcher pointed at this repository would take them all. Remove the labels, or do not watch this project, before starting one |
+| Running | Under pm2, started on 2026-09-18, not saved: `agents-api-vlist` :3111, `agents-api-mtrl` :3112, `agents-api-agents` :3113 (the read-only [Project API](./api.md)) and `floor.io` :3400 (the [panel](./control-panel.md)). They take no task and start no agent; the panel stays useful as a view of each project's to-do list. `pm2 stop` them at will. **No watcher has ever been started** |
+| Recorded runs | This repository's state directory (`data/executions/`, archives beside it as `<issue>.bench-<n>.json`). Kept worktrees: about 1.9 GB under `vlist/.agents/worktrees` and `mtrl/.agents/worktrees`, among them the finished tree of FLO-191 — do not clean that one |
+| Benchmark leftovers | floor/vlist#261 open (see section 7). Each rerun closed the previous round's pull requests |
+
+### Closed and open causes of the first day's lost hours
+
+| Cause | |
+|---|---|
+| A retry's fetch rejected; hints dropped for their size; guardrails refusing a one-line edit to a large file | closed (#74, #76) |
+| A REJECT recorded as APPROVE; a failed seat shown as a member abstaining, its reason cut off | closed (#74, #79) |
+| Two runs fighting over the review port; an undecided pull request with no way to be judged again | closed (#80, #81) |
+| Reviewers blind to a decision recorded on the issue; a loop spending three cycles on one sentence | closed (#82, #84) |
+| A gate helped by files the commit does not carry | closed (#78) |
+| Three runs at once on one machine | closed, enforced (#87) |
+| A stop leaving the agent running, a restart starting a second one | closed (#86); **not yet proven under a real `pm2 reload`** |
+| An engine reading another project's Linear issues | closed (#89) |
+| **A gate that fails by a few bytes, or on the agent's own wrong expectation, ends the run** | **open** — the fix turn, FLO-198 |
+| **A branch switch silently changing the manifest a run reads** | **open** — a drift warning at start, FLO-172 |
+| **`run --retry` force-resets the branch and closes the open pull request** | **open** — `--continue`, FLO-187 |
+| **Nothing records a merge; the issue stays "In Progress"** | **open** — FLO-190; the panel shows it |
+
+### To resume
+
+1. Read this page, then [The Run Path](./run-path.md) and [Coordinating a Team](./guides/coordinator.md).
+2. Build, in this order, what was agreed and not built: **one worktree per issue** with the
+   reference safeguard; **one revision by default** as a manifest setting; the **wording and the
+   merge** of an approved pull request; then the **fix turn** (FLO-198), the **drift warning**
+   (FLO-172) and **`--continue`** (FLO-187).
+3. Start **one** watcher, on mtrl, by label, with the owner watching, and do a `pm2 reload` in the
+   middle of a run: the live proof of the stop and restart. Stop that project's `agents-api-…`
+   process first — same port.
+4. Run the **exit test**: about ten small real issues on fresh tickets (the benchmarks reused two,
+   and later rounds read the earlier rounds' reviews in the discussion), unattended; label to
+   approved pull request in 25 minutes or less, nine times out of ten.
+5. Only then give the service a product milestone again.
+
+The direct way of working that replaces it for now is not documented here: it is not this
+repository's subject. Its rules are the owner's and the team lead's, and the projects' own
+`AGENTS.md` files stay the contract for whoever writes code in them.

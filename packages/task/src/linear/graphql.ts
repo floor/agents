@@ -171,6 +171,31 @@ export async function getIssueById(config: LinearAdapterConfig, issueId: string)
   }
 }
 
+const teamIds = new Map<string, string>()
+
+/**
+ * The team's id. A manifest names its team by key (`FLO`); queries can filter on
+ * a key, but `issueCreate` takes the id and nothing else.
+ */
+export async function resolveTeamId(config: LinearAdapterConfig): Promise<string> {
+  if (config.teamId.includes('-')) return config.teamId
+  const cached = teamIds.get(config.teamId)
+  if (cached) return cached
+  const data = await gql(config, `query($key: String!) { teams(filter: { key: { eq: $key } }) { nodes { id key } } }`, { key: config.teamId })
+  const id = data.teams.nodes[0]?.id as string | undefined
+  if (!id) throw new Error(`Linear: no team with key "${config.teamId}"`)
+  teamIds.set(config.teamId, id)
+  return id
+}
+
+/**
+ * Create an issue in the team, and in the project when one is given.
+ *
+ * It used to send the configured team *key* as `teamId` — "Argument Validation
+ * Error" for every manifest that names its team by key, which is all of them —
+ * and it accepted a `projectId` it never sent, so an issue that did get created
+ * landed outside its project.
+ */
 export async function createLinearIssue(config: LinearAdapterConfig, input: {
   title: string
   description?: string
@@ -178,6 +203,7 @@ export async function createLinearIssue(config: LinearAdapterConfig, input: {
   parentId?: string
   projectId?: string
 }): Promise<LinearIssue> {
+  const teamId = await resolveTeamId(config)
   const data = await gql(config, `
     mutation($input: IssueCreateInput!) {
       issueCreate(input: $input) {
@@ -186,11 +212,12 @@ export async function createLinearIssue(config: LinearAdapterConfig, input: {
     }
   `, {
     input: {
-      teamId: config.teamId,
+      teamId,
       title: input.title,
       description: input.description,
       labelIds: input.labelIds,
       parentId: input.parentId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
     },
   })
 
@@ -239,7 +266,10 @@ export async function getLabels(config: LinearAdapterConfig): Promise<{ id: stri
   const isUuid = config.teamId.includes('-')
   const data = await gql(config, `
     query($teamId: ${isUuid ? 'ID' : 'String'}!) {
-      issueLabels(filter: { team: { ${isUuid ? 'id' : 'key'}: { eq: $teamId } } }) {
+      issueLabels(
+        filter: { or: [{ team: { ${isUuid ? 'id' : 'key'}: { eq: $teamId } } }, { team: { null: true } }] }
+        first: 250
+      ) {
         nodes { id name }
       }
     }

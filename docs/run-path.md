@@ -105,6 +105,9 @@ polling with backoff (FLO-174), agents posting under their own names (FLO-189).
 
 ## 4. An order of work
 
+> Paused on 2026-09-19: see [the sprint page, section 9](./polish-sprint.md#9-paused-the-state-and-how-to-resume)
+> for the state at the pause, the causes still open, and the order in which to resume.
+
 The full record — every change, what found it, the measurements and what is parked — is in
 [The Polish Sprint](./polish-sprint.md). The order, revised after
 [two benchmarks on real tasks](./experiments/2026-09-18-benchmarks.md) showed that the first pass

@@ -16,7 +16,7 @@ orchestrates agents, or embed the engine in your own Bun app.
 - [Control Panel](./control-panel.md) — Floor IO's `/agents`: how it is wired to each project's engine, how to run it, what it shows, where it must not be served
 - [Scripts](./scripts.md) — committee runner + gateway bridges (`scripts/`) reference
 - [The Run Path](./run-path.md) — `run --issue` step by step: what each step writes, how it fails, what failing costs; the working map for polishing the engine
-- [The Polish Sprint](./polish-sprint.md) — the record since 2026-09-18: why product work stopped, every engine change and what found it, the measurements, the owner's direction (service, console, coordinator authority), the order of work, what is parked, and where knowledge lives
+- [The Polish Sprint](./polish-sprint.md) — **paused on 2026-09-19** (section 9: the state, the open causes, how to resume). The record since 2026-09-18: why product work stopped, every engine change and what found it, the measurements, the owner's direction (service, console, coordinator authority), the order of work, what is parked, and where knowledge lives
 - [Orchestrator Agent](./orchestrator-agent.md) — the LLM conductor: tool surface, the five guardrails, what is wired
 - [Known Issues](./known-issues.md) — tracked issues and their resolution status
 - [Next Steps](./next-steps.md) — prioritized roadmap after three sprints of dogfooding

@@ -1,4 +1,76 @@
 import type { CompanyConfig } from '../types/company.ts'
+import { DECISION_MODES, HUMAN_PERMISSIONS } from '../decisions/policy.ts'
+
+function isIdList(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every(v => typeof v === 'string' && v.trim() !== '')
+}
+
+/** `decisions`, `roles` and `humans`: who decides, and whether every name they use exists. */
+function validateDecisions(config: CompanyConfig, agentIds: ReadonlySet<string>): string[] {
+  const errors: string[] = []
+  const humanIds = new Set(Object.keys(config.humans ?? {}))
+
+  const roles = config.roles
+  if (roles !== undefined) {
+    if (roles.lead !== undefined && (typeof roles.lead !== 'string' || !agentIds.has(roles.lead))) {
+      errors.push(`roles.lead references unknown agent: "${String(roles.lead)}"`)
+    }
+    for (const key of ['implementers', 'reviewers'] as const) {
+      const ids = roles[key]
+      if (ids === undefined) continue
+      if (!isIdList(ids)) {
+        errors.push(`roles.${key} must be a list of agent ids`)
+        continue
+      }
+      for (const id of ids) {
+        if (!agentIds.has(id)) errors.push(`roles.${key} references unknown agent: "${id}"`)
+      }
+    }
+  }
+
+  for (const [id, human] of Object.entries(config.humans ?? {})) {
+    if (!Array.isArray(human.can) || human.can.some(c => !HUMAN_PERMISSIONS.includes(c))) {
+      errors.push(`humans.${id}.can must list only ${HUMAN_PERMISSIONS.join(', ')}`)
+    }
+  }
+
+  for (const [kind, policy] of Object.entries(config.decisions ?? {})) {
+    const at = `decisions.${kind}`
+    if (!DECISION_MODES.includes(policy.mode)) {
+      errors.push(`${at}.mode must be one of ${DECISION_MODES.join(', ')} (got "${String(policy.mode)}")`)
+      continue
+    }
+    if (kind === 'lead-assignment' && policy.mode !== 'human') {
+      errors.push(`${at}.mode must be human: no agent may assign the lead (got "${policy.mode}")`)
+    }
+    if ((policy.mode === 'lead' || policy.mode === 'lead-with-advisors') && !roles?.lead) {
+      errors.push(`${at}.mode is ${policy.mode} but roles.lead is not set`)
+    }
+    if (policy.quorum !== undefined && (!Number.isInteger(policy.quorum) || policy.quorum < 1)) {
+      errors.push(`${at}.quorum must be a whole number of at least 1`)
+    }
+    if (policy.rounds !== undefined && (!Number.isInteger(policy.rounds) || policy.rounds < 1)) {
+      errors.push(`${at}.rounds must be a whole number of at least 1`)
+    }
+    if (policy.timeoutMs !== undefined && (!Number.isFinite(policy.timeoutMs) || policy.timeoutMs <= 0)) {
+      errors.push(`${at}.timeoutMs must be positive`)
+    }
+    if (policy.voters !== undefined) {
+      if (!isIdList(policy.voters)) errors.push(`${at}.voters must be a list of agent ids`)
+      else for (const id of policy.voters) {
+        if (!agentIds.has(id)) errors.push(`${at}.voters references unknown agent: "${id}"`)
+      }
+    }
+    if (policy.humans !== undefined) {
+      if (!isIdList(policy.humans)) errors.push(`${at}.humans must be a list of ids from the humans block`)
+      else for (const id of policy.humans) {
+        if (!humanIds.has(id)) errors.push(`${at}.humans references unknown human: "${id}" (declare it under humans)`)
+      }
+    }
+  }
+
+  return errors
+}
 
 export function validateCompanyConfig(config: CompanyConfig): readonly string[] {
   const errors: string[] = []
@@ -157,6 +229,7 @@ export function validateCompanyConfig(config: CompanyConfig): readonly string[] 
       errors.push('review.committee is true but no agent has the vote capability')
     }
   }
+  errors.push(...validateDecisions(config, agentIds))
   const trusted = config.guardrails.privateSourceProviders
   if (trusted !== undefined && (!Array.isArray(trusted) || trusted.some(p => typeof p !== 'string' || !p.trim()))) {
     errors.push('guardrails.privateSourceProviders must be a list of provider names')

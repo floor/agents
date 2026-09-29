@@ -9,6 +9,8 @@ import type { CostConfig } from '../types/costs.ts'
 import type { SourceDefinition } from '../types/sources.ts'
 import type { ReviewConfig } from '../types/review.ts'
 import type { TasksConfig } from '../types/tasks.ts'
+import type { DecisionMode, DecisionPolicy, DecisionsConfig, HumanDefinition, HumanPermission, HumansConfig, RolesConfig } from '../types/decisions.ts'
+import { DEFAULT_DECISIONS } from '../decisions/policy.ts'
 import { dirname, resolve } from 'node:path'
 
 const DEFAULT_TEMPLATE_PATH = 'config/templates/default.yaml'
@@ -143,6 +145,50 @@ function parseReview(raw: any): ReviewConfig | undefined {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Values are carried as written (a misspelt mode, a quorum of 0) so the
+ * validator can name them; only the shape is read here.
+ */
+function parsePolicy(raw: unknown): DecisionPolicy {
+  const p = isRecord(raw) ? raw : {}
+  return {
+    mode: p.mode as DecisionMode,
+    ...(p.quorum !== undefined ? { quorum: p.quorum as number } : {}),
+    ...(p.timeoutMs !== undefined ? { timeoutMs: p.timeoutMs as number } : {}),
+    ...(p.rounds !== undefined ? { rounds: p.rounds as number } : {}),
+    ...(p.voters !== undefined ? { voters: p.voters as string[] } : {}),
+    ...(p.humans !== undefined ? { humans: p.humans as string[] } : {}),
+  }
+}
+
+/** The manifest's policies over today's: a kind it does not name keeps the default. */
+function parseDecisions(raw: unknown): DecisionsConfig {
+  const named = isRecord(raw) ? Object.entries(raw).map(([kind, p]) => [kind, parsePolicy(p)] as const) : []
+  return { ...DEFAULT_DECISIONS, ...Object.fromEntries(named) }
+}
+
+function parseRoles(raw: unknown): RolesConfig | undefined {
+  if (!isRecord(raw)) return undefined
+  return {
+    ...(raw.lead !== undefined ? { lead: raw.lead as string } : {}),
+    ...(raw.implementers !== undefined ? { implementers: raw.implementers as string[] } : {}),
+    ...(raw.reviewers !== undefined ? { reviewers: raw.reviewers as string[] } : {}),
+  }
+}
+
+function parseHumans(raw: unknown): HumansConfig | undefined {
+  if (!isRecord(raw)) return undefined
+  const humans: Record<string, HumanDefinition> = {}
+  for (const [id, h] of Object.entries(raw)) {
+    humans[id] = { can: (isRecord(h) && h.can !== undefined ? h.can : []) as HumanPermission[] }
+  }
+  return humans
+}
+
 function parseCosts(raw: any): CostConfig {
   return {
     maxCostPerTask: raw?.maxCostPerTask ?? 5.0,
@@ -203,6 +249,9 @@ function parseConfig(text: string): CompanyConfig {
     sources: parseSources(raw.sources),
     ...(raw.tasks !== undefined ? { tasks: parseTasks(raw.tasks) } : {}),
     ...(raw.review !== undefined ? { review: parseReview(raw.review) } : {}),
+    decisions: parseDecisions(raw.decisions),
+    ...(raw.roles !== undefined ? { roles: parseRoles(raw.roles) } : {}),
+    ...(raw.humans !== undefined ? { humans: parseHumans(raw.humans) } : {}),
     costs: parseCosts(raw.costs),
     statusMapping: raw.statusMapping ?? {},
     createdAt: now,

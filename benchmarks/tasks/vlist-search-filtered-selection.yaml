@@ -1,0 +1,57 @@
+id: vlist-search-filtered-selection
+repo: floor/vlist
+baseCommit: 4ab2aa179299d89ac0b36806521b85a8b0f9ae00
+referencePr: 230
+referenceHead: f1c564d2e3af0998c60254e530e3851f0464a868
+sizeClass: XS
+changedSourceLines: 6
+testFiles:
+  - test/plugins/search/plugin.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/plugins/search/plugin.test.ts
+brief: |
+  # fix(search): selection resolves the unfiltered item on a filtered list
+
+  ## Goal
+  With `search()` and `selection()` on the same list, selecting a row of a filtered list must
+  select the item that row shows. Today it selects whatever item sits at the same index in the
+  unfiltered source array.
+
+  ## Reproduction
+  A list of 20 items named "Item 1" … "Item 20" (ids 1 … 20), plugins
+  `[selection({ mode: 'multiple' }), search({ field: 'name' })]`. After `setQuery('9')` the list
+  shows two rows, "Item 9" (id 9) and "Item 19" (id 19). Clicking the first row emits
+  `item:click` with item id 9, but `selection:change` and `getSelected()` report `[1]`.
+
+  ## Where to look
+  - `src/plugins/search/plugin.ts` — filtering remaps the item accessor (`getItemFn` /
+    `ctx.items.at`), it does not replace the source array.
+  - `src/plugins/selection/plugin.ts` — resolves the item behind an index through an optional
+    `_getLoadedItem` method hook and otherwise falls back to the raw items array.
+  - `src/plugins/data/plugin.ts` and `src/plugins/tree/plugin.ts` show how a plugin that owns
+    the index space publishes that hook.
+
+  ## Expected behaviour
+  On a filtered list, every selection path works in the filtered index space:
+  - a click on a row selects the id of the item rendered in that row, and `item:click` and
+    `selection:change` name the same id;
+  - keyboard: ArrowDown then Space on the first filtered row selects its id (`[9]` above);
+  - Ctrl+A selects exactly the ids currently shown (`[9, 19]` above).
+  Other consumers of the same hook (masonry, sortable) should get the filtered item too.
+
+  ## Constraints
+  - Fix it in the search plugin; do not special-case search inside selection.
+  - Do not change public types or the plugin order contract. Keep existing search and
+    selection tests green.
+  - Add a regression test in `test/plugins/search/plugin.test.ts`.
+
+  ## Out of scope
+  Search highlighting, search combined with `data()` or `tree()` (declared conflicts), CHANGELOG.
+
+  ## Done when
+  `bun test test/plugins/search/plugin.test.ts` passes, including a test that fails on the
+  current code.
+notes: |
+  The PR body (written by the implementing agent) names the missing hook; the brief points at it
+  as the mechanism the other plugins already use.

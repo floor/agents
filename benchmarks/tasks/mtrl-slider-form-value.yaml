@@ -1,0 +1,60 @@
+id: mtrl-slider-form-value
+repo: floor/mtrl
+baseCommit: 6b7c412f0e5659e8bdda0e1df2f9b7a88f05268e
+referencePr: 103
+referenceHead: 93fac3fe7da76795f6f9634292b0b341ec5ad43b
+sizeClass: S
+changedSourceLines: 51
+testFiles:
+  - test/components/slider/form-value.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/components/slider/form-value.test.ts
+brief: |
+  # feat(slider): take part in forms under a name (FLO-97, slider half)
+
+  ## Goal
+  A slider renders no form control of its own, so a `name` given to it lands on a root div and
+  the slider submits nothing. Give the slider a `name` option under which it takes part in a
+  surrounding `<form>`, like the search and time picker components already do.
+
+  ## Where to look
+  - `src/core/dom/form-value.ts` — `createFormValue(container, name, value, disabled)` creates a
+    hidden input (or nothing without a name) and `setFormValue(input, value)` keeps its value
+    attribute in step. Use these; they already exist and are used by search and time picker.
+  - `src/components/slider/types.ts` — `SliderConfig`, where the `name?: string` option and its
+    doc comment go.
+  - `src/components/slider/features/dom.ts` — `withDom` builds the slider's elements.
+  - `src/components/slider/features/controller.ts` — `render()`: every path that moves the
+    slider ends there (drag, keyboard, `setValue`/`setSecondValue` with or without an event,
+    min/max clamping), so it is the one place to keep the submitted value in step.
+  - `src/components/slider/features/states.ts` — `disable()` / `enable()`.
+
+  ## Expected behaviour (checked through `new FormData(form)`)
+  - `{ name: 'volume', min: 0, max: 100, value: 40 }` submits `volume=40`; after
+    `setValue(75)` it submits 75; after `setValue(75, false)` (no change event) also 75; after
+    `setValue(500)` it submits the clamped 100.
+  - `form.reset()` after `setValue(75)` still submits 75, equal to `getValue()`.
+  - Without a name nothing is submitted and nothing is created.
+  - A disabled slider (config `disabled: true`, or after `disable()`) submits nothing;
+    `enable()` brings the field back.
+  - A named range slider `{ name: 'price', range: true, value: 20, secondValue: 80 }` submits
+    `price=20` and `price-end=80`, both follow their setters, and a disabled one submits
+    neither. A named slider that is not a range submits exactly one field.
+
+  ## Constraints
+  - An unnamed slider must be exactly as before.
+  - Add `test/components/slider/form-value.test.ts` (JSDOM, like the other form-value tests).
+  - The slider bundle has a gzip budget in `scripts/check-package-size.ts`; the reference
+    change needed about 190 bytes and raised the slider budget from 11,500 to 11,700 with a
+    comment recording the measurement. Keep the cost small and record any budget change.
+
+  ## Out of scope
+  Form participation for other components, validation, `form.reset()` restoring the slider's
+  own position.
+
+  ## Done when
+  `bun test test/components/slider/form-value.test.ts` passes.
+notes: |
+  A feature task. The size budget lives in a script outside the checks; a run that grows the
+  bundle without touching the budget passes these checks but would fail mtrl's full gate.

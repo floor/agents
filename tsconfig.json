@@ -5,5 +5,5 @@
       "@floor-agents/*": ["./packages/*/src"]
     }
   },
-  "include": ["src", "packages/*/src", "test"]
+  "include": ["src", "packages/*/src", "test", "benchmarks"]
 }

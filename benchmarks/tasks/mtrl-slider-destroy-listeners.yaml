@@ -1,0 +1,47 @@
+id: mtrl-slider-destroy-listeners
+repo: floor/mtrl
+baseCommit: 14d99a3994dbbbedee4b0a7339c14268887160ff
+referencePr: 192
+referenceHead: 1048f785d515d01bec87e4367e16994e97f52032
+sizeClass: S
+changedSourceLines: 88
+testFiles:
+  - test/components/slider/slider.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/components/slider/slider.test.ts
+brief: |
+  # fix(slider): remove the handles' listeners on destroy (FLO-253)
+
+  ## Goal
+  `slider.destroy()` must detach every listener the slider attached to its handles. Today none of
+  the handle listeners are removed: after destroy, a key on a handle still moves the value and
+  focus still marks the handle as focused.
+
+  ## Cause
+  In `src/components/slider/features/handlers.ts`, `setupEventListeners` adds the handles'
+  `mousedown`, `touchstart`, `keydown`, `focus` and `blur` listeners as inline arrow functions,
+  and `cleanupEventListeners` "removes" them with new inline arrow functions.
+  `removeEventListener` matches by reference, so nothing is removed. This applies to the first
+  handle and, on a range slider, to the second handle.
+
+  ## Expected behaviour
+  - Range slider `{ range: true, value: 20, secondValue: 80 }`, destroyed: on each handle,
+    ArrowRight and End change nothing (`aria-valuenow` stays "20" / "80"), a `focus` event does
+    not add `mtrl-slider__handle--focused`, and `getValue()` / `getSecondValue()` stay 20 / 80.
+  - A live slider `{ value: 50 }` still answers: ArrowRight → 51, focus adds
+    `mtrl-slider__handle--focused`.
+  - Track and document listeners keep being removed as they are today.
+
+  ## Constraints
+  - Behaviour of a live slider is unchanged (same events, same passive `touchstart`).
+  - The existing destroy test watches for a `change` event, which the cleared emitter never
+    delivers, so it cannot catch this. Add a test to `test/components/slider/slider.test.ts`
+    that checks value, `aria-valuenow` and the focus class on both handles after destroy.
+
+  ## Out of scope
+  Other slider behaviour, other components' destroy paths, the browser check scripts.
+
+  ## Done when
+  `bun test test/components/slider/slider.test.ts` passes, with a destroy test that fails on the
+  current code.

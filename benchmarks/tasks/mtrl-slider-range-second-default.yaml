@@ -1,0 +1,48 @@
+id: mtrl-slider-range-second-default
+repo: floor/mtrl
+baseCommit: facd868abc2c6fbec61f2e4aea5a9d31435af7f1
+referencePr: 135
+referenceHead: fa04f79486c9106791f1b82ebce54f5a0cc0c378
+sizeClass: XS
+changedSourceLines: 16
+testFiles:
+  - test/components/slider/slider.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/components/slider/slider.test.ts
+brief: |
+  # fix(slider): a range slider's second value defaults to max, as its handle already does
+
+  ## Goal
+  `createSlider({ range: true, value: 20 })` with no `secondValue` must report the same second
+  value that it renders. Today the DOM and the API disagree:
+  - the second handle is rendered at `max` and has `aria-valuenow="100"`;
+  - `getSecondValue()` returns `null`;
+  - pressing an arrow key on the second handle does arithmetic on that `null`.
+
+  ## Where to look
+  - `src/components/slider/features/dom.ts` — already renders the second handle at `max` when
+    `secondValue` is not given. This is the behaviour to keep.
+  - `src/components/slider/features/controller.ts` — builds the slider's state (`value`,
+    `secondValue`, `min`, `max`, `step`); its `secondValue` default is the one that disagrees.
+  - `test/components/slider/slider.test.ts` — the `describe('a range slider given no second
+    value')` block asserts the old `null` behaviour and must be rewritten.
+
+  ## Expected behaviour
+  - A range slider with no `secondValue` has `getSecondValue() === max` (100 by default; 50
+    when `max: 50`), and the second handle's `aria-valuenow` equals that value.
+  - ArrowLeft on the second handle moves it from max by one step: 100 → 99, both in
+    `getSecondValue()` and in `aria-valuenow`.
+  - The first handle still moves independently (ArrowRight: 20 → 21).
+  - An explicit `secondValue` (e.g. 80) is untouched by the default.
+  - A slider that is not a range has one handle and still reports `getSecondValue() === null`.
+
+  ## Constraints
+  No public type or exported name changes. Keep the rest of the slider suite green.
+
+  ## Out of scope
+  Range handles crossing each other, RTL, PageUp/PageDown step sizes.
+
+  ## Done when
+  `bun test test/components/slider/slider.test.ts` passes, with the no-second-value block
+  updated to the behaviour above.

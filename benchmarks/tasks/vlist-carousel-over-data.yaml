@@ -1,0 +1,66 @@
+id: vlist-carousel-over-data
+repo: floor/vlist
+baseCommit: f2764eff78dc606f513c68d426c6d21955ccca22
+referencePr: 221
+referenceHead: d9559246ba2037a9b9d554480d36c085c81cbee7
+sizeClass: M
+changedSourceLines: 204
+testFiles:
+  - test/integration/carousel-data.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/integration/carousel-data.test.ts
+brief: |
+  # fix(carousel): a carousel over data() wraps, and getItemAt reads the loaded item
+
+  ## Goal
+  A `carousel()` whose items come from `data({ adapter })` must wrap like a carousel over a
+  static array. Today the wrap is silently absent: the list renders, but `prev()` on the first
+  item stays at index 0 and the scroll position stays 0. Separately, `list.getItemAt(i)` on
+  such a list must return the loaded item.
+
+  ## Cause
+  `carousel()` sets up at priority 10 and `data()` at 20, and the adapter's items arrive later
+  still (after an async read, through a render). The carousel reads the total in `setup()`,
+  finds 0, and never installs its virtual window: the modulo item accessor, the inflated engine
+  total (several laps) and the wrapping scroll, seeded in the middle lap.
+  `getItemAt` in `src/core/create.ts`, when an index map is active, returns `items[index]` from
+  the raw array, which an adapter leaves empty.
+
+  ## Where to look
+  - `src/plugins/carousel/plugin.ts` — `setup()`, where the window is installed, and
+    `syncItemCount`.
+  - `src/plugins/data/plugin.ts` — publishes the method hooks `_getTotal`, `_getItem` and
+    `_getLoadedItem`.
+  - `src/core/create.ts` — `getItemAt`; the `onCommit` hook machinery.
+
+  ## Expected behaviour
+  - Installing the window becomes something that can run later: in `setup()` for a static list,
+    and on the first commit after the total becomes known for an adapter (under an adapter the
+    items arrive through a render, not a scroll, so check on commit too).
+  - Read the total from the `_getTotal` that `data()` publishes when present, and compose the
+    carousel's modulo accessor with the `_getItem` already in place so `data()`'s storage still
+    answers. With nothing measured yet, a fixed item size in the config still defines a step.
+  - Carousel over an adapter of 10 items (50px items, 300×500 container, `snapDuration: 0`),
+    after the adapter has loaded: `list.total` is 10, the engine's `getState().totalItems` is
+    greater than 10, `getScrollPosition()` is greater than 0 (seeded mid-lap); from index 0,
+    `prev()` moves `getCarouselState().index` to 9.
+  - `getItemAt(i)` takes a data index: over the adapter it returns the loaded item (ids match
+    the adapter's items 0 and 3); on a static carousel of 10 items `getItemAt(3).id` is 4 and
+    `getItemAt(12)` is `undefined` (not a wrapped item).
+  - Static carousels behave exactly as before.
+
+  ## Constraints
+  No public API change. Keep the carousel, data and integration suites green. Add
+  `test/integration/carousel-data.test.ts`.
+
+  ## Out of scope
+  Carousel with groups (a declared conflict), synthetic scroll mode specifics, the browser
+  scripts in `scripts/`.
+
+  ## Done when
+  `bun test test/integration/carousel-data.test.ts` passes; the two wrap tests fail on the
+  current code.
+notes: |
+  The reference also touched a Playwright browser script (sampling race) that is not part of the
+  checks.

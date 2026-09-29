@@ -1,0 +1,52 @@
+id: vlist-tree-arrowdown-from-click
+repo: floor/vlist
+baseCommit: c28458ebe2434730f658b83957f03a02cc8c87ab
+referencePr: 286
+referenceHead: 716973a0ff07d105589aae082db4cc1156ccda07
+sizeClass: XS
+changedSourceLines: 5
+testFiles:
+  - test/plugins/tree/edges.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/plugins/tree/edges.test.ts
+brief: |
+  # fix(tree): continue from the clicked node on ArrowDown (FLO-221)
+
+  ## Goal
+  In a standalone `tree()` list (no `selection()` plugin), a mouse click on a row followed by
+  ArrowDown must move the keyboard focus to the node after the clicked one. Today it jumps to
+  the first node.
+
+  ## Background
+  A mouse click is not `:focus-visible`, so the tree records the clicked row as the focused row
+  but hides the focus ring. The keyboard handler then asks the tree for its focused index, gets
+  "no row" because the ring is hidden, and starts from the top.
+
+  ## Where to look
+  - `src/plugins/tree/plugin.ts` — the tree's own focus tracking (`focusedIndex`,
+    `focusVisible`) and the function that reports the focused index to the keyboard handler.
+    When `selection()` is installed the tree defers to its `_getFocusedIndex`; that path is not
+    affected.
+
+  ## Expected behaviour
+  Tree with four leaf nodes alpha, bravo, charlie, delta:
+  - a mouse click on "charlie" (where `:focus-visible` is false) shows no focus ring: no row is
+    rendered as focused;
+  - ArrowDown after that click focuses "delta" (the ring appears on delta), not "alpha".
+  Keyboard-only navigation (no click first) keeps working as before, starting from the first
+  node.
+
+  ## Constraints
+  - Keep the rule that a mouse click does not show the ring.
+  - Add a regression test in `test/plugins/tree/edges.test.ts`. Note: happy-dom reports the
+    programmatic `focus()` inside a click as `:focus-visible`; the test must force
+    `matches(':focus-visible')` to false on the list's content and container to reproduce a
+    real mouse click.
+
+  ## Out of scope
+  Tree + selection focus handling, expand/collapse, type-ahead.
+
+  ## Done when
+  `bun test test/plugins/tree/edges.test.ts` passes, including a test that fails on the
+  current code.

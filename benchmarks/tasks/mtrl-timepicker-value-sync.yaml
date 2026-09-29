@@ -1,0 +1,81 @@
+id: mtrl-timepicker-value-sync
+repo: floor/mtrl
+baseCommit: f03f9e562f13e855e21176502811291be746bd5c
+referencePr: 187
+referenceHead: 81f9af946c9a19af146fc949099f831cfd891ef4
+sizeClass: M
+changedSourceLines: 382
+testFiles:
+  - test/components/timepicker/form-value.test.ts
+  - test/components/timepicker/timepicker.test.ts
+  - test/components/timepicker/value-sync.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/components/timepicker/form-value.test.ts test/components/timepicker/timepicker.test.ts test/components/timepicker/value-sync.test.ts
+brief: |
+  # fix(timepicker)!: synchronize API, callbacks and form values (FLO-237)
+
+  ## Goal
+  The time picker must report one time value everywhere: `getValue()`, the `change` and
+  `confirm` events, the `onChange` / `onConfirm` config callbacks, and the value its hidden
+  form field submits (when it has a `name`). Today they disagree: a 12-hour picker initialised
+  with "14:30" returns "02:30:00 PM" from `getValue()` while its form submits "14:30"; selecting
+  PM can leave the submitted value in AM; and the delayed render after `open()` can replace a
+  focused input while the user is typing into it.
+
+  ## The value
+  The 24-hour machine value `HH:MM`, or `HH:MM:SS` when `showSeconds` is true — the format the
+  form already submits (`formatFormValue` in `src/components/timepicker/utils.ts`). Display
+  format (12-hour or 24-hour) changes only what is shown, never the value. Update the doc
+  comments in `types.ts` (`TimePickerEvents.change/confirm`, `onChange`, `onConfirm`,
+  `getValue`). This is a deliberate breaking change for consumers that parsed display strings.
+
+  ## Where to look
+  - `src/components/timepicker/api.ts` — `createTimePickerAPI`: `getValue`, `render()` (redraws
+    and syncs the hidden field), `open()` (currently schedules a full re-render ~50ms later),
+    and a large dialog click handler that duplicates period and dial handling done in
+    render.ts.
+  - `src/components/timepicker/render.ts` — `renderTimePicker(dialog, timeValue, config,
+    onTimeChange)`: input handling (`handleInputChange`), AM/PM radiogroup, dial clicks, keyboard.
+  - `src/components/timepicker/timepicker.ts` — creation and the hidden form field
+    (`createFormValue`, `setFormValue` from `src/core/dom/form-value.ts`).
+
+  ## Expected behaviour
+  - For both formats, with and without seconds, values "00:05:07", "12:30:45", "23:59:59":
+    `getValue()`, the submitted value, the `confirm` event and `onConfirm` all equal the value
+    (trimmed to HH:MM without seconds).
+  - Every change notifies exactly once per actual change, with the machine value, and the form
+    field is already updated when `change` listeners run (a listener reading `FormData`
+    synchronously sees the new value). `onChange` receives the same sequence as `change`.
+  - `setValue('14:45:07')` notifies once; `setFormat(...)` notifies with the unchanged value;
+    after switching back to 12-hour the hour field shows "02" and PM is checked.
+  - AM/PM by click: from "09:30", PM → "21:30" (a second PM click does nothing), AM → "09:30".
+    AM/PM by keyboard (ArrowRight moves to and selects PM, keeps focus on it, `tabIndex` 0;
+    Space/Enter select): from "00:30", PM gives "12:30", AM "00:30". Renderer interactions must
+    not replace the focused input or radio.
+  - Input edits notify on `input`; a following native `change`/blur of the same value does not
+    notify again. Keyup Enter commits and moves focus to the next field, once. Committed inputs
+    wrap and clamp: in 12-hour display hour 0 → shows "12", 13 → shows "01"; minutes 75 → 59,
+    seconds -1 → 00; the field shows the padded committed value.
+  - An hour edit in 24-hour display sets the period (23 → PM), so switching to 12-hour shows
+    "11" with PM checked.
+  - Dial clicks on the hour, minute and second selectors each notify once (canvas at 256px, a
+    click at three o'clock selects 3 h / 15 min / 15 s).
+  - `open()` must not replace the live inputs: an edit made right after `open()` keeps its DOM
+    node, focus and value 80ms later. Refreshing only the clock dial's canvas on open is fine.
+
+  ## Constraints
+  No new public API or dependency. Keep the time picker's other tests green; update assertions
+  in `timepicker.test.ts` that pinned the display-string behaviour as FLO-237. Add
+  `test/components/timepicker/value-sync.test.ts` covering the above.
+
+  ## Out of scope
+  Visual styles, the browser check script (`scripts/check-timepicker-browser.ts`, needs
+  Playwright), time zone handling.
+
+  ## Done when
+  The three timepicker test files pass.
+notes: |
+  The largest task. The reference also updated a Playwright browser check, which is not part of
+  the checks (it needs a browser). The value-sync tests assert exact notification sequences, so
+  the brief lists them.

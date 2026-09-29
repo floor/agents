@@ -1,0 +1,59 @@
+id: mtrl-badge-label-rules
+repo: floor/mtrl
+baseCommit: 32dcaea33bd8e8691d478111af3644f8bdee6ebf
+referencePr: 155
+referenceHead: f194e27c08ebd6ffd7985038d19799c0f3b38bfb
+sizeClass: S
+changedSourceLines: 69
+testFiles:
+  - test/components/badge/badge.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/components/badge/badge.test.ts
+brief: |
+  # fix(badge): one rule for empty labels, overflow and positioning (FLO-108)
+
+  ## Goal
+  A badge must say the same thing whether its label was given at creation (`createBadge`)
+  or set later (`setLabel`). Today three decisions are made twice, differently.
+
+  ## Defects, measured on the current code
+  1. Visibility. `setLabel(0)`, `setLabel('')` and `setLabel('0')` hide the badge (class
+     modifier `--invisible`); `createBadge({ label: 0 })`, `{ label: '' }`, `{ label: '0' }`
+     and a badge with no label at all are created visible.
+  2. Overflow. With `max: 999`, the label 1250 renders "999+" and gets the `--overflow`
+     modifier, but the string "1250" also renders "999+" without `--overflow` — both at
+     creation and through `setLabel`. The formatter compares `Number(label) > max`; the
+     overflow checks require `typeof label === 'number'`.
+  3. Positioning. A badge created with a `target` that has no parent node takes the
+     `--positioned` modifier and builds an attachment wrapper that is then dropped, because a
+     detached target cannot be replaced by the wrapper.
+
+  ## Where to look
+  - `src/components/badge/config.ts` — `formatBadgeLabel` (the formatter). A good home for
+    shared predicates such as "is this formatted label empty" and "did the formatter
+    overflow".
+  - `src/components/badge/features.ts` — `withVisibility`, `withPosition`, `withMax`,
+    `withAttachment`. Note `withMax` returns early when no `max` is configured, so a visibility
+    rule placed there would not run for every badge.
+  - `src/components/badge/api.ts` — `setLabel`, which already hides empty/zero labels and sets
+    `--overflow`.
+
+  ## Expected behaviour
+  - 0, '' and '0' are hidden both at creation and after `setLabel`; a badge with no label is
+    hidden; 5 and 'hi' are shown both ways.
+  - 1250 and '1250' with `max: 999` both render "999+" and both carry `--overflow`, both ways;
+    42 and '42' under max carry no `--overflow`.
+  - A target outside the document: the badge is not `--positioned` and has no `wrapper`.
+    A target in the document: the badge is `--positioned` and has a `wrapper`, as today.
+
+  ## Constraints
+  Not a contract change: no public type or exported name moves. Class names are built with
+  `component.getClass('badge')`. Add tests to `test/components/badge/badge.test.ts`.
+
+  ## Out of scope
+  Badge colours, variants, positions other than the above, styles.
+
+  ## Done when
+  `bun test test/components/badge/badge.test.ts` passes with tests for each of the three
+  defects in both directions.

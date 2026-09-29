@@ -20,6 +20,18 @@ work and executable checks proving it — merged 27–29 PRs a day. What caught 
 not voting but gates: tests, parity checks across frameworks, mutation checks, CI on the merge
 commit.
 
+## Scope
+
+Not a general agent platform. The engine aims to be the best service for getting a **small
+project's** work done — one repository, one lead, a few agents — from issue to merged PR.
+
+- **No breadth for its own sake:** no plugin marketplace, no collection of chat channels, no
+  general assistant. What does not help a small project ship does not go in.
+- **Defaults that work at once:** a minimal `.agents/agents.yaml` runs a project; the granular
+  configuration below exists for when it is needed, never to get started.
+- **Grow from proven need:** larger projects, more integrations and more services come when
+  real use asks for them, measured on the benchmark.
+
 ## What useful means
 
 The engine is useful when it does real work better than doing it by hand, measured on real

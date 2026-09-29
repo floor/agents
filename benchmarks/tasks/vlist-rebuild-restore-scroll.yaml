@@ -1,0 +1,51 @@
+id: vlist-rebuild-restore-scroll
+repo: floor/vlist
+baseCommit: f5a61df93d3bbc6f36957536d5e409ce16d70c24
+referencePr: 295
+referenceHead: ea2e3d0b47d2f9c537c402d0db00b02722affd38
+sizeClass: S
+changedSourceLines: 43
+testFiles:
+  - test/utils/rebuild.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/utils/rebuild.test.ts
+brief: |
+  # fix(rebuild): restore scroll position without a snapshots plugin
+
+  ## Goal
+  `rebuild(previous, factory)` recreates a list with scroll continuity. It must restore the
+  previous list's scroll position even when the previous list never installed the
+  `snapshots()` plugin. Today it restores only when the old list exposes
+  `getScrollSnapshot()`, so a plain list comes back at the top.
+
+  ## Where to look
+  - `src/utils/rebuild.ts` — captures a snapshot from the old list, builds a `snapshots()`
+    plugin that restores it, passes that plugin to the factory, then waits for frames.
+  - `ScrollSnapshot` in `src/types.ts` (`index`, `offsetInItem`, optional `total`,
+    `scrollTop`, `selectedIds`, `focusedId`, …).
+  - `src/plugins/snapshots/plugin.ts` — the `restoreScroll(snapshot, restoreSelection?)`
+    method the plugin installs on the list.
+  - Any list has `getScrollPosition()` and `total`; with `selection()` it also has
+    `getSelected()`, and a focus hook `_getFocusedId`.
+
+  ## Expected behaviour
+  - A plain list (no snapshots plugin) scrolled with `scrollToIndex(40)` (200 items of 40px in a
+    300×400 container) and rebuilt with
+    `rebuild(list, snap => createVList({ container, items, item }, [snap]))` comes back with
+    `getScrollPosition()` equal to the old position exactly.
+  - Note the trap: the snapshot plugin's first restore runs during setup, before the viewport
+    has a size, and the position is clamped to 0. After the new list is mounted, if its position
+    is still off by more than a pixel, apply the snapshot again.
+  - A list that did install `snapshots()` keeps its current, full-snapshot behaviour. A list
+    at the top with no selection or focus needs no snapshot.
+
+  ## Constraints
+  No public API change. Add `test/utils/rebuild.test.ts` using the test helpers
+  (`test/helpers/dom`, `test/helpers/factory`) and `createVList` from `src/native`.
+
+  ## Out of scope
+  sessionStorage auto-save, `key`/`delay` options, synthetic scroll mode.
+
+  ## Done when
+  `bun test test/utils/rebuild.test.ts` passes and fails on the current code.

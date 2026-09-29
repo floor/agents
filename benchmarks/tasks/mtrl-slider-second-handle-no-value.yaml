@@ -1,0 +1,64 @@
+id: mtrl-slider-second-handle-no-value
+repo: floor/mtrl
+baseCommit: ca996166f60e0799150a112a4f8727d63bc95177
+referencePr: 130
+referenceHead: 1122a64db44cd6592c85ab525a89f2512da06dae
+sizeClass: M
+changedSourceLines: 317
+testFiles:
+  - test/components/slider/slider.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/components/slider/slider.test.ts
+  - bunx tsc -p tsconfig.noimplicitany.json
+brief: |
+  # fix(slider): type the slider for noImplicitAny, and a second handle with no value no longer jumps (FLO-114)
+
+  ## Goal
+  Two outcomes, in the three slider files that are still on the `noImplicitAny` ratchet:
+  1. `src/components/slider/config.ts`, `features/controller.ts` and `features/handlers.ts`
+     compile under `noImplicitAny` (`bunx tsc -p tsconfig.noimplicitany.json` reports no error
+     anywhere), and they leave the `PENDING` list in `scripts/check-no-implicit-any.ts`, which is
+     then empty (keep the list and its staleness check; say in a comment that it is empty on
+     purpose).
+  2. A range slider with no `secondValue` no longer invents a value from the keyboard.
+
+  ## The behaviour defect
+  `createSlider({ range: true, value: 20 })` builds two handles and leaves the second value
+  `null`. Pressing ArrowRight on the second handle computes `null + step`: the handle jumps to 1
+  (`aria-valuenow="1"`), below the first handle, from nowhere. Decision: a handle that has no
+  value does not move from the keyboard (no ArrowRight / ArrowUp / End effect, the value stays
+  `null`). Everything else is unchanged:
+  - the slider still has two handles and `getSecondValue()` is `null`;
+  - the first handle still moves (ArrowRight: 20 → 21) and the second value stays `null`;
+  - after `setSecondValue(80)` the second handle answers the keyboard (ArrowLeft → 79).
+
+  ## Typing notes (what the checker will surface)
+  - The controller builds the slider state and the handlers read every field of it: declare
+    the shared shapes once in `src/components/slider/types.ts` (state, the component host the
+    state points at, the UI renderer and event helpers the handlers receive, the element set,
+    and a pointer event type covering mouse and touch) rather than describing one object twice.
+  - Unreachable fallbacks such as `state.component || {}` or `if (!state.component) return {}`
+    make results unions no caller can destructure; an early return at the top of
+    `withController` collapses its return type.
+  - `formFields` is `(HTMLInputElement | null)[] | null` where it is produced — null, not
+    undefined — so hosts must accept exactly that.
+  - `e.type.includes('touch') ? e.touches[0].clientX : e.clientX` does not narrow; use a real
+    type guard (`'touches' in e`) in one helper shared by the call sites.
+
+  ## Constraints
+  No public API or runtime behaviour change beyond the keyboard guard above. No `any`. Keep the
+  slider suite green and add tests for the no-second-value shape to
+  `test/components/slider/slider.test.ts` (describe "a range slider given no second value").
+
+  ## Out of scope
+  The other type ratchets (strictNullChecks, strictFunctionTypes), slider styling, what value a
+  second handle should default to.
+
+  ## Done when
+  `bun test test/components/slider/slider.test.ts` passes and
+  `bunx tsc -p tsconfig.noimplicitany.json` exits 0.
+notes: |
+  Most of the reference diff is typing, which bun test alone does not pin; the third check (the
+  noImplicitAny compile) does. The keyboard guard is a behaviour decision taken in the PR (the
+  later PR #135 changed the default to max instead); the brief states the decision.

@@ -1,0 +1,58 @@
+id: vlist-render-window-ceiling
+repo: floor/vlist
+baseCommit: f34b5156ad81e3d70b9cc31c5e670354c894b1f3
+referencePr: 193
+referenceHead: d470d727026848791158d37366c5c634ebcb5219
+sizeClass: S
+changedSourceLines: 58
+testFiles:
+  - test/core/window-ceiling.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/core/window-ceiling.test.ts
+brief: |
+  # fix(core): give the render window a ceiling again
+
+  ## Goal
+  The render window has no upper bound. A size spec that reports 0 (e.g.
+  `item: { height: () => 0 }`) puts every item at the same offset, `indexAtOffset` lands on
+  `total - 1`, and the window becomes the whole dataset: 20,000 of 20,000 rows rendered, each a
+  TypedArray slot and a DOM node. Cap the window, and report the cap when it binds.
+
+  ## Background
+  A previous change made the render window the authority on capacity (buffers grow to meet it)
+  to fix truncation of small rows: a 10px size function in a 3050px viewport rendered only 219
+  of 305 rows. That change removed the last upper bound. The fix must not reintroduce that
+  truncation.
+
+  ## Where to look
+  - `src/core/pipeline.ts` — `phase1Calculate` (visible range, overscan, `renderEnd`,
+    `ensureCapacity`) and `render()` which calls it and then commits. `phase1Calculate` has
+    no event emitter; `render()` has `rc.emitter`.
+  - `src/core/state.ts` — `EngineState` and `createEngineState`.
+  - `OVERSCAN` in `src/constants.ts`.
+
+  ## Expected behaviour
+  - An item cannot occupy less than one physical pixel, so no more than
+    `ceil(containerSize) + overscan * 2` rows can ever be visible. The window is capped there
+    (406 rows for a 400px viewport with the default overscan).
+  - When the cap binds, the list emits `error` with `{ error: Error, context:
+    'render:window-ceiling' }` exactly once per list, not once per frame.
+  - The first render happens inside `createVList(...)`, so the conventional
+    `const list = createVList(...); list.on('error', …)` must still hear it: defer the report by
+    one microtask, and skip it if the list was destroyed meanwhile.
+  - A 10px size function in a 3050px viewport over 20,000 items still renders more than 300
+    rows and emits no error. An ordinary 40px list of 1000 items in 400px renders fewer than 40
+    rows and emits nothing.
+
+  ## Constraints
+  - Do not log to the console; the error event is the report.
+  - Keep the base bundle within its size budget (`bun run size`); keep the message short.
+  - Add `test/core/window-ceiling.test.ts` covering the four cases above.
+
+  ## Out of scope
+  Synthetic scroll mode, grid/masonry layouts, capacity growth policy.
+
+  ## Done when
+  `bun test test/core/window-ceiling.test.ts` passes; the zero-size and reporting cases fail on
+  the current code.

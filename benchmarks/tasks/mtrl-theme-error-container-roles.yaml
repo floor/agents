@@ -1,0 +1,50 @@
+id: mtrl-theme-error-container-roles
+repo: floor/mtrl
+baseCommit: fac056bc095b931c7ac37eb361ce50f91020645a
+referencePr: 194
+referenceHead: 2d8b6caf079d7ba15c30738757e4577d5cd31641
+sizeClass: XS
+changedSourceLines: 12
+testFiles:
+  - test/styles/theme-error-roles.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/styles/theme-error-roles.test.ts
+brief: |
+  # fix(themes): give baseline the error-container roles (FLO-255)
+
+  ## Goal
+  Every theme must define the whole Material 3 error colour family in each of its colour
+  blocks (light and dark): `error`, `on-error`, `error-container`, `on-error-container`.
+  The default theme, baseline, defines only `error` and `on-error`, so anything drawn with the
+  container roles falls back to nothing. Reported on md3.io: an error slider in baseline dark
+  had white ticks and a white inset icon on its active track and no visible inactive track.
+
+  ## Where to look
+  - `src/styles/themes/_baseline.scss` — the `baseline-light-variables` and the dark
+    variables mixins write the error roles by hand.
+  - `src/styles/themes/_base-theme.scss` — `status-colors-light()` / `-dark()` show how every
+    other theme gets the error family, including the `-rgb` companions.
+  - Other themes in `src/styles/themes/` for the naming (`--#{$prefix}-sys-color-…`).
+
+  ## Expected behaviour
+  Compiling any theme (`@use 'themes/<name>'` with load path `src/styles`) yields CSS where
+  every block that sets `--mtrl-sys-color-primary:` also sets `--mtrl-sys-color-error:`,
+  `--mtrl-sys-color-on-error:`, `--mtrl-sys-color-error-container:` and
+  `--mtrl-sys-color-on-error-container:`. Baseline uses the Material baseline values:
+  light error-container #F9DEDC / on-error-container #410E0B; dark error-container #8C1D18 /
+  on-error-container #F9DEDC, each with its `-rgb` variable.
+
+  ## Constraints
+  - Add only the missing roles. Do not include the whole status mixin in baseline: that would
+    also add success/warning/info several times over to the base CSS and push the size budget
+    of the select CSS over its limit.
+  - Add a test (e.g. `test/styles/theme-error-roles.test.ts`) that compiles every theme with
+    `sass` and checks every colour block for the four roles.
+
+  ## Out of scope
+  Slider styles, other colour roles, the other themes' values.
+
+  ## Done when
+  The theme test passes for every theme in `src/styles/themes/` (excluding `_index.scss` and
+  `_base-theme.scss`) and fails for baseline on the current code.

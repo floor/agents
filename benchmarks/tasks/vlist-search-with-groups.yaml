@@ -1,0 +1,59 @@
+id: vlist-search-with-groups
+repo: floor/vlist
+baseCommit: a44459072b957874b8a6a11c68dc1614e32b7b60
+referencePr: 234
+referenceHead: 5143b97c51da540d2082b7af02fb572fead6af4c
+sizeClass: S
+changedSourceLines: 37
+testFiles:
+  - test/plugins/search/plugin.test.ts
+checks:
+  - bun install --frozen-lockfile
+  - bun test test/plugins/search/plugin.test.ts
+brief: |
+  # fix(search): highlighting stops when groups() is seated
+
+  ## Goal
+  With `groups()` seated, `search()` stops highlighting matches altogether. The same query must
+  highlight the same rows with or without `groups()`, and never a group header.
+
+  ## Evidence
+  20 items "Item 1" … "Item 20", query "1": 11 rows are highlighted (`.vlist-search-match`
+  inside `.vlist-item`) with `search()` alone, 0 with
+  `groups({ getGroupForIndex: i => i < 10 ? 'A' : 'B', header: { height: 24, template: k => k } })`
+  in front of it.
+
+  ## Two causes to address
+  1. Index spaces. `groups()` puts headers into layout indices and fills
+     `state.startIndex` / `state.visibleCount` in data space, while
+     `ctx.dom.renderedElement(i)` is layout space. The highlight pass in
+     `src/plugins/search/plugin.ts` (`highlightVisible`) treats both as the same, so it never
+     finds the rendered row. `groups()` publishes the mapping as method hooks
+     `_dataToLayoutIndex` and `_layoutToDataIndex` (a header maps to a negative data index).
+  2. Commit hooks. Search highlights from an `onCommit` hook. Layout plugins such as `groups()`
+     replace the core render pipeline through the renderer's `setFn(render, force)` in
+     `src/core/create.ts`, and the core's commit phase is the only caller of the commit hooks,
+     so with a custom renderer the hook never fires. Run the commit hooks after a custom
+     renderer actually commits: when the rendered range changed, and always after a forced
+     render.
+
+  ## Expected behaviour
+  - Same highlighted-row count with and without `groups()` (11 in the example).
+  - No `.vlist-search-match` inside `.vlist-group-header`; headers are still rendered.
+  - In navigate mode the "current match" class follows the data index of the current match.
+  - Existing search, groups, grid and table tests stay green; a custom renderer that returns
+    early because nothing changed must not trigger the commit hooks.
+
+  ## Constraints
+  No public API change. Add a test to `test/plugins/search/plugin.test.ts` (describe
+  "search + groups").
+
+  ## Out of scope
+  Search filtering with groups, search + tree/data conflicts, performance of highlighting.
+
+  ## Done when
+  `bun test test/plugins/search/plugin.test.ts` passes, including the new test that fails on
+  the current code.
+notes: |
+  Source issue floor/vlist#222 (brief quoted in the PR body). The PR head is based on an older
+  commit than baseCommit; the solvability check runs on referenceHead as recorded.

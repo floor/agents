@@ -76,6 +76,39 @@ decisions:
 Endpoints and model ids come from the vendors' documentation as of 2026-09-29; see
 [providers](./providers.md), which also records what is unconfirmed.
 
+## Projects, configurable at every level
+
+The project definition (`.agents/agents.yaml` in each repository) is the one place that says what
+runs for that project. Everything is a module a project turns on and configures:
+
+- **Services** — which run at all: task intake, gateway, API, notifications, the lead's loop.
+  A project that only wants reviews runs no implementer and no watcher.
+- **Tools** — an allowlist per role or agent: read, write, shell (which commands), git
+  operations, network, private sources. The same model gets different powers in different
+  projects.
+- **Providers, agents, roles, decisions, gates, task source, budgets** — as above, per project.
+
+Configuration is layered: organisation defaults, then the project, then the role, then the
+agent. A project states only what differs; the validator prints the resolved configuration, so
+what an agent may do is never a guess.
+
+## Light, fast, events first
+
+- **Events are the preferred transport.** GitHub webhooks (issue labelled, PR opened, checks
+  completed, review submitted), Linear webhooks and CI completion start work; nothing waits in
+  a loop. A public server (floor.io) can receive webhooks and forward them over the gateway's
+  WebSocket, so the machine running the agents needs no public address.
+- **Polling is supported, not preferred.** It is the right tool for a source without events,
+  as the fallback when a webhook is missed, and for periodic reconciliation. Each source
+  declares its transport (`webhook`, `gateway`, `poll` with an interval and backoff); events
+  are the default wherever a source offers them.
+- **Stages talk in events.** Task, implement, gate, publish, review, decide and merge emit
+  typed events and react to them, instead of one step machine walking a state file.
+- **Light by default.** One process; adapters and services load only when a project uses
+  them; no idle work; agent runs are short-lived and receive only their brief's context.
+- **Never block on a wait.** Long waits (CI, a slow seat, a deploy) are events or background
+  timers; the lead keeps answering while they run.
+
 ## Decision modes
 
 | Mode | Who decides | Notes |
@@ -135,4 +168,8 @@ definition says otherwise.
 4. Roles as data; the lead as an engine role.
 5. Provider registry; xAI, Kimi and GLM as reviewers and advisors. As implementers they need an
    agent loop that works on a worktree, or their coding CLIs — a later step.
-6. Stages split out of the pipeline.
+6. Stages split out of the pipeline, talking in events.
+7. Layered project configuration: services and tool allowlists per project, role and agent,
+   with the resolved view printed by the validator.
+8. Event intake: GitHub and Linear webhooks through floor.io and the gateway, with polling as a
+   configured fallback.

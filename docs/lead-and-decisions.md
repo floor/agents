@@ -20,6 +20,24 @@ work and executable checks proving it — merged 27–29 PRs a day. What caught 
 not voting but gates: tests, parity checks across frameworks, mutation checks, CI on the merge
 commit.
 
+## What useful means
+
+The engine is useful when it does real work better than doing it by hand, measured on real
+issues from our repositories (mtrl, vlist), not on its own unit tests:
+
+- **Throughput** — a well-briefed issue goes from issue to merged PR with no human involvement
+  beyond the decisions the project reserves for humans.
+- **Speed** — a small fix in under 30 minutes, end to end. The committee engine took about
+  3 hours and 7 runs for a 17-line fix.
+- **Reliability** — most runs end without a harness failure; before, most stops were the
+  harness's, not the code's.
+- **Cost** — a known cost per merged PR, per vendor (CLI vendors were reported at $0).
+- **Quality** — what the agents merge is not redone later.
+
+A **benchmark set** of already-solved issues, replayable against the engine, measures every
+step before and after; the order of the plan follows what the benchmark shows hurts most. As
+soon as a slice works, it takes real issues alongside the direct work.
+
 ## The model
 
 - **A lead decides and owns the outcome.** It plans, assigns work, weighs other agents' input

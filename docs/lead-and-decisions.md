@@ -20,6 +20,36 @@ work and executable checks proving it — merged 27–29 PRs a day. What caught 
 not voting but gates: tests, parity checks across frameworks, mutation checks, CI on the merge
 commit.
 
+## Scope
+
+Not a general agent platform. The engine aims to be the best service for getting a **small
+project's** work done — one repository, one lead, a few agents — from issue to merged PR.
+
+- **No breadth for its own sake:** no plugin marketplace, no collection of chat channels, no
+  general assistant. What does not help a small project ship does not go in.
+- **Defaults that work at once:** a minimal `.agents/agents.yaml` runs a project; the granular
+  configuration below exists for when it is needed, never to get started.
+- **Grow from proven need:** larger projects, more integrations and more services come when
+  real use asks for them, measured on the benchmark.
+
+## What useful means
+
+The engine is useful when it does real work better than doing it by hand, measured on real
+issues from our repositories (mtrl, vlist), not on its own unit tests:
+
+- **Throughput** — a well-briefed issue goes from issue to merged PR with no human involvement
+  beyond the decisions the project reserves for humans.
+- **Speed** — a small fix in under 30 minutes, end to end. The committee engine took about
+  3 hours and 7 runs for a 17-line fix.
+- **Reliability** — most runs end without a harness failure; before, most stops were the
+  harness's, not the code's.
+- **Cost** — a known cost per merged PR, per vendor (CLI vendors were reported at $0).
+- **Quality** — what the agents merge is not redone later.
+
+A **benchmark set** of already-solved issues, replayable against the engine, measures every
+step before and after; the order of the plan follows what the benchmark shows hurts most. As
+soon as a slice works, it takes real issues alongside the direct work.
+
 ## The model
 
 - **A lead decides and owns the outcome.** It plans, assigns work, weighs other agents' input
@@ -75,6 +105,39 @@ decisions:
 
 Endpoints and model ids come from the vendors' documentation as of 2026-09-29; see
 [providers](./providers.md), which also records what is unconfirmed.
+
+## Projects, configurable at every level
+
+The project definition (`.agents/agents.yaml` in each repository) is the one place that says what
+runs for that project. Everything is a module a project turns on and configures:
+
+- **Services** — which run at all: task intake, gateway, API, notifications, the lead's loop.
+  A project that only wants reviews runs no implementer and no watcher.
+- **Tools** — an allowlist per role or agent: read, write, shell (which commands), git
+  operations, network, private sources. The same model gets different powers in different
+  projects.
+- **Providers, agents, roles, decisions, gates, task source, budgets** — as above, per project.
+
+Configuration is layered: organisation defaults, then the project, then the role, then the
+agent. A project states only what differs; the validator prints the resolved configuration, so
+what an agent may do is never a guess.
+
+## Light, fast, events first
+
+- **Events are the preferred transport.** GitHub webhooks (issue labelled, PR opened, checks
+  completed, review submitted), Linear webhooks and CI completion start work; nothing waits in
+  a loop. A public server (floor.io) can receive webhooks and forward them over the gateway's
+  WebSocket, so the machine running the agents needs no public address.
+- **Polling is supported, not preferred.** It is the right tool for a source without events,
+  as the fallback when a webhook is missed, and for periodic reconciliation. Each source
+  declares its transport (`webhook`, `gateway`, `poll` with an interval and backoff); events
+  are the default wherever a source offers them.
+- **Stages talk in events.** Task, implement, gate, publish, review, decide and merge emit
+  typed events and react to them, instead of one step machine walking a state file.
+- **Light by default.** One process; adapters and services load only when a project uses
+  them; no idle work; agent runs are short-lived and receive only their brief's context.
+- **Never block on a wait.** Long waits (CI, a slow seat, a deploy) are events or background
+  timers; the lead keeps answering while they run.
 
 ## Decision modes
 
@@ -135,4 +198,8 @@ definition says otherwise.
 4. Roles as data; the lead as an engine role.
 5. Provider registry; xAI, Kimi and GLM as reviewers and advisors. As implementers they need an
    agent loop that works on a worktree, or their coding CLIs — a later step.
-6. Stages split out of the pipeline.
+6. Stages split out of the pipeline, talking in events.
+7. Layered project configuration: services and tool allowlists per project, role and agent,
+   with the resolved view printed by the validator.
+8. Event intake: GitHub and Linear webhooks through floor.io and the gateway, with polling as a
+   configured fallback.

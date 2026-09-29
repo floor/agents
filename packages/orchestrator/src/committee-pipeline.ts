@@ -87,7 +87,7 @@ export type CommitteePipelineDeps = {
 
 // ── Vote extraction ──────────────────────────────────────────────
 
-function tallyVotes(votes: readonly CommitteeVote[]): 'approved' | 'rejected' | 'no_quorum' {
+export function tallyVotes(votes: readonly CommitteeVote[]): 'approved' | 'rejected' | 'no_quorum' {
   const cast = votes.filter(v => v.vote !== 'abstain')
   if (cast.length === 0) return 'no_quorum'
 

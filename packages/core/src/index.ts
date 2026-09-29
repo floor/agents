@@ -32,6 +32,7 @@ export type {
 export type { ProjectConventions, ProjectStructure, ProjectConfig, ProjectCommand } from './types/project.ts'
 export type { CompanyConfig } from './types/company.ts'
 export type { ReviewConfig } from './types/review.ts'
+export type { KnownDecisionKind, DecisionKind, DecisionMode, DecisionPolicy, DecisionsConfig, RolesConfig, HumanPermission, HumanDefinition, HumansConfig } from './types/decisions.ts'
 export type { SourceDefinition, SourceVisibility } from './types/sources.ts'
 export type { TasksConfig, TaskSource } from './types/tasks.ts'
 export type { GuardrailsConfig, GuardrailViolation } from './types/guardrails.ts'
@@ -44,6 +45,11 @@ export type { ExecutionStep, FileOutput, AgentOutput, ReviewVerdict, ExecutionSt
 // Config
 export { loadCompanyConfig } from './config/loader.ts'
 export { validateCompanyConfig } from './config/validator.ts'
+
+// Decisions
+export { decide } from './decisions/decide.ts'
+export type { Verdict, HumanVerdict, DecisionInput, DecisionResult, DecisionOutcome } from './decisions/decide.ts'
+export { DECISION_MODES, HUMAN_PERMISSIONS, DEFAULT_QUORUM, DEFAULT_ROUNDS, DEFAULT_DECISIONS, decisionPolicy, resolveQuorum, resolveRounds } from './decisions/policy.ts'
 
 // Utils
 export { estimateTokens } from './utils/tokens.ts'
